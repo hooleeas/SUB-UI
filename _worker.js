@@ -1,8 +1,33 @@
-// 部署完成后在网址后面加上这个，获取自建节点和机场聚合节点，/?token=auto或/auto或
+/**
+ * CF-SUBS
+ * 基于 CF-SUB 核心能力扩展的多 SUB / 多订阅链接 URL 管理版
+ *
+ * 核心原则：
+ * 1. 只使用一个 Cloudflare KV Binding：KV
+ * 2. 保留 CF-SUB 的核心订阅获取、聚合、去重、NOADS、SUBAPI、格式识别、
+ *    WARP、主页伪装、管理员登录、二维码、API/CONFIG 状态检测等能力。
+ * 3. SUB 是“聚合节点配置”，不是公开订阅链接。
+ * 4. URL 才是公开订阅入口。
+ *
+ * KV：
+ *   CONFIG.json
+ *   SUB:<id>
+ *   URL:<url>
+ *
+ * Pages / Workers 环境变量仍兼容原 CF-SUB：
+ *   USER
+ *   PASS
+ *   URL
+ *   URL302
+ *   CODE
+ *   SUBUPTIME
+ *   WARP
+ *   LINK
+ *   LINKSUB
+ */
 
 let mytoken = 'auto';
-let guestToken = '';
-let FileName = 'CF-SUB';
+let FileName = 'CF-SUBS';
 let SUBUpdateTime = 6;
 let total = 99;
 let timestamp = 4102329600000;
@@ -15,7 +40,7 @@ let urls = [];
 
 // ================= 全局默认配置 =================
 const defaultSubConverter = "SUBAPI.cmliussss.net";
-const defaultSubConfig = "https://raw.githubusercontent.com/hooleeas/ACL4SSR/refs/heads/master/Clash/config/DIRECT_CHINA_AUTO_PING.ini";
+const defaultSubConfig = "https://raw.githubusercontent.com/hooleeas/ACL4SSR/refs/heads/master/Clash/config/China_Direct_Overseas_Proxy.ini";
 const defaultSubProtocol = "https";
 // ================================================
 
@@ -25,72 +50,82 @@ let subProtocol = defaultSubProtocol;
 let config_noAds = '';
 
 // ================= 主页配置 =================
-let fakeMode = ''; // 0:关闭 1:URL反代 2:URL302 3:HTML
+let fakeMode = '';
 let fakeUrl = '';
 let fakeUrl302 = '';
 let fakeCode = '';
 // ==============================================
 
+const SUB_PREFIX = 'SUB:';
+const URL_PREFIX = 'URL:';
+const ID_CHARS = 'ABCDEFGHJKMNPQRSTWXYZabcdefghijkmnpqrstwxyz2345678';
+const DEFAULT_ADMIN_PATH = 'admin';
+
 export default {
     async fetch(request, env) {
-        const userAgentHeader = request.headers.get('User-Agent');
-        const userAgent = userAgentHeader ? userAgentHeader.toLowerCase() : "null";
-        const url = new URL(request.url);
-        const token = url.searchParams.get('token');
-
-        mytoken = env.TOKEN || mytoken;
-        let adminUser = env.USER || '';
-        let adminPass = env.PASS || '';
-
-        fakeUrl = env.URL || fakeUrl;
-        fakeUrl302 = env.URL302 || fakeUrl302;
-        fakeCode = env.CODE || fakeCode;
-
-        // 处理退出登录
-        if (url.searchParams.has('logout')) {
-            return new Response('正在退出...', {
-                status: 302,
+        try {
+            return await handleRequest(request, env);
+        } catch (error) {
+            console.error('CF-SUBS request error:', error);
+            return new Response('CF-SUBS Worker Error: ' + (error?.message || String(error)), {
+                status: 500,
                 headers: {
-                    'Location': url.pathname,
-                    'Set-Cookie': 'CF_SUB_ADMIN=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax'
+                    'Content-Type': 'text/plain; charset=utf-8',
+                    'Cache-Control': 'no-store'
                 }
             });
         }
+    }
+};
 
-        // 从 KV 获取动态设置的变量
+async function handleRequest(request, env) {
+        const userAgentHeader = request.headers.get('User-Agent') || '';
+        const userAgent = userAgentHeader.toLowerCase();
+        const url = new URL(request.url);
+        const queryToken = url.searchParams.get('token') || '';
+        // SUBAPI 转换内部请求：记录原始订阅 URL，确保转换时只使用该 URL 绑定的 SUB
+        const conversionSourceToken = url.searchParams.get('sourceToken') || '';
+
+        // 每次请求重新从环境变量读取，保持 CF-SUB 原有变量行为
+        // 不再使用 TOKEN 环境变量；旧 /auto 入口继续由内部默认值兼容。
+        let adminUser = env.USER || '';
+        let adminPass = env.PASS || '';
+        let adminPath = DEFAULT_ADMIN_PATH;
+
+        fakeUrl = env.URL || '';
+        fakeUrl302 = env.URL302 || '';
+        fakeCode = env.CODE || '';
+
+        // 读取 KV 配置
         if (env.KV) {
-            const kvConfigStr = await env.KV.get('CONFIG.json');
-
-            if (kvConfigStr) {
-                try {
+            try {
+                const kvConfigStr = await env.KV.get('CONFIG.json');
+                if (kvConfigStr) {
                     const kvConfig = JSON.parse(kvConfigStr);
 
-                    FileName = kvConfig.subName || FileName;
+                    FileName = kvConfig.subName || 'CF-SUBS';
 
-                    // 后台输入框保持为空表示使用默认值
                     subConverter = kvConfig.subApi || '';
                     subConfig = kvConfig.subConfig || '';
-
                     config_noAds = kvConfig.noAds || '';
-                    guestToken = kvConfig.guest || guestToken;
+
+                    // 原 CF-SUB 配置仍然兼容
                     adminUser = kvConfig.user || adminUser;
                     adminPass = kvConfig.pass || adminPass;
-                    
-                    fakeMode = kvConfig.fakeMode !== undefined ? kvConfig.fakeMode : fakeMode;
+                    adminPath = normalizeAdminPath(kvConfig.adminPath) || DEFAULT_ADMIN_PATH;
+
+                    fakeMode = kvConfig.fakeMode !== undefined ? kvConfig.fakeMode : '';
                     fakeUrl = kvConfig.fakeUrl !== undefined ? kvConfig.fakeUrl : fakeUrl;
                     fakeUrl302 = kvConfig.fakeUrl302 !== undefined ? kvConfig.fakeUrl302 : fakeUrl302;
                     fakeCode = kvConfig.fakeCode !== undefined ? kvConfig.fakeCode : fakeCode;
-
-                } catch (e) {
-                    console.error('解析 KV 配置失败', e);
                 }
+            } catch (e) {
+                console.error('解析 KV 配置失败', e);
             }
         }
 
-        // 保存后台填写的原始配置状态
         const customSubApi = String(subConverter || '').trim();
         const customSubConfig = String(subConfig || '').trim();
-
         const hasCustomApi = !!customSubApi;
         const hasCustomConfig = !!customSubConfig;
 
@@ -98,32 +133,21 @@ export default {
         subConfig = customSubConfig;
         subProtocol = defaultSubProtocol;
 
-        if (subConverter.includes("http://")) {
-            subConverter = subConverter.split("//")[1];
+        if (subConverter.includes('http://')) {
+            subConverter = subConverter.split('//')[1];
             subProtocol = 'http';
-        } else if (subConverter.includes("https://")) {
-            subConverter = subConverter.split("//")[1] || subConverter;
+        } else if (subConverter.includes('https://')) {
+            subConverter = subConverter.split('//')[1] || subConverter;
         }
 
-        // 实际使用配置
         const effectiveSubConverter = hasCustomApi ? subConverter : defaultSubConverter;
         const effectiveSubProtocol = hasCustomApi ? subProtocol : defaultSubProtocol;
         const effectiveSubConfig = hasCustomConfig ? subConfig : defaultSubConfig;
 
         const currentDate = new Date();
         currentDate.setHours(0, 0, 0, 0);
-
         const timeTemp = Math.ceil(currentDate.getTime() / 1000);
         const fakeToken = await MD5MD5(`${mytoken}${timeTemp}`);
-
-        guestToken = env.GUESTTOKEN || env.GUEST || guestToken;
-
-        if (!guestToken) {
-            guestToken = await MD5MD5(mytoken);
-        }
-
-        const 访客订阅 = guestToken;
-        const guestPath = url.pathname === ("/" + 访客订阅) || url.pathname.toLowerCase() === ("/" + 访客订阅.toLowerCase());
 
         let UD = Math.floor(((timestamp - Date.now()) / timestamp * total * 1099511627776) / 2);
         total = total * 1099511627776;
@@ -136,20 +160,102 @@ export default {
             'shadowrocket', 'subconverter'
         ].some(keyword => userAgent.includes(keyword));
 
-        // 无效路径优先返回主页
-        if (!([mytoken, fakeToken, 访客订阅].includes(token) || url.pathname == ("/" + mytoken) || url.pathname.includes("/" + mytoken + "?") || guestPath)) {
-            
-            // 【新增逻辑】：如果访问的不是根路径（例如 /abc 或 /无关字符），则强制 302 重定向到根目录 (主页)
-            if (url.pathname !== '/') {
-                return Response.redirect(url.origin + '/', 302);
+        // 退出登录：直接跳回主页，不显示 logout 中间页面
+        if (url.searchParams.has('logout') || url.pathname === `/${adminPath}/logout`) {
+            return new Response(null, {
+                status: 302,
+                headers: {
+                    'Location': '/',
+                    'Cache-Control': 'no-store',
+                    'Set-Cookie': 'CF_SUB_ADMIN=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax'
+                }
+            });
+        }
+
+        // ==================== SUB-UI 公共 API ====================
+        if (url.pathname === '/api/ui-config' && request.method === 'GET') {
+            const cfg = await getConfig(env);
+            return jsonResponse({ ok: true, subApis: normalizeProviderList(cfg.subApis), subConfigs: normalizeProviderList(cfg.subConfigs), shortLinks: normalizeProviderList(cfg.shortLinks) });
+        }
+        if (url.pathname === '/api/generate' && request.method === 'POST') {
+            return await handlePublicGenerate(request, env, url);
+        }
+
+        // ==================== 管理后台 ====================
+        if (url.pathname === `/${adminPath}`) {
+            if (isAdminLoginEnabled(adminUser, adminPass)) {
+                const isLoggedIn = await isAdminLoggedIn(request, mytoken, adminUser, adminPass);
+                if (!isLoggedIn) {
+                    if (request.method === 'POST') {
+                        return await handleAdminLogin(request, url, mytoken, adminUser, adminPass);
+                    }
+                    return new Response(renderLoginPage(url), {
+                        headers: {
+                            'Content-Type': 'text/html;charset=utf-8',
+                            'Cache-Control': 'no-store'
+                        }
+                    });
+                }
             }
 
+            return await handleAdmin(request, env, {
+                adminUser,
+                adminPass,
+                effectiveSubConverter,
+                effectiveSubConfig,
+                effectiveSubProtocol,
+                hasCustomApi,
+                hasCustomConfig,
+                adminPath
+            });
+        }
+
+        // ==================== 解析公开 URL ====================
+        // 新版 URL：
+        //   /abc123
+        //   /abc123?clash
+        //   /?token=abc123
+        //
+        // 兼容旧 CF-SUB：
+        //   /auto
+        //   /?token=auto
+        let publicToken = queryToken;
+
+        if (!publicToken && url.pathname !== '/') {
+            publicToken = decodeURIComponent(url.pathname.slice(1));
+        }
+
+        let tokenData = null;
+
+        if (env.KV && publicToken) {
+            tokenData = await getToken(env, publicToken);
+        }
+
+        const legacyAdminPath =
+            publicToken === mytoken ||
+            publicToken.toLowerCase() === String(mytoken).toLowerCase();
+
+        const isFakeTokenRequest =
+            publicToken === fakeToken ||
+            url.pathname === '/' + fakeToken;
+
+        // 新 URL / auto / fakeToken 都属于有效入口
+        const validPublicEntry =
+            !!tokenData || legacyAdminPath || isFakeTokenRequest;
+
+        // ==================== 无效路径 / 主页 ====================
+        if (!validPublicEntry && url.pathname !== '/') {
+            return Response.redirect(url.origin + '/', 302);
+        }
+
+        if (!validPublicEntry && url.pathname === '/') {
             if (fakeMode === '1' && fakeUrl) {
-                try { return await proxyURL(fakeUrl, url, FileName); } catch (e) { }
+                try {
+                    return await proxyURL(fakeUrl, url, FileName);
+                } catch (e) {}
             } else if (fakeMode === '2' && fakeUrl302) {
                 return Response.redirect(fakeUrl302, 302);
             } else if (fakeMode === '3' && fakeCode && fakeCode.trim() !== '') {
-                // 动态注入标题
                 let html = fakeCode;
                 const title = `<title>${escapeHTML(FileName)}</title>`;
                 if (/<title\b[^>]*>[\s\S]*?<\/title>/i.test(html)) {
@@ -159,336 +265,1077 @@ export default {
                 } else {
                     html = title + html;
                 }
-                return new Response(html, { headers: { 'Content-Type': 'text/html; charset=UTF-8' } });
+                return new Response(html, {
+                    headers: { 'Content-Type': 'text/html; charset=UTF-8' }
+                });
             }
-            
-            // 模式 0，或配置为空/异常时，全部兜底返回原生 NGINX
-            return new Response(await nginx(FileName), { headers: { 'Content-Type': 'text/html; charset=UTF-8' } });
+
+            return new Response(await renderSubUIHome(url, env), {
+                headers: { 'Content-Type': 'text/html; charset=UTF-8', 'Cache-Control': 'no-store' }
+            });
+        }
+
+        // ==================== 获取当前入口的来源 ====================
+        let selectedSources = [];
+
+        if (tokenData) {
+            // SUB-UI 生成链接直接保存来源；原有 URL 继续走 SUB 聚合。
+            selectedSources = Array.isArray(tokenData.sources) && tokenData.sources.length
+                ? cleanSourceList(tokenData.sources)
+                : await getSourcesForToken(env, tokenData);
         } else {
-
-            if (env.KV) {
-                await 迁移地址列表(env, 'LINK.txt');
-
-                // 浏览器直接访问 UI
-                if (userAgent.includes('mozilla') && !url.search && !isProxyClientUA) {
-
-                    // ================= 后端连通性与规则有效性 =================
-                    let customApiOk = false;
-                    let customApiVersion = '';
-                    let defaultApiOk = false;
-                    let defaultApiVersion = '';
-                    let customConfigOk = false;
-                    let defaultConfigOk = false;
-
-                    async function probeApi(api, protocol) {
-                        try {
-                            const controller = new AbortController();
-                            const timeout = setTimeout(() => controller.abort(), 1200);
-                            const res = await fetch(`${protocol}://${api}/version`, { signal: controller.signal });
-                            clearTimeout(timeout);
-                            if (res.ok) {
-                                return { ok: true, version: (await res.text()).trim().substring(0, 30) };
-                            }
-                            return { ok: false };
-                        } catch (e) {
-                            return { ok: false };
-                        }
-                    }
-
-                    async function probeConfig(configUrl) {
-                        if (!configUrl) return false;
-                        try {
-                            const controller = new AbortController();
-                            const timeout = setTimeout(() => controller.abort(), 1200);
-                            const res = await fetch(configUrl, { method: 'GET', signal: controller.signal });
-                            clearTimeout(timeout);
-                            return res.ok;
-                        } catch (e) {
-                            return false;
-                        }
-                    }
-
-                    // ====== 智能检测 API ======
-                    if (hasCustomApi) {
-                        const res = await probeApi(subConverter, subProtocol);
-                        customApiOk = res.ok;
-                        customApiVersion = res.version;
-                        if (!customApiOk) {
-                            const resDef = await probeApi(defaultSubConverter, defaultSubProtocol);
-                            defaultApiOk = resDef.ok;
-                            defaultApiVersion = resDef.version;
-                        }
-                    } else {
-                        const resDef = await probeApi(defaultSubConverter, defaultSubProtocol);
-                        defaultApiOk = resDef.ok;
-                        defaultApiVersion = resDef.version;
-                    }
-
-                    // ====== 智能检测 CONFIG ======
-                    if (hasCustomConfig) {
-                        customConfigOk = await probeConfig(subConfig);
-                        if (!customConfigOk) {
-                            defaultConfigOk = await probeConfig(defaultSubConfig);
-                        }
-                    } else {
-                        defaultConfigOk = await probeConfig(defaultSubConfig);
-                    }
-
-                    // ====== 构造 API 状态 UI ======
-                    let adminApiHtml = '';
-                    let guestApiHtml = '';
-                    let finalApiUrl = '';
-                    let adminApiCss = '';
-                    let guestApiCss = '';
-
-                    if (hasCustomApi && customApiOk) {
-                        adminApiHtml = `✅SUBAPI状态正常 (${escapeHTML(customApiVersion)})`;
-                        guestApiHtml = adminApiHtml;
-                        finalApiUrl = `${subProtocol}://${subConverter}`;
-                        adminApiCss = 'status-ok';
-                        guestApiCss = 'status-ok';
-                    } else if (hasCustomApi && !customApiOk && defaultApiOk) {
-                        adminApiHtml = `⚠️SUBAPI无效 已切换为默认配置 ✅默认值可用`;
-                        guestApiHtml = `✅SUBAPI状态正常 (${escapeHTML(defaultApiVersion)})`;
-                        finalApiUrl = `${defaultSubProtocol}://${defaultSubConverter}`;
-                        adminApiCss = 'status-warn';
-                        guestApiCss = 'status-ok';
-                    } else if (!hasCustomApi && defaultApiOk) {
-                        adminApiHtml = `⚠️SUBAPI为空 已切换为默认配置 ✅默认值可用`;
-                        guestApiHtml = `✅SUBAPI状态正常 (${escapeHTML(defaultApiVersion)})`;
-                        finalApiUrl = `${defaultSubProtocol}://${defaultSubConverter}`;
-                        adminApiCss = 'status-warn';
-                        guestApiCss = 'status-ok';
-                    } else {
-                        adminApiHtml = `❌SUBAPI无效待维护`;
-                        guestApiHtml = adminApiHtml;
-                        finalApiUrl = `${defaultSubProtocol}://${defaultSubConverter}`;
-                        adminApiCss = 'status-error';
-                        guestApiCss = 'status-error';
-                    }
-
-                    // ====== 构造 CONFIG 状态 UI ======
-                    let adminConfigHtml = '';
-                    let guestConfigHtml = '';
-                    let finalConfigUrl = '';
-                    let adminConfigCss = '';
-                    let guestConfigCss = '';
-
-                    if (hasCustomConfig && customConfigOk) {
-                        adminConfigHtml = `✅SUBCONFIG状态正常`;
-                        guestConfigHtml = adminConfigHtml;
-                        finalConfigUrl = subConfig;
-                        adminConfigCss = 'status-ok';
-                        guestConfigCss = 'status-ok';
-                    } else if (hasCustomConfig && !customConfigOk && defaultConfigOk) {
-                        adminConfigHtml = `⚠️SUBCONFIG无效 已切换为默认配置 ✅默认值可用`;
-                        guestConfigHtml = `✅SUBCONFIG状态正常`;
-                        finalConfigUrl = defaultSubConfig;
-                        adminConfigCss = 'status-warn';
-                        guestConfigCss = 'status-ok';
-                    } else if (!hasCustomConfig && defaultConfigOk) {
-                        adminConfigHtml = `⚠️SUBCONFIG为空 已切换为默认配置 ✅默认值可用`;
-                        guestConfigHtml = `✅SUBCONFIG状态正常`;
-                        finalConfigUrl = defaultSubConfig;
-                        adminConfigCss = 'status-warn';
-                        guestConfigCss = 'status-ok';
-                    } else {
-                        adminConfigHtml = `❌SUBCONFIG无效待维护`;
-                        guestConfigHtml = adminConfigHtml;
-                        finalConfigUrl = defaultSubConfig;
-                        adminConfigCss = 'status-error';
-                        guestConfigCss = 'status-error';
-                    }
-
-                    // ========================================================
-
-                    if (guestPath) {
-                        return new Response(
-                            renderGuestPage(url, 访客订阅, finalApiUrl, finalConfigUrl, guestApiHtml, guestConfigHtml, guestApiCss, guestConfigCss),
-                            { headers: { 'Content-Type': 'text/html;charset=utf-8' } }
-                        );
-                    } else {
-                        if (isAdminLoginEnabled(adminUser, adminPass)) {
-                            const isLoggedIn = await isAdminLoggedIn(request, mytoken, adminUser, adminPass);
-                            if (!isLoggedIn) {
-                                if (request.method === 'POST') {
-                                    return await handleAdminLogin(request, url, mytoken, adminUser, adminPass);
-                                }
-                                return new Response(renderLoginPage(url), { headers: { 'Content-Type': 'text/html;charset=utf-8', 'Cache-Control': 'no-store' } });
-                            }
-                        }
-                        return await KV(
-                            request, env, 'LINK.txt', 访客订阅,
-                            adminApiHtml, adminConfigHtml, finalApiUrl, finalConfigUrl, adminApiCss, adminConfigCss
-                        );
-                    }
-
+            // 兼容旧 CF-SUB：
+            // auto = 所有 SUBS；fake = 所有 SUBS
+            if (isFakeTokenRequest && conversionSourceToken) {
+                const sourceTokenData = await getToken(env, conversionSourceToken);
+                if (sourceTokenData) {
+                    selectedSources = await getSourcesForToken(env, sourceTokenData);
                 } else {
-                    MainData = await env.KV.get('LINK.txt') || MainData;
+                    selectedSources = await getAllManagedSources(env);
                 }
-            } else {
-                MainData = env.LINK || MainData;
-                if (env.LINKSUB) {
-                    urls = await ADD(env.LINKSUB);
-                }
-            }
-
-            let 重新汇总所有链接 = await ADD(MainData + '\n' + urls.join('\n'));
-            let 自建节点 = "";
-            let 订阅链接 = "";
-
-            for (let x of 重新汇总所有链接) {
-                if (x.toLowerCase().startsWith('http')) {
-                    订阅链接 += x + '\n';
-                } else {
-                    自建节点 += x + '\n';
-                }
-            }
-
-            MainData = 自建节点;
-            urls = await ADD(订阅链接);
-
-            const isSubConverterRequest = request.headers.get('subconverter-request') || request.headers.get('subconverter-version') || userAgent.includes('subconverter');
-            let 订阅格式 = 'base64';
-
-            if (!(userAgent.includes('null') || isSubConverterRequest || userAgent.includes('nekobox') || userAgent.includes(('CF-SUB').toLowerCase()))) {
-                if (userAgent.includes('sing-box') || userAgent.includes('singbox') || url.searchParams.has('sb') || url.searchParams.has('singbox')) {
-                    订阅格式 = 'singbox';
-                } else if (userAgent.includes('surge') || url.searchParams.has('surge')) {
-                    订阅格式 = 'surge';
-                } else if (userAgent.includes('quantumult') || url.searchParams.has('quanx')) {
-                    订阅格式 = 'quanx';
-                } else if (userAgent.includes('loon') || url.searchParams.has('loon')) {
-                    订阅格式 = 'loon';
-                } else if (userAgent.includes('clash') || userAgent.includes('meta') || userAgent.includes('mihomo') || url.searchParams.has('clash')) {
-                    订阅格式 = 'clash';
-                }
-            }
-
-            let 订阅转换URL = `${url.origin}/${await MD5MD5(fakeToken)}?token=${fakeToken}`;
-            let req_data = MainData;
-            let 追加UA = 'v2rayn';
-
-            if (url.searchParams.has('b64') || url.searchParams.has('base64')) {
-                订阅格式 = 'base64';
-            } else if (url.searchParams.has('clash')) {
-                追加UA = 'clash';
-            } else if (url.searchParams.has('singbox')) {
-                追加UA = 'singbox';
-            } else if (url.searchParams.has('surge')) {
-                追加UA = 'surge';
-            } else if (url.searchParams.has('quanx')) {
-                追加UA = 'Quantumult%20X';
-            } else if (url.searchParams.has('loon')) {
-                追加UA = 'Loon';
-            }
-
-            const 订阅链接数组 = [...new Set(urls)].filter(item => item?.trim?.());
-
-            if (订阅链接数组.length > 0) {
-                const 请求订阅响应内容 = await getSUB(订阅链接数组, request, 追加UA, userAgentHeader);
-                req_data += 请求订阅响应内容[0].join('\n');
-                订阅转换URL += "|" + 请求订阅响应内容[1];
-
-                if (订阅格式 == 'base64' && !isSubConverterRequest && 请求订阅响应内容[1].includes('://')) {
-                    try {
-                        const u = buildSubUrl(effectiveSubConverter, effectiveSubConfig, 'mixed', 请求订阅响应内容[1], effectiveSubProtocol);
-                        const res = await fetch(u, { headers: { 'User-Agent': 'v2rayn/CF-SUB' } });
-                        if (!res.ok) throw new Error();
-                        req_data += '\n' + atob(await res.text());
-                    } catch (error) {
-                        try {
-                            const fallbackU = buildSubUrl(defaultSubConverter, defaultSubConfig, 'mixed', 请求订阅响应内容[1], defaultSubProtocol);
-                            const res2 = await fetch(fallbackU, { headers: { 'User-Agent': 'v2rayn/CF-SUB' } });
-                            if (res2.ok) req_data += '\n' + atob(await res2.text());
-                        } catch (e) {}
-                    }
-                }
-            }
-
-            if (env.WARP) {
-                订阅转换URL += "|" + (await ADD(env.WARP)).join("|");
-            }
-
-            const utf8Encoder = new TextEncoder();
-            const text = new TextDecoder().decode(utf8Encoder.encode(req_data));
-
-            // 去广告过滤
-            let adKeywords = [];
-            let filteredLines = text.split('\n');
-            if (config_noAds) {
-                adKeywords = config_noAds.split(/[, \r\n]+/).map(k => k.trim().toLowerCase()).filter(k => k.length > 0);
-                if (adKeywords.length > 0) {
-                    filteredLines = filteredLines.filter(line => {
-                        const lowerLine = line.toLowerCase();
-                        return !adKeywords.some(keyword => lowerLine.includes(keyword));
-                    });
-                }
-            }
-
-            const uniqueLines = new Set(filteredLines);
-            const result = [...uniqueLines].join('\n');
-            let base64Data;
-            try {
-                base64Data = btoa(result);
-            } catch (e) {
-                function encodeBase64(data) {
-                    const binary = new TextEncoder().encode(data);
-                    let base64 = '';
-                    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
-                    for (let i = 0; i < binary.length; i += 3) {
-                        const byte1 = binary[i];
-                        const byte2 = binary[i + 1] || 0;
-                        const byte3 = binary[i + 2] || 0;
-                        base64 += chars[byte1 >> 2];
-                        base64 += chars[((byte1 & 3) << 4) | (byte2 >> 4)];
-                        base64 += chars[((byte2 & 15) << 2) | (byte3 >> 6)];
-                        base64 += chars[byte3 & 63];
-                    }
-                    const padding = 3 - (binary.length % 3 || 3);
-                    return base64.slice(0, base64.length - padding) + '=='.slice(0, padding);
-                }
-                base64Data = encodeBase64(result);
-            }
-
-            const responseHeaders = {
-                "content-type": "text/plain; charset=utf-8",
-                "Profile-Update-Interval": `${SUBUpdateTime}`,
-                "Profile-web-page-url": request.url.includes('?') ? request.url.split('?')[0] : request.url,
-            };
-
-            if (订阅格式 == 'base64' || token == fakeToken) {
-                return new Response(base64Data, { headers: responseHeaders });
-            } else {
-                try {
-                    const finalUrl = buildSubUrl(effectiveSubConverter, effectiveSubConfig, 订阅格式, 订阅转换URL, effectiveSubProtocol);
-                    const res = await fetch(finalUrl, { headers: { 'User-Agent': userAgentHeader } });
-                    if (!res.ok) throw new Error();
-                    let content = await res.text();
-                    if (订阅格式 == 'clash') content = clashFix(content);
-                    if (!userAgent.includes('mozilla')) {
-                        responseHeaders["Content-Disposition"] = `attachment; filename*=utf-8''${encodeURIComponent(FileName)}`;
-                    }
-                    return new Response(content, { headers: responseHeaders });
-                } catch (error) {
-                    try {
-                        const fallbackUrl = buildSubUrl(defaultSubConverter, defaultSubConfig, 订阅格式, 订阅转换URL, defaultSubProtocol);
-                        const resFb = await fetch(fallbackUrl, { headers: { 'User-Agent': userAgentHeader } });
-                        if (!resFb.ok) throw new Error();
-                        let contentFb = await resFb.text();
-                        if (订阅格式 == 'clash') contentFb = clashFix(contentFb);
-                        if (!userAgent.includes('mozilla')) {
-                            responseHeaders["Content-Disposition"] = `attachment; filename*=utf-8''${encodeURIComponent(FileName)}`;
-                        }
-                        return new Response(contentFb, { headers: responseHeaders });
-                    } catch (fallbackError) {
-                        return new Response(base64Data, { headers: responseHeaders });
-                    }
+            } else if (legacyAdminPath || isFakeTokenRequest) {
+                selectedSources = await getAllManagedSources(env);
+            } else if (legacyGuestPath) {
+                // 如果没有 SUBS，则使用旧 LINK.txt / LINK 环境变量。
+                selectedSources = await getLegacySources(env);
+                if (!selectedSources.length) {
+                    selectedSources = await getAllManagedSources(env);
                 }
             }
         }
+
+        // ==================== 浏览器 UI ====================
+        if (
+            userAgent.includes('mozilla') &&
+            !url.search &&
+            !isProxyClientUA
+        ) {
+            const status = await getBackendStatus(
+                effectiveSubConverter,
+                effectiveSubConfig,
+                effectiveSubProtocol,
+                hasCustomApi,
+                hasCustomConfig
+            );
+
+            // 新 URL：订阅页面
+            if (tokenData) {
+                return new Response(
+                    renderGuestPage(
+                        url,
+                        tokenData.url,
+                        tokenData.name
+                    ),
+                    { headers: { 'Content-Type': 'text/html;charset=utf-8' } }
+                );
+            }
+
+            // auto / mytoken：管理员后台仍支持旧入口，但新项目推荐 /admin
+            if (legacyAdminPath) {
+                if (isAdminLoginEnabled(adminUser, adminPass)) {
+                    const isLoggedIn = await isAdminLoggedIn(request, mytoken, adminUser, adminPass);
+                    if (!isLoggedIn) {
+                        if (request.method === 'POST') {
+                            return await handleAdminLogin(request, url, mytoken, adminUser, adminPass);
+                        }
+                        return new Response(renderLoginPage(url), {
+                            headers: {
+                                'Content-Type': 'text/html;charset=utf-8',
+                                'Cache-Control': 'no-store'
+                            }
+                        });
+                    }
+                }
+
+                return await handleAdmin(request, env, {
+                    adminUser,
+                    adminPass,
+                    effectiveSubConverter,
+                    effectiveSubConfig,
+                    effectiveSubProtocol,
+                    hasCustomApi,
+                    hasCustomConfig
+                });
+            }
+        }
+
+        // ==================== 原 CF-SUB 核心订阅处理 ====================
+        return await generateSubscription(
+            request,
+            env,
+            selectedSources,
+            {
+                mytoken,
+                fakeToken,
+                effectiveSubConverter,
+                effectiveSubConfig,
+                effectiveSubProtocol,
+                userAgent,
+                userAgentHeader,
+                config_noAds,
+                FileName,
+                UD,
+                expire,
+                tokenData
+            },
+            publicToken
+        );
+}
+
+/* =========================================================
+ * 配置 / 后台状态
+ * ======================================================= */
+
+async function getBackendStatus(api, config, protocol, hasCustomApi, hasCustomConfig) {
+    let customApiOk = false;
+    let customApiVersion = '';
+    let defaultApiOk = false;
+    let defaultApiVersion = '';
+    let customConfigOk = false;
+    let defaultConfigOk = false;
+
+    async function probeApi(targetApi, targetProtocol) {
+        try {
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 1200);
+            const res = await fetch(`${targetProtocol}://${targetApi}/version`, {
+                signal: controller.signal
+            });
+            clearTimeout(timeout);
+            if (res.ok) {
+                return {
+                    ok: true,
+                    version: (await res.text()).trim().substring(0, 30)
+                };
+            }
+        } catch (e) {}
+        return { ok: false };
     }
-};
+
+    async function probeConfig(configUrl) {
+        if (!configUrl) return false;
+        try {
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 1200);
+            const res = await fetch(configUrl, {
+                method: 'GET',
+                signal: controller.signal
+            });
+            clearTimeout(timeout);
+            return res.ok;
+        } catch (e) {
+            return false;
+        }
+    }
+
+    if (hasCustomApi) {
+        const res = await probeApi(api, protocol);
+        customApiOk = res.ok;
+        customApiVersion = res.version || '';
+        if (!customApiOk) {
+            const resDef = await probeApi(defaultSubConverter, defaultSubProtocol);
+            defaultApiOk = resDef.ok;
+            defaultApiVersion = resDef.version || '';
+        }
+    } else {
+        const resDef = await probeApi(defaultSubConverter, defaultSubProtocol);
+        defaultApiOk = resDef.ok;
+        defaultApiVersion = resDef.version || '';
+    }
+
+    if (hasCustomConfig) {
+        customConfigOk = await probeConfig(config);
+        if (!customConfigOk) defaultConfigOk = await probeConfig(defaultSubConfig);
+    } else {
+        defaultConfigOk = await probeConfig(defaultSubConfig);
+    }
+
+    let adminApiHtml = '';
+    let guestApiHtml = '';
+    let finalApiUrl = '';
+    let adminApiCss = '';
+    let guestApiCss = '';
+
+    if (hasCustomApi && customApiOk) {
+        adminApiHtml = `✅SUBAPI状态正常 (${escapeHTML(customApiVersion)})`;
+        guestApiHtml = adminApiHtml;
+        finalApiUrl = `${protocol}://${api}`;
+        adminApiCss = 'status-ok';
+        guestApiCss = 'status-ok';
+    } else if (hasCustomApi && !customApiOk && defaultApiOk) {
+        adminApiHtml = `⚠️SUBAPI无效 已切换为默认配置 ✅默认值可用`;
+        guestApiHtml = `✅SUBAPI状态正常 (${escapeHTML(defaultApiVersion)})`;
+        finalApiUrl = `${defaultSubProtocol}://${defaultSubConverter}`;
+        adminApiCss = 'status-warn';
+        guestApiCss = 'status-ok';
+    } else if (!hasCustomApi && defaultApiOk) {
+        adminApiHtml = `⚠️SUBAPI为空 已切换为默认配置 ✅默认值可用`;
+        guestApiHtml = `✅SUBAPI状态正常 (${escapeHTML(defaultApiVersion)})`;
+        finalApiUrl = `${defaultSubProtocol}://${defaultSubConverter}`;
+        adminApiCss = 'status-warn';
+        guestApiCss = 'status-ok';
+    } else {
+        adminApiHtml = '❌SUBAPI无效待维护';
+        guestApiHtml = adminApiHtml;
+        finalApiUrl = `${defaultSubProtocol}://${defaultSubConverter}`;
+        adminApiCss = 'status-error';
+        guestApiCss = 'status-error';
+    }
+
+    let adminConfigHtml = '';
+    let guestConfigHtml = '';
+    let finalConfigUrl = '';
+    let adminConfigCss = '';
+    let guestConfigCss = '';
+
+    if (hasCustomConfig && customConfigOk) {
+        adminConfigHtml = '✅SUBCONFIG状态正常';
+        guestConfigHtml = adminConfigHtml;
+        finalConfigUrl = config;
+        adminConfigCss = 'status-ok';
+        guestConfigCss = 'status-ok';
+    } else if (hasCustomConfig && !customConfigOk && defaultConfigOk) {
+        adminConfigHtml = '⚠️SUBCONFIG无效 已切换为默认配置 ✅默认值可用';
+        guestConfigHtml = '✅SUBCONFIG状态正常';
+        finalConfigUrl = defaultSubConfig;
+        adminConfigCss = 'status-warn';
+        guestConfigCss = 'status-ok';
+    } else if (!hasCustomConfig && defaultConfigOk) {
+        adminConfigHtml = '⚠️SUBCONFIG为空 已切换为默认配置 ✅默认值可用';
+        guestConfigHtml = '✅SUBCONFIG状态正常';
+        finalConfigUrl = defaultSubConfig;
+        adminConfigCss = 'status-warn';
+        guestConfigCss = 'status-ok';
+    } else {
+        adminConfigHtml = '❌SUBCONFIG无效待维护';
+        guestConfigHtml = adminConfigHtml;
+        finalConfigUrl = defaultSubConfig;
+        adminConfigCss = 'status-error';
+        guestConfigCss = 'status-error';
+    }
+
+    return {
+        adminApiHtml,
+        guestApiHtml,
+        finalApiUrl,
+        adminApiCss,
+        guestApiCss,
+        adminConfigHtml,
+        guestConfigHtml,
+        finalConfigUrl,
+        adminConfigCss,
+        guestConfigCss
+    };
+}
+
+/* =========================================================
+ * SUB / URL 数据
+ * ======================================================= */
+
+function makeSubId() {
+    const bytes = crypto.getRandomValues(new Uint8Array(10));
+    let value = '';
+    for (const b of bytes) value += ID_CHARS[b % ID_CHARS.length];
+    return value;
+}
+
+async function makeRandomToken(env, length = 6) {
+    for (let n = 0; n < 30; n++) {
+        const bytes = crypto.getRandomValues(new Uint8Array(length));
+        let token = '';
+        for (const b of bytes) token += ID_CHARS[b % ID_CHARS.length];
+
+        if (
+            !['admin', 'api', 'login', 'logout', 'favicon.ico'].includes(token.toLowerCase()) &&
+            !(await getToken(env, token))
+        ) {
+            return token;
+        }
+    }
+    throw new Error('随机 URL 生成失败，请重试');
+}
+
+async function getSub(env, id) {
+    if (!env.KV || !id) return null;
+    try {
+        return await env.KV.get(`${SUB_PREFIX}${id}`, 'json');
+    } catch (e) {
+        return null;
+    }
+}
+
+async function getToken(env, token) {
+    if (!env.KV || !token) return null;
+    try {
+        return await env.KV.get(`${URL_PREFIX}${token}`, 'json');
+    } catch (e) {
+        return null;
+    }
+}
+
+async function listSubs(env) {
+    if (!env.KV) return [];
+    const result = [];
+    let cursor;
+
+    do {
+        const page = await env.KV.list({
+            prefix: SUB_PREFIX,
+            ...(cursor ? { cursor } : {})
+        });
+
+        const values = await Promise.all(page.keys.map(item =>
+            getSub(env, item.name.slice(SUB_PREFIX.length))
+        ));
+        for (const data of values) {
+            if (data) result.push(data);
+        }
+
+        cursor = page.list_complete ? undefined : page.cursor;
+    } while (cursor);
+
+    result.sort((a, b) => String(a.name).localeCompare(String(b.name), 'zh-CN'));
+    return result;
+}
+
+async function listTokens(env) {
+    if (!env.KV) return [];
+    const result = [];
+    let cursor;
+
+    do {
+        const page = await env.KV.list({
+            prefix: URL_PREFIX,
+            ...(cursor ? { cursor } : {})
+        });
+
+        const values = await Promise.all(page.keys.map(item =>
+            getToken(env, item.name.slice(URL_PREFIX.length))
+        ));
+        for (const data of values) {
+            if (data) result.push(data);
+        }
+
+        cursor = page.list_complete ? undefined : page.cursor;
+    } while (cursor);
+
+    result.sort((a, b) => String(a.name).localeCompare(String(b.name), 'zh-CN'));
+    return result;
+}
+
+function normalizeAdminPath(value) {
+    let path = String(value || '').trim();
+    if (!path) return DEFAULT_ADMIN_PATH;
+    path = path.replace(/^[/]+/, '').replace(/[/]+$/, '');
+    if (!/^[A-Za-z0-9_-]{2,60}$/.test(path)) return '';
+    return path;
+}
+
+function normalizeName(value) {
+    return String(value || '').trim().replace(/\s+/g, ' ');
+}
+
+function normalizeToken(value) {
+    return String(value || '').trim();
+}
+
+function validName(name) {
+    return name.length >= 1 && name.length <= 80;
+}
+
+function validCustomToken(token) {
+    const lower = token.toLowerCase();
+    const reserved = new Set([
+        'admin', 'api', 'login', 'logout', 'favicon.ico', 'auto',
+        String(mytoken || '').toLowerCase(),
+    ]);
+
+    return (
+        token.length >= 3 &&
+        token.length <= 80 &&
+        /^[A-Za-z0-9_-]+$/.test(token) &&
+        !reserved.has(lower)
+    );
+}
+
+async function isSubNameUsed(env, name, exceptId = '') {
+    const subs = await listSubs(env);
+    return subs.some(s =>
+        s.id !== exceptId &&
+        String(s.name).toLowerCase() === String(name).toLowerCase()
+    );
+}
+
+async function isTokenNameUsed(env, name, exceptToken = '') {
+    const tokens = await listTokens(env);
+    return tokens.some(t =>
+        t.url !== exceptToken &&
+        String(t.name).toLowerCase() === String(name).toLowerCase()
+    );
+}
+
+function cleanSourceList(input) {
+    if (Array.isArray(input)) {
+        return input
+            .flatMap(x => String(x || '').split(/\r?\n/))
+            .map(x => x.trim())
+            .filter(Boolean);
+    }
+
+    return String(input || '')
+        .split(/\r?\n/)
+        .map(x => x.trim())
+        .filter(Boolean);
+}
+
+async function getSourcesForToken(env, tokenData) {
+    const result = [];
+    const ids = Array.isArray(tokenData.subs) ? tokenData.subs : [];
+
+    for (const id of ids) {
+        const sub = await getSub(env, id);
+        if (!sub || sub.enabled === false) continue;
+
+        if (Array.isArray(sub.sources)) result.push(...sub.sources);
+    }
+
+    return [...new Set(result.map(x => String(x).trim()).filter(Boolean))];
+}
+
+async function getAllManagedSources(env) {
+    const result = [];
+    const subs = await listSubs(env);
+
+    for (const sub of subs) {
+        if (sub.enabled === false) continue;
+        if (Array.isArray(sub.sources)) result.push(...sub.sources);
+    }
+
+    // 如果没有创建 SUBS，则兼容旧 CF-SUB 数据
+    if (!result.length) {
+        return await getLegacySources(env);
+    }
+
+    return [...new Set(result.map(x => String(x).trim()).filter(Boolean))];
+}
+
+async function getLegacySources(env) {
+    let data = '';
+    let legacyUrls = [];
+
+    if (env.KV) {
+        await 迁移地址列表(env, 'LINK.txt');
+        data = await env.KV.get('LINK.txt') || '';
+    }
+
+    if (!data) data = env.LINK || MainData || '';
+
+    if (env.LINKSUB) {
+        legacyUrls = await ADD(env.LINKSUB);
+    }
+
+    const all = await ADD(`${data}\n${legacyUrls.join('\n')}`);
+    return [...new Set(all.map(x => String(x).trim()).filter(Boolean))];
+}
+
+async function handleAdmin(request, env, runtime) {
+    if (!env.KV) {
+        return new Response(
+            '未绑定名为 KV 的 Cloudflare KV Namespace。',
+            { status: 500 }
+        );
+    }
+
+    // 管理后台 POST：统一处理配置 / SUB / URL
+    if (request.method === 'POST') {
+        const contentType = request.headers.get('content-type') || '';
+
+        if (contentType.includes('application/x-www-form-urlencoded')) {
+            return new Response('不支持的数据格式', { status: 400 });
+        }
+
+        try {
+            const data = await request.json();
+
+            if (data.type === 'config') {
+                const old = await getConfig(env);
+
+                const next = {
+                    ...old,
+                    subName: normalizeName(data.settings?.subName) || 'CF-SUBS',
+                    subApi: String(data.settings?.subApi ?? old.subApi ?? '').trim(),
+                    subConfig: String(data.settings?.subConfig ?? old.subConfig ?? '').trim(),
+                    subApis: normalizeProviderList(data.settings?.subApis ?? old.subApis),
+                    subConfigs: normalizeProviderList(data.settings?.subConfigs ?? old.subConfigs),
+                    shortLinks: normalizeProviderList(data.settings?.shortLinks ?? old.shortLinks),
+                    noAds: String(data.settings?.noAds ?? old.noAds ?? '').trim(),
+
+                    // 保留旧配置
+                    user: String(data.settings?.user || old.user || ''),
+                    pass: data.settings?.pass
+                        ? String(data.settings.pass)
+                        : String(old.pass || ''),
+                    adminPath: normalizeAdminPath(data.settings?.adminPath || old.adminPath) || DEFAULT_ADMIN_PATH,
+
+                    fakeMode: String(data.settings?.fakeMode ?? old.fakeMode ?? ''),
+                    fakeUrl: String(data.settings?.fakeUrl ?? old.fakeUrl ?? ''),
+                    fakeUrl302: String(data.settings?.fakeUrl302 ?? old.fakeUrl302 ?? ''),
+                    fakeCode: String(data.settings?.fakeCode ?? old.fakeCode ?? '')
+                };
+
+                await env.KV.put('CONFIG.json', JSON.stringify(next));
+                return jsonResponse({ ok: true, adminPath: next.adminPath });
+            }
+
+            if (data.type === 'sub_create') {
+                const name = normalizeName(data.name);
+                const sources = cleanSourceList(data.sources);
+
+                if (!validName(name)) return new Response('SUBS 名称不能为空且不能超过 80 个字符', { status: 400 });
+                if (await isSubNameUsed(env, name)) return new Response('SUBS 名称已存在，不能重名', { status: 409 });
+                if (!sources.length) return new Response('至少添加一个订阅地址或单节点', { status: 400 });
+
+                const id = makeSubId();
+                const item = {
+                    id,
+                    name,
+                    enabled: data.enabled !== false,
+                    sources,
+                    createdAt: new Date().toISOString(),
+                    updatedAt: new Date().toISOString()
+                };
+
+                await env.KV.put(`${SUB_PREFIX}${id}`, JSON.stringify(item));
+                return jsonResponse({ ok: true, sub: item });
+            }
+
+            if (data.type === 'sub_update') {
+                const id = String(data.id || '');
+                const old = await getSub(env, id);
+                if (!old) return new Response('SUBS 不存在', { status: 404 });
+
+                const name = normalizeName(data.name);
+                const sources = cleanSourceList(data.sources);
+
+                if (!validName(name)) return new Response('SUBS 名称不能为空且不能超过 80 个字符', { status: 400 });
+                if (await isSubNameUsed(env, name, id)) return new Response('SUBS 名称已存在，不能重名', { status: 409 });
+                if (!sources.length) return new Response('至少添加一个订阅地址或单节点', { status: 400 });
+
+                const item = {
+                    ...old,
+                    name,
+                    sources,
+                    enabled: data.enabled !== false,
+                    updatedAt: new Date().toISOString()
+                };
+
+                await env.KV.put(`${SUB_PREFIX}${id}`, JSON.stringify(item));
+                return jsonResponse({ ok: true, sub: item });
+            }
+
+            if (data.type === 'sub_delete') {
+                const id = String(data.id || '');
+                if (!(await getSub(env, id))) return new Response('SUBS 不存在', { status: 404 });
+
+                await env.KV.delete(`${SUB_PREFIX}${id}`);
+
+                // 删除 SUB 后，自动从所有 URL 的绑定列表移除
+                const tokens = await listTokens(env);
+                const affected = tokens.filter(item => Array.isArray(item.subs) && item.subs.includes(id));
+                await Promise.all(affected.map(item => {
+                    item.subs = item.subs.filter(x => x !== id);
+                    item.updatedAt = new Date().toISOString();
+                    return env.KV.put(`${URL_PREFIX}${item.url}`, JSON.stringify(item));
+                }));
+
+                return jsonResponse({ ok: true });
+            }
+
+            if (data.type === 'url_create') {
+                const name = normalizeName(data.name);
+                const mode = data.mode === 'custom' ? 'custom' : 'random';
+                let token = normalizeToken(data.url || data.token);
+                const selected = Array.isArray(data.subs)
+                    ? [...new Set(data.subs.map(String))]
+                    : [];
+
+                if (!validName(name)) return new Response('链接名称不能为空且不能超过 80 个字符', { status: 400 });
+                if (await isTokenNameUsed(env, name)) return new Response('链接名称已存在，不能重名', { status: 409 });
+
+                if (mode === 'custom') {
+                    if (!validCustomToken(token)) {
+                        return new Response('自定义 URL 只能使用 3-80 位字母、数字、下划线和短横线', { status: 400 });
+                    }
+                    if (await getToken(env, token)) {
+                        return new Response('URL 已存在，请使用其他 URL', { status: 409 });
+                    }
+                } else {
+                    token = await makeRandomToken(env, 6);
+                }
+
+                const validSubs = [];
+                for (const id of selected) {
+                    if (await getSub(env, id)) validSubs.push(id);
+                }
+
+                if (!validSubs.length) {
+                    return new Response('至少选择一个聚合节点', { status: 400 });
+                }
+
+                const item = {
+                    url: token,
+                    name,
+                    subs: validSubs,
+                    createdAt: new Date().toISOString(),
+                    updatedAt: new Date().toISOString()
+                };
+
+                await env.KV.put(`${URL_PREFIX}${token}`, JSON.stringify(item));
+                return jsonResponse({ ok: true, url: item });
+            }
+
+            if (data.type === 'url_update') {
+                const oldToken = normalizeToken(data.oldUrl || data.oldToken || data.url || data.token);
+                const newToken = normalizeToken(data.newUrl || data.newToken || data.url || data.token);
+                const old = await getToken(env, oldToken);
+                if (!old) return new Response('URL 不存在', { status: 404 });
+
+                const name = normalizeName(data.name);
+                const selected = Array.isArray(data.subs)
+                    ? [...new Set(data.subs.map(String))]
+                    : [];
+
+                if (!validName(name)) return new Response('链接名称不能为空且不能超过 80 个字符', { status: 400 });
+                if (!validCustomToken(newToken)) {
+                    return new Response('URL 只能使用 3-80 位字母、数字、下划线和短横线', { status: 400 });
+                }
+                if (await isTokenNameUsed(env, name, oldToken)) return new Response('链接名称已存在，不能重名', { status: 409 });
+
+                if (newToken !== oldToken && await getToken(env, newToken)) {
+                    return new Response('新的 URL 已存在，请使用其他 URL', { status: 409 });
+                }
+
+                const validSubs = [];
+                for (const id of selected) {
+                    if (await getSub(env, id)) validSubs.push(id);
+                }
+
+                if (!validSubs.length) return new Response('至少选择一个聚合节点', { status: 400 });
+
+                const item = {
+                    ...old,
+                    url: newToken,
+                    name,
+                    subs: validSubs,
+                    updatedAt: new Date().toISOString()
+                };
+
+                // URL 本身发生变化时，迁移 KV Key，确保旧地址立即失效、新地址立即生效。
+                if (newToken !== oldToken) {
+                    await env.KV.put(`${URL_PREFIX}${newToken}`, JSON.stringify(item));
+                    await env.KV.delete(`${URL_PREFIX}${oldToken}`);
+                } else {
+                    await env.KV.put(`${URL_PREFIX}${oldToken}`, JSON.stringify(item));
+                }
+
+                return jsonResponse({ ok: true, url: item, oldUrl: oldToken });
+            }
+
+            if (data.type === 'url_delete') {
+                const token = normalizeToken(data.url || data.token);
+                if (!(await getToken(env, token))) return new Response('URL 不存在', { status: 404 });
+
+                await env.KV.delete(`${URL_PREFIX}${token}`);
+                return jsonResponse({ ok: true });
+            }
+
+            if (['subapi_create','subapi_update','subapi_delete','subconfig_create','subconfig_update','subconfig_delete','shortlink_create','shortlink_update','shortlink_delete'].includes(data.type)) {
+                const cfg = await getConfig(env);
+                const key = data.type.startsWith('subapi_') ? 'subApis' : data.type.startsWith('subconfig_') ? 'subConfigs' : 'shortLinks';
+                const list = normalizeProviderList(cfg[key]);
+                const action = data.type.split('_')[1];
+                const id = String(data.id || '').trim();
+                if (action === 'delete') {
+                    if (!list.some(x => x.id === id)) return new Response('项目不存在', { status: 404 });
+                    cfg[key] = list.filter(x => x.id !== id);
+                } else {
+                    const name = normalizeName(data.name);
+                    const value = String(data.url || data.apiUrl || '').trim();
+                    if (!validName(name)) return new Response('备注不能为空且不能超过 80 个字符', { status: 400 });
+                    if (!/^https?:\/\//i.test(value)) return new Response('URL 必须以 http:// 或 https:// 开头', { status: 400 });
+                    const item = { id: id || makeSubId(), name, url: value, enabled: data.enabled !== false };
+                    if (key === 'shortLinks') item.providerType = String(data.providerType || 'json-root');
+                    if (action === 'create') list.push(item);
+                    else { const idx=list.findIndex(x=>x.id===id); if(idx<0) return new Response('项目不存在',{status:404}); list[idx]={...list[idx],...item,id}; }
+                    cfg[key]=list;
+                }
+                await env.KV.put('CONFIG.json', JSON.stringify(cfg));
+                return jsonResponse({ ok:true, items:list });
+            }
+
+            return new Response('不支持的数据类型', { status: 400 });
+        } catch (e) {
+            return new Response(`服务器错误: ${e.message}`, { status: 500 });
+        }
+    }
+
+    const [subs, tokens, settings] = await Promise.all([
+        listSubs(env),
+        listTokens(env),
+        getConfig(env)
+    ]);
+
+    const status = await getBackendStatus(
+        runtime.effectiveSubConverter,
+        runtime.effectiveSubConfig,
+        runtime.effectiveSubProtocol,
+        runtime.hasCustomApi,
+        runtime.hasCustomConfig
+    );
+
+    return new Response(
+        renderAdminPage(
+            new URL(request.url),
+            env,
+            subs,
+            tokens,
+            settings,
+            status
+        ),
+        {
+            headers: {
+                'Content-Type': 'text/html;charset=utf-8',
+                'Cache-Control': 'no-store'
+            }
+        }
+    );
+}
+
+async function getConfig(env) {
+    const defaults = {
+        subName: 'CF-SUBS',
+        subApi: '',
+        subConfig: '',
+        subApis: [],
+        subConfigs: [],
+        shortLinks: [
+            { id: 'hooleeas', name: 'Hulian Short', url: 'https://url.hooleeas.com/', providerType: 'json-root', enabled: true }
+        ],
+        noAds: '',
+        user: '',
+        pass: '',
+        adminPath: DEFAULT_ADMIN_PATH,
+        fakeMode: '',
+        fakeUrl: '',
+        fakeUrl302: '',
+        fakeCode: ''
+    };
+
+    if (!env.KV) return defaults;
+
+    try {
+        const raw = await env.KV.get('CONFIG.json');
+        return raw ? { ...defaults, ...JSON.parse(raw) } : defaults;
+    } catch (e) {
+        return defaults;
+    }
+}
+
+function jsonResponse(data, status = 200) {
+    return new Response(JSON.stringify(data), {
+        status,
+        headers: {
+            'Content-Type': 'application/json;charset=UTF-8',
+            'Cache-Control': 'no-store'
+        }
+    });
+}
+
+/* =========================================================
+ * 订阅输出：保留 CF-SUB 原核心逻辑
+ * ======================================================= */
+
+async function generateSubscription(request, env, sourceList, runtime, token) {
+    let allSources = [...new Set((sourceList || []).map(x => String(x).trim()).filter(Boolean))];
+
+    let 自建节点 = '';
+    let 订阅链接 = '';
+
+    for (const x of allSources) {
+        if (x.toLowerCase().startsWith('http')) {
+            订阅链接 += x + '\n';
+        } else {
+            自建节点 += x + '\n';
+        }
+    }
+
+    let nodeUrls = await ADD(订阅链接);
+    let req_data = 自建节点;
+
+    const isSubConverterRequest =
+        request.headers.get('subconverter-request') ||
+        request.headers.get('subconverter-version') ||
+        runtime.userAgent.includes('subconverter');
+
+    let 订阅格式 = 'base64';
+
+    if (
+        !(
+            runtime.userAgent.includes('null') ||
+            isSubConverterRequest ||
+            runtime.userAgent.includes('nekobox') ||
+            runtime.userAgent.includes('cf-sub')
+        )
+    ) {
+        if (
+            runtime.userAgent.includes('sing-box') ||
+            runtime.userAgent.includes('singbox') ||
+            new URL(request.url).searchParams.has('sb') ||
+            new URL(request.url).searchParams.has('singbox')
+        ) {
+            订阅格式 = 'singbox';
+        } else if (
+            runtime.userAgent.includes('surge') ||
+            new URL(request.url).searchParams.has('surge')
+        ) {
+            订阅格式 = 'surge';
+        } else if (
+            runtime.userAgent.includes('quantumult') ||
+            new URL(request.url).searchParams.has('quanx')
+        ) {
+            订阅格式 = 'quanx';
+        } else if (
+            runtime.userAgent.includes('loon') ||
+            new URL(request.url).searchParams.has('loon')
+        ) {
+            订阅格式 = 'loon';
+        } else if (
+            runtime.userAgent.includes('clash') ||
+            runtime.userAgent.includes('meta') ||
+            runtime.userAgent.includes('mihomo') ||
+            new URL(request.url).searchParams.has('clash')
+        ) {
+            订阅格式 = 'clash';
+        }
+    }
+
+    if (runtime.tokenData?.target && runtime.tokenData.target !== 'auto') {
+        订阅格式 = runtime.tokenData.target;
+    }
+
+    const sourceToken = new URL(request.url).searchParams.get('sourceToken') || token || '';
+    const conversionSeed = `${new URL(request.url).origin}/${await MD5MD5(runtime.fakeToken)}?token=${encodeURIComponent(runtime.fakeToken)}${sourceToken ? `&sourceToken=${encodeURIComponent(sourceToken)}` : ''}`;
+    let 订阅转换URL = conversionSeed;
+    let 追加UA = 'v2rayn';
+    const requestUrl = new URL(request.url);
+
+    if (requestUrl.searchParams.has('b64') || requestUrl.searchParams.has('base64')) {
+        订阅格式 = 'base64';
+    } else if (requestUrl.searchParams.has('clash')) {
+        追加UA = 'clash';
+    } else if (requestUrl.searchParams.has('singbox')) {
+        追加UA = 'singbox';
+    } else if (requestUrl.searchParams.has('surge')) {
+        追加UA = 'surge';
+    } else if (requestUrl.searchParams.has('quanx')) {
+        追加UA = 'Quantumult%20X';
+    } else if (requestUrl.searchParams.has('loon')) {
+        追加UA = 'Loon';
+    }
+
+    nodeUrls = [...new Set(nodeUrls)].filter(item => item && item.trim());
+
+    if (nodeUrls.length > 0) {
+        const 请求订阅响应内容 = await getSUB(
+            nodeUrls,
+            request,
+            追加UA,
+            runtime.userAgentHeader
+        );
+
+        req_data += 请求订阅响应内容[0].join('\n');
+        订阅转换URL += '|' + 请求订阅响应内容[1];
+
+        // 原 CF-SUB：base64 模式下，对结构化订阅再做 mixed 转换
+        if (
+            订阅格式 === 'base64' &&
+            !isSubConverterRequest &&
+            请求订阅响应内容[1].includes('://')
+        ) {
+            try {
+                const u = buildSubUrl(
+                    runtime.effectiveSubConverter,
+                    runtime.effectiveSubConfig,
+                    'mixed',
+                    请求订阅响应内容[1],
+                    runtime.effectiveSubProtocol
+                );
+
+                const res = await fetch(u, {
+                    headers: { 'User-Agent': 'v2rayn/CF-SUB' }
+                });
+
+                if (!res.ok) throw new Error();
+
+                req_data += '\n' + atob(await res.text());
+            } catch (error) {
+                try {
+                    const fallbackU = buildSubUrl(
+                        defaultSubConverter,
+                        defaultSubConfig,
+                        'mixed',
+                        请求订阅响应内容[1],
+                        defaultSubProtocol
+                    );
+
+                    const res2 = await fetch(fallbackU, {
+                        headers: { 'User-Agent': 'v2rayn/CF-SUB' }
+                    });
+
+                    if (res2.ok) req_data += '\n' + atob(await res2.text());
+                } catch (e) {}
+            }
+        }
+    }
+
+    // 原 CF-SUB WARP 支持
+    if (env.WARP) {
+        const warpList = await ADD(env.WARP);
+        订阅转换URL += '|' + warpList.join('|');
+    }
+
+    const text = new TextDecoder().decode(
+        new TextEncoder().encode(req_data)
+    );
+
+    // 原 CF-SUB NOADS
+    let filteredLines = text.split('\n');
+
+    if (runtime.config_noAds) {
+        const adKeywords = runtime.config_noAds
+            .split(/[, \r\n]+/)
+            .map(k => k.trim().toLowerCase())
+            .filter(k => k.length > 0);
+
+        if (adKeywords.length > 0) {
+            filteredLines = filteredLines.filter(line => {
+                const lowerLine = line.toLowerCase();
+                return !adKeywords.some(keyword => lowerLine.includes(keyword));
+            });
+        }
+    }
+
+    const uniqueLines = new Set(filteredLines);
+    const result = [...uniqueLines].join('\n');
+
+    let base64Data;
+
+    try {
+        base64Data = btoa(result);
+    } catch (e) {
+        base64Data = encodeBase64(result);
+    }
+
+    const responseHeaders = {
+        'content-type': 'text/plain; charset=utf-8',
+        'Profile-Update-Interval': `${SUBUpdateTime}`,
+        'Profile-web-page-url': request.url.includes('?')
+            ? request.url.split('?')[0]
+            : request.url
+    };
+
+    if (订阅格式 === 'base64' || token === runtime.fakeToken) {
+        return new Response(base64Data, { headers: responseHeaders });
+    }
+
+    try {
+        const backendPairs = await getSelectedBackends(env, runtime.tokenData, runtime);
+        let lastError;
+        for (const backend of backendPairs) {
+            try {
+                const finalUrl = buildSubUrl(backend.api, backend.config, 订阅格式, 订阅转换URL, backend.protocol);
+                const res = await fetch(finalUrl, { headers: { 'User-Agent': runtime.userAgentHeader } });
+                if (!res.ok) throw new Error(`SUBAPI ${res.status}`);
+                let content = await res.text();
+                if (订阅格式 === 'clash') content = clashFix(content);
+                if (!runtime.userAgent.includes('mozilla')) {
+                    responseHeaders['Content-Disposition'] = `attachment; filename*=utf-8''${encodeURIComponent(runtime.FileName)}`;
+                }
+                return new Response(content, { headers: responseHeaders });
+            } catch (e) { lastError = e; }
+        }
+        throw lastError || new Error('没有可用的 SUBAPI/SUBCONFIG');
+    } catch (error) {
+        try {
+            const fallbackUrl = buildSubUrl(defaultSubConverter, defaultSubConfig, 订阅格式, 订阅转换URL, defaultSubProtocol);
+            const resFb = await fetch(fallbackUrl, { headers: { 'User-Agent': runtime.userAgentHeader } });
+            if (!resFb.ok) throw new Error();
+            let contentFb = await resFb.text();
+            if (订阅格式 === 'clash') contentFb = clashFix(contentFb);
+            return new Response(contentFb, { headers: responseHeaders });
+        } catch (fallbackError) {
+            return new Response(base64Data, { headers: responseHeaders });
+        }
+    }
+
+}
+
+/* =========================================================
+ * 以下为原 CF-SUB 核心函数：保持原行为
+ * ======================================================= */
+
+function normalizeProviderList(input) {
+    if (!Array.isArray(input)) return [];
+    return input.map(x => ({
+        id: String(x?.id || makeSubId()),
+        name: normalizeName(x?.name || '未命名'),
+        url: String(x?.url || '').trim(),
+        enabled: x?.enabled !== false,
+        ...(x?.providerType ? { providerType: String(x.providerType) } : {})
+    })).filter(x => x.url);
+}
+
+async function getSelectedBackends(env, tokenData, runtime) {
+    const cfg = await getConfig(env);
+    const apis = normalizeProviderList(cfg.subApis).filter(x => x.enabled);
+    const configs = normalizeProviderList(cfg.subConfigs).filter(x => x.enabled);
+    const selectedApis = (tokenData?.subApiIds || []).map(id => apis.find(x => x.id === id)).filter(Boolean);
+    const selectedConfigs = (tokenData?.subConfigIds || []).map(id => configs.find(x => x.id === id)).filter(Boolean);
+    const apiList = selectedApis.length ? selectedApis : (apis.length ? apis : [{ url: runtime.effectiveSubConverter }]);
+    const configList = selectedConfigs.length ? selectedConfigs : (configs.length ? configs : [{ url: runtime.effectiveSubConfig }]);
+    const pairs=[];
+    for(const api of apiList){ let apiUrl=String(api.url||'').trim(), protocol=/^http:\/\//i.test(apiUrl)?'http':'https'; apiUrl=apiUrl.replace(/^https?:\/\//i,'').replace(/\/+$/,''); for(const config of configList) pairs.push({api:apiUrl,config:config.url,protocol}); }
+    return pairs.length ? pairs : [{api:runtime.effectiveSubConverter,config:runtime.effectiveSubConfig,protocol:runtime.effectiveSubProtocol}];
+}
+
+async function handlePublicGenerate(request, env, requestUrl) {
+    if (!env.KV) return jsonResponse({ok:false,error:'未绑定 KV'},500);
+    try {
+        const data=await request.json(); const sources=cleanSourceList(data.sources||data.url||'');
+        if(!sources.length) return jsonResponse({ok:false,error:'请输入至少一个订阅链接'},400);
+        if(sources.length>100) return jsonResponse({ok:false,error:'订阅链接最多 100 条'},400);
+        const cfg=await getConfig(env); const apis=normalizeProviderList(cfg.subApis).filter(x=>x.enabled), configs=normalizeProviderList(cfg.subConfigs).filter(x=>x.enabled);
+        const apiIds=Array.isArray(data.subApiIds)?[...new Set(data.subApiIds.map(String))].filter(id=>apis.some(x=>x.id===id)):[];
+        const configIds=Array.isArray(data.subConfigIds)?[...new Set(data.subConfigIds.map(String))].filter(id=>configs.some(x=>x.id===id)):[];
+        if(apis.length&&!apiIds.length)return jsonResponse({ok:false,error:'请选择至少一个 SUBAPI'},400);
+        if(configs.length&&!configIds.length)return jsonResponse({ok:false,error:'请选择至少一个 SUBCONFIG'},400);
+        const token=await makeRandomToken(env,8); const name=normalizeName(data.name||`SUB-UI ${token}`);
+        const target=['auto','clash','singbox','surge','quanx','loon','mixed'].includes(String(data.target))?String(data.target):'auto';
+        const item={url:token,name,sources,subs:[],subApiIds:apiIds,subConfigIds:configIds,target,shortLinkId:String(data.shortLinkId||''),createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),type:'sub-ui'};
+        await env.KV.put(`${URL_PREFIX}${token}`,JSON.stringify(item));
+        const subscriptionUrl=`${requestUrl.origin}/${encodeURIComponent(token)}`; let shortUrl='';
+        const provider=normalizeProviderList(cfg.shortLinks).find(x=>x.id===item.shortLinkId&&x.enabled);
+        if(provider){ shortUrl=await createShortUrl(provider,subscriptionUrl); if(shortUrl){item.shortUrl=shortUrl;await env.KV.put(`${URL_PREFIX}${token}`,JSON.stringify(item));} }
+        return jsonResponse({ok:true,url:item,subscription_url:subscriptionUrl,short_url:shortUrl||subscriptionUrl});
+    }catch(e){return jsonResponse({ok:false,error:e?.message||String(e)},500)}
+}
+
+async function createShortUrl(provider,longUrl){
+    const type=provider.providerType||'json-root';
+    if(type==='json-root'){const res=await fetch(provider.url,{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},body:JSON.stringify({url:longUrl})});if(!res.ok)throw new Error(`短链服务返回 HTTP ${res.status}`);const data=await res.json();if(!data.short_url)throw new Error('短链服务未返回 short_url');return new URL(data.short_url,provider.url).toString();}
+    if(type==='v1mk'){const form=new FormData();form.append('longUrl',btoa(longUrl));const res=await fetch(provider.url,{method:'POST',body:form});if(!res.ok)throw new Error(`短链服务返回 HTTP ${res.status}`);const data=await res.json();return String(data.short_url||data.url||data.shortUrl||'').trim();}
+    throw new Error('不支持的短链服务类型');
+}
 
 function buildSubUrl(api, config, target, urlToConvert, protocol) {
     let base = `${protocol}://${api}/sub?target=${target}&url=${encodeURIComponent(urlToConvert)}&insert=false&config=${encodeURIComponent(config)}&emoji=true&list=false&tfo=false&scv=true&fdn=false&sort=false`;
@@ -531,12 +1378,70 @@ function base64Decode(str) {
     return decoder.decode(bytes);
 }
 
+// Cloudflare Workers 不保证 WebCrypto 支持 MD5。
+// 使用纯 JS MD5，避免 crypto.subtle.digest('MD5') 触发 Worker 1101。
+function md5Hex(input) {
+    const data = new TextEncoder().encode(String(input));
+    const bitLen = data.length * 8;
+    const len = (((data.length + 8) >> 6) + 1) * 64;
+    const bytes = new Uint8Array(len);
+    bytes.set(data);
+    bytes[data.length] = 0x80;
+
+    const view = new DataView(bytes.buffer);
+    view.setUint32(len - 8, bitLen >>> 0, true);
+    view.setUint32(len - 4, Math.floor(bitLen / 0x100000000), true);
+
+    let a0 = 0x67452301;
+    let b0 = 0xefcdab89;
+    let c0 = 0x98badcfe;
+    let d0 = 0x10325476;
+
+    const s = [
+        7,12,17,22, 7,12,17,22, 7,12,17,22, 7,12,17,22,
+        5,9,14,20, 5,9,14,20, 5,9,14,20, 5,9,14,20,
+        4,11,16,23, 4,11,16,23, 4,11,16,23, 4,11,16,23,
+        6,10,15,21, 6,10,15,21, 6,10,15,21, 6,10,15,21
+    ];
+    const K = new Uint32Array(64);
+    for (let i = 0; i < 64; i++) {
+        K[i] = Math.floor(Math.abs(Math.sin(i + 1)) * 0x100000000) >>> 0;
+    }
+
+    const leftRotate = (x, amount) => ((x << amount) | (x >>> (32 - amount))) >>> 0;
+
+    for (let offset = 0; offset < bytes.length; offset += 64) {
+        const M = new Uint32Array(16);
+        for (let i = 0; i < 16; i++) M[i] = view.getUint32(offset + i * 4, true);
+
+        let A = a0, B = b0, C = c0, D = d0;
+        for (let i = 0; i < 64; i++) {
+            let F, g;
+            if (i < 16) { F = (B & C) | (~B & D); g = i; }
+            else if (i < 32) { F = (D & B) | (~D & C); g = (5 * i + 1) % 16; }
+            else if (i < 48) { F = B ^ C ^ D; g = (3 * i + 5) % 16; }
+            else { F = C ^ (B | ~D); g = (7 * i) % 16; }
+            F = (F + A + K[i] + M[g]) >>> 0;
+            A = D; D = C; C = B; B = (B + leftRotate(F, s[i])) >>> 0;
+        }
+        a0 = (a0 + A) >>> 0;
+        b0 = (b0 + B) >>> 0;
+        c0 = (c0 + C) >>> 0;
+        d0 = (d0 + D) >>> 0;
+    }
+
+    const out = new Uint8Array(16);
+    const outView = new DataView(out.buffer);
+    outView.setUint32(0, a0, true);
+    outView.setUint32(4, b0, true);
+    outView.setUint32(8, c0, true);
+    outView.setUint32(12, d0, true);
+    return Array.from(out, b => b.toString(16).padStart(2, '0')).join('');
+}
+
 async function MD5MD5(text) {
-    const encoder = new TextEncoder();
-    const firstPass = await crypto.subtle.digest('MD5', encoder.encode(text));
-    const firstHex = Array.from(new Uint8Array(firstPass)).map(b => b.toString(16).padStart(2, '0')).join('');
-    const secondPass = await crypto.subtle.digest('MD5', encoder.encode(firstHex.slice(7, 27)));
-    return Array.from(new Uint8Array(secondPass)).map(b => b.toString(16).padStart(2, '0')).join('').toLowerCase();
+    const firstHex = md5Hex(text);
+    return md5Hex(firstHex.slice(7, 27));
 }
 
 function clashFix(content) {
@@ -648,7 +1553,7 @@ async function getUrl(request, targetUrl, 追加UA, userAgentHeader) {
     }));
 }
 
-function isValidBase64(str) { return /^[A-Za-z0-9+/=]+$/.test(str.replace(/\s/g, '')); }
+function isValidBase64(str) { const v = String(str || '').replace(/\s/g, ''); return v.length >= 4 && v.length % 4 === 0 && /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(v); }
 
 async function 迁移地址列表(env, txt = 'ADD.txt') {
     const 旧数据 = await env.KV.get(`/${txt}`);
@@ -728,12 +1633,12 @@ function getToolStyles() {
         .link-url { display: block; width: 100%; word-wrap: break-word; overflow-wrap: break-word; word-break: break-all; white-space: normal; padding: 10px; border: 1px solid rgba(229, 229, 223, 0.8); border-radius: 8px; background: rgba(250, 250, 250, 0.7); color: #1f4b99; text-decoration: none; transition: all 0.3s ease; }
         .link-url:hover { background: rgba(31, 75, 153, 0.05); border-color: #1f4b99; }
         .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
-        button { min-height: 36px; padding: 8px 16px; border: 1px solid #343a40; border-radius: 10px; background: #2f3338; color: #fff; font-size: 14px; cursor: pointer; font-weight: 600; transition: all 0.3s ease; }
-        button:hover { background: #1f2327; box-shadow: 0 4px 12px rgba(34, 34, 34, 0.15); }
+        button, .button { min-height: 36px; padding: 8px 16px; border: 1px solid #343a40; border-radius: 10px; background: #2f3338; color: #fff; font-size: 14px; cursor: pointer; font-weight: 600; transition: all 0.3s ease; text-decoration: none; display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; }
+        button:hover, .button:hover { background: #1f2327; box-shadow: 0 4px 12px rgba(34, 34, 34, 0.15); }
         button.secondary { background: #fff; color: #222; border-color: #c8c8c0; }
         button.secondary:hover { background: #f1f3f5; }
-        button.danger { background: #dc3545; border-color: #dc3545; }
-        button.danger:hover { background: #c82333; box-shadow: 0 4px 12px rgba(220, 53, 69, 0.2); }
+        button.danger, .button.danger { background: #dc3545; border-color: #dc3545; }
+        button.danger:hover, .button.danger:hover { background: #c82333; box-shadow: 0 4px 12px rgba(220, 53, 69, 0.2); }
         button:disabled { opacity: 0.65; cursor: default; }
         .field { margin-top: 12px; }
         label { display: block; margin-bottom: 6px; font-weight: 600; color: #1a1a1a; transition: color 0.3s; }
@@ -763,8 +1668,8 @@ function getToolStyles() {
             .link-url:hover { background: rgba(100, 181, 246, 0.1); border-color: #64b5f6; }
             input, textarea, select { background: rgba(20, 20, 20, 0.8); color: #fff; border-color: rgba(255,255,255,0.2); }
             input:focus, textarea:focus, select:focus { background: #000; border-color: #3b82f6; }
-            button { background: #3f4650; color: #fff; border-color: #69717c; box-shadow: 0 2px 8px rgba(0,0,0,0.28); }
-            button:hover { background: #525b67; border-color: #858f9b; box-shadow: 0 4px 14px rgba(0,0,0,0.4); }
+            button, .button { background: #3f4650; color: #fff; border-color: #69717c; box-shadow: 0 2px 8px rgba(0,0,0,0.28); }
+            button:hover, .button:hover { background: #525b67; border-color: #858f9b; box-shadow: 0 4px 14px rgba(0,0,0,0.4); }
             button.secondary { background: #3a414a; color: #fff; border-color: #69717c; }
             button.secondary:hover { background: #4b5561; border-color: #858f9b; }
             button.danger { background: #b8323f; color: #fff; border-color: #d24b58; }
@@ -876,9 +1781,9 @@ function renderToolScripts(includeEditor = false) {
                 body: JSON.stringify({
                     type: 'config',
                     settings: {
-                        guest: document.getElementById('sec-guest') ? document.getElementById('sec-guest').value : '',
                         user: document.getElementById('sec-user') ? document.getElementById('sec-user').value : '',
                         pass: secPass,
+                        adminPath: document.getElementById('sec-admin-path') ? document.getElementById('sec-admin-path').value : 'admin',
                         subName: document.getElementById('config-subname') ? document.getElementById('config-subname').value : '',
                         subApi: document.getElementById('config-subapi') ? document.getElementById('config-subapi').value : '',
                         subConfig: document.getElementById('config-subconfig') ? document.getElementById('config-subconfig').value : '',
@@ -893,10 +1798,18 @@ function renderToolScripts(includeEditor = false) {
             }).then(function (res) {
                 if (!res.ok) throw new Error('HTTP ' + res.status);
                 return res.text();
-            }).then(function () {
-                statusElem.textContent = '已保存 ' + new Date().toLocaleString();
-                statusElem.style.color = 'var(--coral, #2e7d32)';
-                setTimeout(() => window.location.reload(), 500);
+            }).then(function (res) {
+                return res.text().then(function (text) {
+                    let data = {};
+                    try { data = JSON.parse(text); } catch (e) {}
+                    statusElem.textContent = '已保存 ' + new Date().toLocaleString();
+                    statusElem.style.color = 'var(--coral, #2e7d32)';
+                    if (isSec && data.adminPath) {
+                        setTimeout(() => window.location.replace('/'), 300);
+                    } else {
+                        setTimeout(() => window.location.reload(), 500);
+                    }
+                });
             }).catch(function (err) {
                 statusElem.textContent = '保存失败: 网络异常或超时';
                 statusElem.style.color = '#c62828';
@@ -967,255 +1880,21 @@ ${error ? `<div class="error">${escapeHTML(error)}</div>` : ''}
 </html>`;
 }
 
-function renderGuestPage(url, guest, displayApiUrl, displayConfig, apiHtml, configHtml, apiCss, configCss) {
-    return `<!DOCTYPE html>
-<html>
-<head>
-<title>${escapeHTML(FileName)}访客订阅</title>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<style>${getToolStyles()}</style>
-<script src="https://cdn.jsdelivr.net/npm/@keeex/qrcodejs-kx@1.0.2/qrcode.min.js"></script>
-</head>
-<body>
-<div id="copyNotice" class="toast"></div>
-<main class="page">
-<header class="header">
-<h1 class="title">${escapeHTML(FileName)} 访客订阅</h1>
-<div class="subtitle">复制订阅链接或生成二维码</div>
-</header>
-<section class="panel">
-<h2 class="section-title">订阅链接</h2>
-${renderLinkList(getSubscriptionLinks(url, guest))}
-</section>
-<section class="panel">
-<h2 class="section-title">订阅转换服务</h2>
-<div class="link-list">
-<div class="link-item">
-<div class="link-label">订阅转换后端 SUBAPI</div>
-<div class="status-indicator ${apiCss}">${apiHtml}</div>
-<div class="section-note" style="margin-top:12px; margin-bottom:6px;">当前配置</div>
-<a class="link-url" href="${escapeHTML(displayApiUrl)}" target="_blank">${escapeHTML(displayApiUrl)}</a>
-</div>
-<div class="link-item">
-<div class="link-label">订阅转换规则 SUBCONFIG</div>
-<div class="status-indicator ${configCss}">${configHtml}</div>
-<div class="section-note" style="margin-top:12px; margin-bottom:6px;">当前配置</div>
-<a class="link-url" href="${escapeHTML(displayConfig)}" target="_blank">${escapeHTML(displayConfig)}</a>
-</div>
-</div>
-</section>
-<div id="current-qrcode"></div>
-</main>
-${renderToolScripts(false)}
-</body>
-</html>`;
+function renderGuestPage(url, guest, guestName = '') {
+    return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>订阅链接</title><style>${getSubUIStyles()}</style></head><body><main class="wrap"><section class="card center"><div class="logo">SUB-UI</div><h1>订阅链接</h1><p>${escapeHTML(guestName || '订阅转换')}</p><div class="result-url"><a href="${escapeHTML(url.pathname)}">${escapeHTML(url.origin + url.pathname)}</a></div><div class="grid"><a class="btn" href="${escapeHTML(url.pathname + '?clash')}">Clash</a><a class="btn" href="${escapeHTML(url.pathname + '?singbox')}">Sing-box</a><a class="btn" href="${escapeHTML(url.pathname + '?surge')}">Surge</a><a class="btn" href="${escapeHTML(url.pathname + '?quanx')}">Quantumult X</a></div></section></main></body></html>`;
 }
 
-function renderAdminPage(url, content, hasKV, settings, adminApiHtml, adminConfigHtml, currentApi, currentConfig, apiCss, configCss) {
-    
-    // 生成主页状态说明
-    let fakeStatusHtml = '';
-    let fakeStatusCss = '';
-    if (settings.fakeMode === '1') {
-        if (settings.fakeUrl) { fakeStatusHtml = `✅ 当前使用: URL反向代理`; fakeStatusCss = 'status-ok'; }
-        else { fakeStatusHtml = `❌ 无效: 未填写URL，自动拦截为原生NGINX`; fakeStatusCss = 'status-error'; }
-    } else if (settings.fakeMode === '2') {
-        if (settings.fakeUrl302) { fakeStatusHtml = `✅ 当前使用: URL重定向(302)`; fakeStatusCss = 'status-ok'; }
-        else { fakeStatusHtml = `❌ 无效: 未填写目标地址，自动拦截为原生NGINX`; fakeStatusCss = 'status-error'; }
-    } else if (settings.fakeMode === '3') {
-        if (settings.fakeCode) { fakeStatusHtml = `✅ 当前使用: 自定义HTML`; fakeStatusCss = 'status-ok'; }
-        else { fakeStatusHtml = `❌ 无效: 代码为空，自动拦截为原生NGINX`; fakeStatusCss = 'status-error'; }
-    } else {
-        fakeStatusHtml = `✅ 当前使用: 默认防嗅探 (原生NGINX 强制覆盖模式)`;
-        fakeStatusCss = 'status-ok';
-    }
-
-    return `<!DOCTYPE html>
-<html>
-<head>
-<title>${escapeHTML(FileName)}管理面板</title>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<style>${getToolStyles()}</style>
-<script src="https://cdn.jsdelivr.net/npm/@keeex/qrcodejs-kx@1.0.2/qrcode.min.js"></script>
-</head>
-<body onload="switchFakeMode()">
-
-<div id="copyNotice" class="toast"></div>
-
-<!-- 安全设置 Modal -->
-<div id="securityModal" class="modal-overlay">
-<div class="modal-content">
-<h2 class="section-title" style="font-size:20px; margin-bottom:20px;">🛡️ 账户与安全设置</h2>
-<div class="field"><label>访客订阅入口 (GUEST)</label><input id="sec-guest" type="text" value="${escapeHTML(settings.guest || '')}" placeholder="留空则按内置算法自动生成"></div>
-<div class="field"><label>后台登录账号 (USER)</label><input id="sec-user" type="text" value="${escapeHTML(settings.user || '')}" placeholder="例如：admin"></div>
-<div class="field"><label>后台登录密码 (PASS)</label><input id="sec-pass" type="password" value="" placeholder="留空则不修改当前密码"></div>
-<div class="field"><label>确认登录密码</label><input id="sec-pass2" type="password" value="" placeholder="留空则不修改当前密码"></div>
-<div class="actions" style="margin-top:24px; justify-content:flex-end;">
-<button type="button" class="secondary" onclick="closeSecurityModal()">取消</button>
-<button type="button" onclick="saveConfig(this, 'sec')">保存修改</button>
-</div>
-<span id="secSaveStatus" class="muted" style="display:block; text-align:right; margin-top:8px;"></span>
-</div>
-</div>
-
-<!-- 主页设置 Modal -->
-<div id="fakeModal" class="modal-overlay">
-<div class="modal-content">
-<h2 class="section-title" style="font-size:20px; margin-bottom:20px;">🏠 主页设置</h2>
-<div class="status-indicator ${fakeStatusCss}" style="margin-bottom:16px;">${fakeStatusHtml}</div>
-<div class="field">
-<label>主页模式</label>
-<select id="fake-mode" onchange="switchFakeMode()">
-    <option value="0" ${settings.fakeMode === '0' || settings.fakeMode === '' ? 'selected' : ''}>[关闭] 强制原生 NGINX</option>
-    <option value="1" ${settings.fakeMode === '1' ? 'selected' : ''}>[URL] 网页反向代理</option>
-    <option value="2" ${settings.fakeMode === '2' ? 'selected' : ''}>[URL302] 强制重定向</option>
-    <option value="3" ${settings.fakeMode === '3' ? 'selected' : ''}>[HTML] 自定义代码</option>
-</select>
-</div>
-<div class="field hidden" id="fake-group-url">
-<label>反代目标地址 (URL)</label>
-<input id="fake-url" type="text" value="${escapeHTML(settings.fakeUrl || '')}" placeholder="例如: https://www.bing.com">
-</div>
-<div class="field hidden" id="fake-group-url302">
-<label>重定向地址 (URL302)</label>
-<input id="fake-url302" type="text" value="${escapeHTML(settings.fakeUrl302 || '')}" placeholder="例如: https://github.com">
-</div>
-<div class="field hidden" id="fake-group-code">
-<label>自定义 HTML 代码 (CODE)</label>
-<textarea id="fake-code" style="min-height:150px" placeholder="在此粘贴你的网页 HTML 代码...">${escapeHTML(settings.fakeCode || '')}</textarea>
-<div class="section-note">填写后若代码为空将自动降级为默认NGINX页面。</div>
-</div>
-<div class="actions" style="margin-top:24px; justify-content:flex-end;">
-<button type="button" class="secondary" onclick="closeFakeModal()">取消</button>
-<button type="button" onclick="saveConfig(this, 'fake')">保存修改</button>
-</div>
-<span id="fakeSaveStatus" class="muted" style="display:block; text-align:right; margin-top:8px;"></span>
-</div>
-</div>
-
-<main class="page">
-<header class="header" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
-<div>
-<h1 class="title">${escapeHTML(settings.subName)}</h1>
-<div class="subtitle">汇聚订阅控制台</div>
-</div>
-<div style="display:flex; gap:8px;">
-${hasKV ? `<button type="button" onclick="openFakeModal()">🏠 主页</button>
-           <button type="button" onclick="openSecurityModal()">🛡️ 安全</button>` : ''}
-<button type="button" class="danger" onclick="window.location.href='?logout=1'">🚪 退出</button>
-</div>
-</header>
-
-<section class="panel">
-<h2 class="section-title">全局名称设置 (SUBNAME)</h2>
-<div class="field"><input id="config-subname" type="text" value="${escapeHTML(settings.subName)}" placeholder="例如：CF-SUB"></div>
-</section>
-
-<section class="panel">
-<h2 class="section-title">订阅转换后端 SUBAPI</h2>
-<div class="field">
-<input id="config-subapi" type="text" value="${escapeHTML(settings.subApi || '')}" placeholder="[默认值]">
-<div class="status-indicator ${apiCss}" style="margin-top:8px;">${adminApiHtml}</div>
-<div class="section-note" style="margin-top:12px; margin-bottom:6px;">当前配置</div>
-<a class="link-url" href="${escapeHTML(currentApi)}" target="_blank">${escapeHTML(currentApi)}</a>
-</div>
-</section>
-
-<section class="panel">
-<h2 class="section-title">订阅转换规则 SUBCONFIG</h2>
-<div class="field">
-<textarea id="config-subconfig" style="min-height:80px" placeholder="[默认值]">${escapeHTML(settings.subConfig || '')}</textarea>
-<div class="status-indicator ${configCss}" style="margin-top:8px;">${adminConfigHtml}</div>
-<div class="section-note" style="margin-top:12px; margin-bottom:6px;">当前配置</div>
-<a class="link-url" href="${escapeHTML(currentConfig)}" target="_blank">${escapeHTML(currentConfig)}</a>
-</div>
-</section>
-
-<section class="panel">
-<h2 class="section-title">去广告关键字 NOADS</h2>
-<div class="field">
-<textarea id="config-noads" style="min-height:80px;" placeholder="示例: 加入TG群, 订阅YouTube频道, https://t.me ......">${escapeHTML(settings.noAds)}</textarea>
-<div class="section-note">使用英文逗号、空格或换行分隔</div>
-</div>
-${hasKV ? `<div class="actions" style="margin-top:16px;">
-<button type="button" onclick="saveConfig(this, 'main')">保存全局设置并重载</button>
-<span id="configSaveStatus" class="muted"></span>
-</div>` : '<p class="muted">请绑定变量名称为 KV 的 KV 命名空间</p>'}
-</section>
-
-<section class="panel">
-<h2 class="section-title">汇聚订阅节点编辑</h2>
-${hasKV ? `<textarea id="content" placeholder="在此输入单节点链接或订阅地址...">${escapeHTML(content)}</textarea>
-<div class="actions"><button type="button" onclick="saveContent(this)">保存节点订阅</button><span id="saveStatus" class="muted"></span></div>` : '<p class="muted">请绑定变量名称为 KV 的 KV 命名空间</p>'}
-</section>
-
-<section class="panel">
-<h2 class="section-title">管理员直接订阅链接</h2>
-${renderLinkList(getSubscriptionLinks(url, mytoken))}
-</section>
-
-<div id="current-qrcode"></div>
-</main>
-
-${renderToolScripts(true)}
-</body>
-</html>`;
+async function renderSubUIHome(url, env) {
+    const cfg=await getConfig(env), apis=normalizeProviderList(cfg.subApis).filter(x=>x.enabled), configs=normalizeProviderList(cfg.subConfigs).filter(x=>x.enabled), shorts=normalizeProviderList(cfg.shortLinks).filter(x=>x.enabled);
+    return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>订阅转换 · SUB-UI</title><style>${getSubUIStyles()}</style></head><body><main class="wrap"><header><div><div class="brand">SUB WEB <span>/</span> NEXT</div><h1>订阅转换</h1><p>使用自己的 SUBAPI、SUBCONFIG 与短链服务生成持久订阅链接。</p></div><a class="admin" href="/${escapeHTML(normalizeAdminPath(cfg.adminPath)||DEFAULT_ADMIN_PATH)}">管理后台</a></header><section class="card"><label>订阅链接</label><textarea id="sources" placeholder="每行一个订阅链接"></textarea><div class="row"><div><label>生成类型</label><select id="target"><option value="auto">自动</option><option value="clash">Clash</option><option value="singbox">Sing-box</option><option value="surge">Surge</option><option value="quanx">Quantumult X</option><option value="loon">Loon</option><option value="mixed">Mixed</option></select></div><div><label>链接名称</label><input id="name" placeholder="可选"></div></div></section><section class="card"><h2>SUBAPI</h2><p class="muted">可多选，按选择顺序尝试后端。</p><div class="checks">${apis.length?apis.map(x=>`<label class="check"><input type="checkbox" value="${escapeHTML(x.id)}" checked><span>${escapeHTML(x.name)}</span><small>${escapeHTML(x.url)}</small></label>`).join(''):'<div class="empty">暂无可用 SUBAPI，请在管理后台添加。</div>'}</div></section><section class="card"><h2>SUBCONFIG</h2><p class="muted">可多选，按顺序组成后端组合。</p><div class="checks">${configs.length?configs.map(x=>`<label class="check"><input type="checkbox" value="${escapeHTML(x.id)}" checked><span>${escapeHTML(x.name)}</span><small>${escapeHTML(x.url)}</small></label>`).join(''):'<div class="empty">暂无可用 SUBCONFIG，请在管理后台添加。</div>'}</div></section><section class="card"><h2>短链选择</h2><div class="checks">${shorts.length?shorts.map((x,i)=>`<label class="check"><input type="radio" name="short" value="${escapeHTML(x.id)}" ${i===0?'checked':''}><span>${escapeHTML(x.name)}</span><small>${escapeHTML(x.url)}</small></label>`).join(''):'<div class="empty">暂无短链服务，将直接使用订阅链接。</div>'}</div></section><button class="primary" id="generate" onclick="generate()">生成订阅链接</button><section id="result" class="card result-card" hidden><h2>订阅链接</h2><div class="result-url" id="short"></div><div class="result-url secondary" id="direct"></div><button class="btn" onclick="navigator.clipboard.writeText(document.getElementById('short').textContent)">复制订阅链接</button></section></main><script>async function generate(){const b=document.getElementById('generate'),sources=document.getElementById('sources').value,subApiIds=[...document.querySelectorAll('.checks input[type=checkbox]:checked')].filter(x=>x.closest('section')?.querySelector('h2')?.textContent==='SUBAPI').map(x=>x.value),subConfigIds=[...document.querySelectorAll('.checks input[type=checkbox]:checked')].filter(x=>x.closest('section')?.querySelector('h2')?.textContent==='SUBCONFIG').map(x=>x.value),short=document.querySelector('input[name=short]:checked');if(!sources.trim())return alert('请输入订阅链接');b.disabled=true;b.textContent='生成中…';try{const r=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sources,target:document.getElementById('target').value,name:document.getElementById('name').value,subApiIds,subConfigIds,shortLinkId:short?.value||''})}),d=await r.json();if(!r.ok||!d.ok)throw new Error(d.error||'生成失败');document.getElementById('short').textContent=d.short_url;document.getElementById('direct').textContent=d.subscription_url;document.getElementById('result').hidden=false}catch(e){alert(e.message)}finally{b.disabled=false;b.textContent='生成订阅链接'}};</script></body></html>`;
 }
 
-async function KV(request, env, txt, guest, adminApiHtml, adminConfigHtml, currentApiUrl, currentConfigUrl, apiCss, configCss) {
-    let settings = { subName: 'CF-SUB', subApi: '', subConfig: '', noAds: '', guest: '', user: '', pass: '', fakeMode: '', fakeUrl: '', fakeUrl302: '', fakeCode: '' };
-    let hasKV = !!env.KV;
+function getSubUIStyles(){return `*{box-sizing:border-box}body{margin:0;background:#f5f7fa;color:#202124;font:14px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}a{text-decoration:none;color:inherit}.wrap{max-width:860px;margin:auto;padding:32px 16px}header{display:flex;justify-content:space-between;gap:20px;align-items:flex-start;margin-bottom:24px}.brand{font-size:12px;font-weight:800;letter-spacing:.12em;color:#777}.brand span{color:#3b82f6}h1{margin:6px 0;font-size:32px}h2{margin:0 0 12px;font-size:18px}p{color:#666}.admin{padding:9px 14px;border:1px solid #ddd;border-radius:10px;background:#fff}.card{background:rgba(255,255,255,.86);border:1px solid #e4e4e0;border-radius:20px;padding:22px;margin-bottom:16px;box-shadow:0 4px 20px rgba(0,0,0,.04)}.center{text-align:center}.logo{font-weight:800;letter-spacing:.12em;color:#3b82f6}label{display:block;font-weight:650;margin:0 0 7px}textarea,input,select{width:100%;border:1px solid #d5d7dc;border-radius:11px;background:#fff;padding:12px 13px;font:inherit}textarea{min-height:150px;resize:vertical}.row{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:15px}.checks{display:grid;gap:10px}.check{display:grid;grid-template-columns:20px 1fr;grid-template-rows:auto auto;column-gap:9px;padding:12px;border:1px solid #e3e4e8;border-radius:12px;background:#fff}.check input{width:auto;grid-row:1/3}.check span{font-weight:650}.check small{grid-column:2;color:#777;word-break:break-all}.primary,.btn{border:0;border-radius:11px;padding:12px 18px;background:#2f3338;color:#fff;font-weight:700;cursor:pointer}.primary{width:100%;font-size:16px}.btn{display:inline-block}.muted,.empty{color:#777}.result-card{border-color:#b8dfc0}.result-url{padding:12px;background:#f2fbf3;border-radius:10px;word-break:break-all;margin-bottom:10px;color:#19733a}.secondary{color:#555;background:#f8f8f8}@media(max-width:640px){.row{grid-template-columns:1fr}header{flex-direction:column}}@media(prefers-color-scheme:dark){body{background:#111;color:#eee}.card,.admin,.check,input,textarea,select{background:#1b1b1d;border-color:#333;color:#eee}p,.muted,.empty{color:#aaa}.result-url{background:#15251a;color:#9be0aa}}`}
 
-    if (hasKV) {
-        try {
-            const kvConfigStr = await env.KV.get('CONFIG.json');
-            if (kvConfigStr) {
-                settings = { ...settings, ...JSON.parse(kvConfigStr) };
-            }
-        } catch (e) {}
-    }
+function renderLoginPage(url, error = '') {return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SUB-UI 管理后台</title><style>${getSubUIStyles()}</style></head><body><main class="wrap"><section class="card" style="max-width:420px;margin:80px auto"><h1>管理后台</h1>${error?`<p>${escapeHTML(error)}</p>`:''}<form method="post"><input type="hidden" name="login" value="1"><label>账号</label><input name="user" required><label style="margin-top:12px">密码</label><input name="pass" type="password" required><button class="primary" style="margin-top:16px">登录</button></form></section></main></body></html>`}
 
-    try {
-        if (request.method === "POST") {
-            if (!hasKV) return new Response("未绑定KV空间", { status: 400 });
-            const contentType = request.headers.get('content-type') || '';
-            if (contentType.includes('application/x-www-form-urlencoded')) return Response.redirect(request.url, 302);
-            const text = await request.text();
-
-            try {
-                const data = JSON.parse(text);
-                if (data.type === 'config') {
-                    if (!data.settings.pass) {
-                        let oldConfig = {};
-                        try {
-                            const oldKvStr = await env.KV.get('CONFIG.json');
-                            if (oldKvStr) oldConfig = JSON.parse(oldKvStr);
-                        } catch (e) {}
-                        data.settings.pass = oldConfig.pass || '';
-                    }
-                    await env.KV.put('CONFIG.json', JSON.stringify(data.settings));
-                    return new Response("设置保存成功");
-                } else if (data.type === 'content') {
-                    await env.KV.put(txt, data.content || '');
-                    return new Response("订阅保存成功");
-                }
-            } catch (jsonErr) {
-                return new Response("不支持的数据格式", { status: 400 });
-            }
-        }
-
-        let content = '';
-        if (hasKV) {
-            try { content = await env.KV.get(txt) || ''; } catch (error) { content = '读取数据时发生错误'; }
-        }
-
-        return new Response(
-            renderAdminPage(new URL(request.url), content, hasKV, settings, adminApiHtml, adminConfigHtml, currentApiUrl, currentConfigUrl, apiCss, configCss),
-            { headers: { "Content-Type": "text/html;charset=utf-8" } }
-        );
-    } catch (error) {
-        return new Response("服务器错误: " + error.message, { status: 500 });
-    }
+function renderAdminPage(url, env, subs, tokens, settings, status) {
+    const origin=url.origin, apis=normalizeProviderList(settings.subApis), configs=normalizeProviderList(settings.subConfigs), shorts=normalizeProviderList(settings.shortLinks), esc=x=>escapeHTML(String(x??''));
+    const rows=(arr,type)=>arr.map(x=>`<tr><td>${esc(x.name)}</td><td class="url">${esc(x.url)}</td><td>${x.enabled!==false?'启用':'禁用'}</td><td><button onclick="editItem('${type}','${esc(x.id)}')">编辑</button> <button onclick="deleteItem('${type}','${esc(x.id)}')">删除</button></td></tr>`).join('');
+    return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SUB-UI 管理后台</title><style>${getSubUIStyles()}table{width:100%;border-collapse:collapse}th,td{padding:10px;border-bottom:1px solid #ddd;text-align:left}.url{word-break:break-all}</style></head><body><main class="wrap"><header><div><div class="brand">SUB WEB / NEXT</div><h1>SUB-UI 管理后台</h1><p>配置 SUBAPI、SUBCONFIG、短链服务，以及原有 SUB / 订阅链接。</p></div><a class="admin" href="/">返回首页</a></header><section class="card"><h2>SUBAPI</h2><button onclick="addItem('subapi')">＋ 添加</button><table><thead><tr><th>备注</th><th>URL</th><th>状态</th><th>操作</th></tr></thead><tbody>${rows(apis,'subapi')||'<tr><td colspan="4">暂无</td></tr>'}</tbody></table></section><section class="card"><h2>SUBCONFIG</h2><button onclick="addItem('subconfig')">＋ 添加</button><table><thead><tr><th>备注</th><th>URL</th><th>状态</th><th>操作</th></tr></thead><tbody>${rows(configs,'subconfig')||'<tr><td colspan="4">暂无</td></tr>'}</tbody></table></section><section class="card"><h2>短链服务</h2><button onclick="addItem('shortlink')">＋ 添加</button><table><thead><tr><th>备注</th><th>API URL</th><th>状态</th><th>操作</th></tr></thead><tbody>${rows(shorts,'shortlink')||'<tr><td colspan="4">暂无</td></tr>'}</tbody></table></section><section class="card"><h2>原有 SUB</h2><button onclick="addSub()">＋ 添加 SUB</button>${subs.map(s=>`<div class="check"><span>${esc(s.name)} · ${s.enabled===false?'禁用':'启用'}</span><small>${esc((s.sources||[]).join('\n'))}</small></div>`).join('')||'<div class="empty">暂无</div>'}</section><section class="card"><h2>已有订阅链接</h2>${tokens.map(t=>`<div class="check"><span>${esc(t.name)}</span><small>${esc(origin+'/'+t.url)}</small></div>`).join('')||'<div class="empty">暂无</div>'}</section><section class="card"><h2>基础设置</h2><label>SUBNAME</label><input id="subName" value="${esc(settings.subName)}"><label>管理员路径</label><input id="adminPath" value="${esc(settings.adminPath||'admin')}"><button class="primary" style="margin-top:12px" onclick="saveBase()">保存</button></section></main><script>const DATA=${JSON.stringify({apis,configs,shorts})};async function post(o){const r=await fetch(location.pathname,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(o)});const t=await r.text();if(!r.ok)throw new Error(t);return JSON.parse(t)}async function addItem(type){const name=prompt('备注');if(!name)return;const url=prompt('URL');if(!url)return;let o={type:type+'_create',name,url,enabled:true};if(type==='shortlink')o.providerType=prompt('类型：json-root 或 v1mk','json-root')||'json-root';try{await post(o);location.reload()}catch(e){alert(e.message)}}async function editItem(type,id){const key=type==='subapi'?'apis':type==='subconfig'?'configs':'shorts',old=DATA[key].find(x=>x.id===id);const name=prompt('备注',old?.name||'');if(name===null)return;const url=prompt('URL',old?.url||'');if(url===null)return;let o={type:type+'_update',id,name,url,enabled:confirm('启用该项目？')};if(type==='shortlink')o.providerType=prompt('类型：json-root 或 v1mk',old?.providerType||'json-root')||'json-root';try{await post(o);location.reload()}catch(e){alert(e.message)}}async function deleteItem(type,id){if(!confirm('确定删除？'))return;try{await post({type:type+'_delete',id});location.reload()}catch(e){alert(e.message)}}async function saveBase(){try{await post({type:'config',settings:{subName:document.getElementById('subName').value,adminPath:document.getElementById('adminPath').value,subApis:DATA.apis,subConfigs:DATA.configs,shortLinks:DATA.shorts}});location.reload()}catch(e){alert(e.message)}}async function addSub(){const name=prompt('SUB 名称');if(!name)return;const sources=prompt('来源地址，每行一个');if(!sources)return;try{await post({type:'sub_create',name,sources,enabled:true});location.reload()}catch(e){alert(e.message)}}</script></body></html>`;
 }
