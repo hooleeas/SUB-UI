@@ -216,13 +216,24 @@ async function handleRequest(request, env) {
         let tokenData = null;
         if (env.KV && publicToken) tokenData = await getToken(env, publicToken);
 
-        // 只有真实生成的订阅 token 才是公开订阅入口；其余路径一律回到公开首页。
-        if (!tokenData && url.pathname !== '/') {
+        // SUBAPI 内部转换入口：允许 fakeToken + sourceToken 访问。
+        // 这是订阅转换的中间数据入口，sourceToken 决定实际使用哪一条公开 URL 的配置。
+        const isFakeTokenRequest =
+            publicToken === fakeToken ||
+            url.pathname === '/' + fakeToken;
+
+        let effectiveTokenData = tokenData;
+        if (!effectiveTokenData && isFakeTokenRequest && conversionSourceToken) {
+            effectiveTokenData = await getToken(env, conversionSourceToken);
+        }
+
+        // 只有真实生成的订阅 token 或内部 fakeToken 才是有效入口；其余路径一律回到公开首页。
+        if (!tokenData && !isFakeTokenRequest && url.pathname !== '/') {
             return Response.redirect(url.origin + '/', 302);
         }
 
         // ==================== 公开首页 ====================
-        if (!tokenData && url.pathname === '/') {
+        if (!tokenData && !isFakeTokenRequest && url.pathname === '/') {
             const page = await renderSubUIHome(request, url, env);
             const nonce = crypto.randomUUID().replace(/-/g, '');
             const html = page.replace('<script id=\"cf-subs-public-script\">', `<script id=\"cf-subs-public-script\" nonce=\"${nonce}\" data-cfasync=\"false\">`);
@@ -236,9 +247,14 @@ async function handleRequest(request, env) {
         }
 
         // ==================== 当前订阅入口的来源 ====================
-        const selectedSources = Array.isArray(tokenData?.sources) && tokenData.sources.length
-            ? cleanSourceList(tokenData.sources)
+        let selectedSources = Array.isArray(effectiveTokenData?.sources) && effectiveTokenData.sources.length
+            ? cleanSourceList(effectiveTokenData.sources)
             : [];
+
+        // fakeToken 没有 sourceToken 时，兼容原 CF-SUB 行为：使用全部托管来源。
+        if (isFakeTokenRequest && !selectedSources.length && !conversionSourceToken) {
+            selectedSources = await getAllManagedSources(env);
+        }
 
         // ==================== 浏览器订阅链接页面 ====================
         if (userAgent.includes('mozilla') && !url.search && !isProxyClientUA && tokenData) {
@@ -275,11 +291,11 @@ async function handleRequest(request, env) {
                 effectiveSubProtocol,
                 userAgent,
                 userAgentHeader,
-                config_noAds: String(tokenData?.noAds || ''),
+                config_noAds: String(effectiveTokenData?.noAds || ''),
                 FileName,
                 UD,
                 expire,
-                tokenData
+                tokenData: effectiveTokenData
             },
             publicToken
         );
@@ -1032,8 +1048,19 @@ async function generateSubscription(request, env, sourceList, runtime, token) {
         }
         throw lastError || new Error('没有可用的 SUBAPI/SUBCONFIG');
     } catch (error) {
-        // 没有可用的转换后端时，返回已经聚合/去重后的 Base64 订阅，避免依赖任何隐藏的默认 SUBAPI/SUBCONFIG。
-        return new Response(base64Data, { headers: responseHeaders });
+        // 非 Base64 请求绝不能静默返回 Base64，否则客户端会把“转换失败”误认为成功订阅。
+        // 这里明确返回 502，便于直接定位 SUBAPI / SUBCONFIG / 转换入口的问题。
+        return new Response(
+            `订阅转换失败：${error?.message || 'SUBAPI/SUBCONFIG 不可用'}`,
+            {
+                status: 502,
+                headers: {
+                    ...responseHeaders,
+                    'content-type': 'text/plain; charset=utf-8',
+                    'Cache-Control': 'no-store'
+                }
+            }
+        );
     }
 
 }
