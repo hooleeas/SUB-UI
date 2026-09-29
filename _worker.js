@@ -1615,8 +1615,8 @@ ${getSubUIStyles()}
 .native-picker:focus{outline:none;border-color:#287ea8;box-shadow:0 0 0 2px rgba(40,126,168,.15)}
 .native-picker option{font:inherit;padding:8px}
 .current-row{display:flex;align-items:center;gap:8px}
-.current-api-input{min-width:0;flex:1;height:42px}
-.current-config-input{min-width:0;flex:1;min-height:54px;resize:none;line-height:1.5}
+.current-api-input{min-width:0;flex:1;height:42px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.current-config-input{min-width:0;flex:1;min-height:42px;height:auto;resize:none;line-height:1.5;overflow:hidden}
 @media(prefers-color-scheme:dark){
  .native-picker{background:#111;color:#f1f1f1;border-color:rgba(255,255,255,.14)}
  .native-picker option{background:#1b1b1b;color:#f1f1f1}
@@ -1648,9 +1648,8 @@ ${getSubUIStyles()}
 <h2 class="section-title">订阅转换后端(SUBAPI)</h2>
 <div class="section-note">点击选择订阅转换后端。</div>
 <select class="native-picker" id="apiPicker" aria-label="选择订阅转换后端">
-<option value="">请选择订阅转换后端</option>
-${apis.map(x=>`<option value="${esc(x.id)}" ${!apiCustom&&apiId===x.id?'selected':''}>${esc(x.name)} — ${esc(x.url)}</option>`).join('')}
-<option value="__custom" ${apiCustom?'selected':''}>自定义 — 使用你自己的订阅转换后端</option>
+${apis.map(x=>`<option value="${esc(x.id)}" ${!apiCustom&&apiId===x.id?'selected':''}>${esc(x.name)}</option>`).join('')}
+<option value="__custom" ${apiCustom?'selected':''}>自定义</option>
 </select>
 <div class="current-box"><div class="current-title">当前配置</div><div class="current-row">
 <input id="apiCurrent" class="current-api-input" readonly value="${esc(apiCurrentValue)}" placeholder="请选择订阅转换后端">
@@ -1663,9 +1662,8 @@ ${apis.map(x=>`<option value="${esc(x.id)}" ${!apiCustom&&apiId===x.id?'selected
 <h2 class="section-title">订阅转换规则(SUBCONFIG)</h2>
 <div class="section-note">点击选择订阅转换规则。</div>
 <select class="native-picker" id="configPicker" aria-label="选择订阅转换规则">
-<option value="">请选择订阅转换规则</option>
-${configs.map(x=>`<option value="${esc(x.id)}" ${!configCustom&&configId===x.id?'selected':''}>${esc(x.name)} — ${esc(x.url)}</option>`).join('')}
-<option value="__custom" ${configCustom?'selected':''}>自定义 — 使用你自己的订阅转换规则</option>
+${configs.map(x=>`<option value="${esc(x.id)}" ${!configCustom&&configId===x.id?'selected':''}>${esc(x.name)}</option>`).join('')}
+<option value="__custom" ${configCustom?'selected':''}>自定义</option>
 </select>
 <div class="current-box"><div class="current-title">当前配置</div><div class="current-row">
 <textarea id="configCurrent" class="current-config-input" readonly placeholder="请选择订阅转换规则">${esc(configCurrentValue)}</textarea>
@@ -1746,8 +1744,15 @@ async function checkAvailability(){
 }
 function choiceChanged(kind){
  const api=kind==='api',s=selected(kind);
- if(api){state.apiId=s.id;state.apiCustom=s.custom}
- else{state.configId=s.id;state.configCustom=s.custom}
+ if(s.custom){
+   if(api){state.apiCustom=true;state.apiId=''}
+   else{state.configCustom=true;state.configId=''}
+   savePrefs();
+   openCustomModal(kind);
+   return;
+ }
+ if(api){state.apiId=s.id;state.apiCustom=false}
+ else{state.configId=s.id;state.configCustom=false}
  renderCurrent(kind);
  savePrefs();
  checkAvailability();
@@ -1760,12 +1765,32 @@ function openCustomModal(kind){
  overlay.style.display='flex';
  setTimeout(()=>input.focus(),0);
 }
-function closeCustomModal(kind){$(kind==='api'?'customApiModal':'customConfigModal').style.display='none'}
+function closeCustomModal(kind){
+ const api=kind==='api',overlay=$(api?'customApiModal':'customConfigModal');
+ overlay.style.display='none';
+ const picker=$(api?'apiPicker':'configPicker');
+ if(api){
+   picker.value=state.apiCustom?(state.apiUrl?'__custom':state.apiId):state.apiId;
+ }else{
+   picker.value=state.configCustom?(state.configUrl?'__custom':state.configId):state.configId;
+ }
+ renderCurrent(kind);
+ checkAvailability();
+}
 function saveCustom(kind){
  const api=kind==='api',input=$(api?'customApiInput':'customConfigInput'),value=input.value.trim();
  if(!/^https?:\/\//i.test(value))return alert('URL 必须以 http:// 或 https:// 开头');
- if(api)state.apiUrl=value;else state.configUrl=value;
- closeCustomModal(kind);renderCurrent(kind);savePrefs();checkAvailability();
+ if(api){
+   state.apiUrl=value;state.apiCustom=true;state.apiId='';
+   $('#apiPicker').value='__custom';
+ }else{
+   state.configUrl=value;state.configCustom=true;state.configId='';
+   $('#configPicker').value='__custom';
+ }
+ $(api?'customApiModal':'customConfigModal').style.display='none';
+ renderCurrent(kind);
+ savePrefs();
+ checkAvailability();
 }
 function updatePickerLabel(kind){
  const api=kind==='api',picker=$(api?'apiPicker':'configPicker');
@@ -1799,9 +1824,19 @@ $('#generate').addEventListener('click',async()=>{
    $('#direct').textContent=d.subscription_url;$('#openDirect').href=d.subscription_url;$('#result').hidden=false;$('#result').scrollIntoView({behavior:'smooth',block:'start'});
  }catch(e){alert(e.message||'生成失败')}finally{button.disabled=false;button.textContent='生成聚合订阅'}
 });
-$('#apiPicker').value=state.apiCustom?'__custom':state.apiId;
-$('#configPicker').value=state.configCustom?'__custom':state.configId;
-renderCurrent('api');renderCurrent('config');checkAvailability();
+if(state.apiCustom){
+  $('#apiPicker').value='__custom';
+}else{
+  state.apiId=state.apiId||API_LIST[0]?.id||'';
+  $('#apiPicker').value=state.apiId;
+}
+if(state.configCustom){
+  $('#configPicker').value='__custom';
+}else{
+  state.configId=state.configId||CONFIG_LIST[0]?.id||'';
+  $('#configPicker').value=state.configId;
+}
+renderCurrent('api');renderCurrent('config');savePrefs();checkAvailability();
 </script>
 </body>
 </html>`;
