@@ -1693,17 +1693,39 @@ function savePrefs(){
  if(e.length<=3600)document.cookie='CF_SUB_PREFS='+e+'; Max-Age=2592000; Path=/; SameSite=Lax; Secure';
 }
 function setStatus(id,html){const el=$(id);if(el)el.innerHTML=html;}
+function statusText(kind,info,ok){
+ const api=kind==='api';
+ if(ok){
+  if(api){
+   const version=String(info?.version||'').trim();
+   return '✅ SUBAPI状态正常'+(version?' ('+escapeHTML(version)+')':'');
+  }
+  return '✅ SUBCONFIG状态正常';
+ }
+ return api?'❌ SUBAPI状态异常':'❌ SUBCONFIG状态异常';
+}
+function escapeHTML(value=''){
+ return String(value).replace(/[&<>\"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'}[ch]));
+}
 async function checkStatus(kind){
  const api=kind==='api',value=currentValue(kind),id=api?'apiStatus':'configStatus';
- if(!value){setStatus(id,'<div class="status-item bad">❌ 未配置</div>');return;}
+ if(!value){setStatus(id,'<div class="status-item bad">'+statusText(kind,null,false)+'</div>');return;}
  setStatus(id,'<div class="status-item wait">⏳ 状态检测中</div>');
  const query=api?'/api/status?api='+encodeURIComponent(value):'/api/status?config='+encodeURIComponent(value);
+ let timer;
  try{
-  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),5000);
-  const r=await fetch(query,{cache:'no-store',headers:{Accept:'application/json'},signal:controller.signal});clearTimeout(timer);
-  const d=await r.json().catch(()=>({}));const info=api?d.api:d.config;const ok=Boolean(r.ok&&d.ok&&info?.ok);
-  setStatus(id,'<div class="status-item '+(ok?'ok':'bad')+'">'+(ok?'✅ 可用':'❌ 不可用')+' · '+escapeHTML(value)+(api&&info?.version?' ('+escapeHTML(info.version)+')':'')+'</div>');
- }catch(e){setStatus(id,'<div class="status-item bad">❌ 检测失败 · '+escapeHTML(value)+'</div>');}
+  const controller=new AbortController();
+  timer=setTimeout(()=>controller.abort(),5000);
+  const r=await fetch(query,{cache:'no-store',headers:{Accept:'application/json'},signal:controller.signal});
+  const d=await r.json().catch(()=>({}));
+  const info=api?d.api:d.config;
+  const ok=Boolean(r.ok&&d.ok&&info?.ok);
+  setStatus(id,'<div class="status-item '+(ok?'ok':'bad')+'">'+statusText(kind,info,ok)+'</div>');
+ }catch(e){
+  setStatus(id,'<div class="status-item bad">'+(api?'❌ SUBAPI检测失败':'❌ SUBCONFIG检测失败')+'</div>');
+ }finally{
+  if(timer)clearTimeout(timer);
+ }
 }
 function onPickerChange(kind){
  const api=kind==='api',picker=$(api?'apiPicker':'configPicker');
