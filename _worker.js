@@ -161,7 +161,7 @@ function openModal(id){var el=$(id);if(el)el.style.display='flex'}
 function closeModal(id){var el=$(id);if(el)el.style.display='none'}
 function showProvider(type,id,name,url){modalState={type:type,id:id||''};var t=$('modalTitle');if(t)t.textContent=(id?'编辑 ':'添加 ')+(type==='subapi'?'订阅转换后端':'订阅转换规则');if($('modalName'))$('modalName').value=name||'';if($('modalUrl'))$('modalUrl').value=url||'';openModal('providerModal')}
 function hideProvider(){closeModal('providerModal');modalState=null}
-function post(data){return fetch(location.pathname,{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},cache:'no-store',body:JSON.stringify(data)}).then(function(r){return r.text().then(function(t){var d=null;try{d=t?JSON.parse(t):null}catch(e){}if(!d)throw new Error('服务器返回无效数据（HTTP '+r.status+'）');if(!r.ok||d.ok===false)throw new Error(d.error||('操作失败（HTTP '+r.status+'）'));return d})})}
+function post(data){return fetch('/api/admin',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','Accept':'application/json'},cache:'no-store',body:JSON.stringify(data)}).then(function(r){return r.text().then(function(t){var d=null;try{d=t?JSON.parse(t):null}catch(e){}if(!d)throw new Error('服务器返回无效数据（HTTP '+r.status+'）');if(!r.ok||d.ok===false)throw new Error(d.error||('操作失败（HTTP '+r.status+'）'));return d})})}
 function setDefaultProvider(type,id){post({type:type+'_default',id:id}).then(function(){toast('默认配置已更新')}).catch(function(e){alert(e.message||'设置默认配置失败');setTimeout(function(){location.reload()},100)})}
 function deleteProvider(type,id){if(!confirm('确定删除这个项目？'))return;post({type:type+'_delete',id:id}).then(function(){toast('已删除');setTimeout(function(){location.reload()},500)}).catch(function(e){alert(e.message||'删除失败')})}
 function saveProvider(){if(!modalState)return;var name=$('modalName')?$('modalName').value.trim():'',url=$('modalUrl')?$('modalUrl').value.trim():'';if(!name)return alert('请输入备注');if(!/^https?:\/\//i.test(url))return alert('URL 必须以 http:// 或 https:// 开头');var b=$('modalSave'),editing=Boolean(modalState.id);if(b){b.disabled=true;b.textContent='保存中...'}post({type:modalState.type+'_'+(editing?'update':'create'),id:modalState.id,name:name,url:url}).then(function(){hideProvider();toast(editing?'已保存':'已添加');setTimeout(function(){location.reload()},700)}).catch(function(e){alert(e.message||'保存失败')}).finally(function(){if(b){b.disabled=false;b.textContent='保存'}})}
@@ -310,6 +310,28 @@ async function handleRequest(request, env) {
         }
         if (url.pathname === '/api/generate' && request.method === 'POST') {
             return await handlePublicGenerate(request, env, url);
+        }
+
+        // ==================== 管理后台 API ====================
+        // 管理保存操作使用独立 API 路径，避免 Safari/WebKit 对动态管理路径 POST
+        // 的网络层报错（例如 Load failed）。认证仍然使用同一个管理员 Cookie。
+        if (url.pathname === '/api/admin' && request.method === 'POST') {
+            if (isAdminLoginEnabled(adminUser, adminPass)) {
+                const isLoggedIn = await isAdminLoggedIn(request, mytoken, adminUser, adminPass);
+                if (!isLoggedIn) return jsonResponse({ok:false,error:'未登录或登录已过期'},401);
+            }
+            return await handleAdmin(request, env, {
+                adminUser,
+                adminPass,
+                effectiveSubConverter,
+                effectiveSubConfig,
+                effectiveSubProtocol,
+                hasCustomApi,
+                hasCustomConfig,
+                adminPath,
+                mytoken,
+                url
+            });
         }
 
         // ==================== 管理后台 ====================
@@ -1908,7 +1930,7 @@ async function renderSubUIHome(request,url,env){
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${esc(cfg.subName||'SUB')}</title>
+<title>${esc(cfg.subName||'SUB')}</title>${cfg.siteLogo?`<link rel="icon" href="${esc(cfg.siteLogo)}">`:''}
 <style>
 ${getSubUIStyles()}
 .native-picker{display:block;width:100%;min-height:42px;padding:8px 12px;border:1px solid rgba(229,229,223,.8);border-radius:10px;background:rgba(250,250,250,.7);color:inherit;font:inherit;cursor:pointer;appearance:auto;-webkit-appearance:auto}
@@ -2004,6 +2026,6 @@ function renderAdminPage(url,env,settings){
 </main>
 <div id="providerModal" class="modal-overlay"><div class="modal-content"><h2 class="section-title" id="modalTitle">添加</h2><div class="field"><label for="modalName">备注</label><input id="modalName"></div><div class="field"><label for="modalUrl">URL</label><input id="modalUrl" placeholder="https://..."></div><div class="modal-actions"><button type="button" class="secondary" id="providerCancel">取消</button><button type="button" id="modalSave">保存</button></div></div></div>
 <div id="securityModal" class="modal-overlay"><div class="modal-content"><h2 class="section-title">安全</h2><div class="section-note">修改管理员账号和密码。修改密码时必须输入两次；两次留空表示保持原密码。</div><div class="field"><label for="securityUser">管理员账号</label><input id="securityUser" value="${esc(settings.user||'')}" autocomplete="username"></div><div class="field"><label for="securityPass">管理员密码</label><input id="securityPass" type="password" placeholder="留空保持原密码" autocomplete="new-password"></div><div class="field"><label for="securityPass2">确认管理员密码</label><input id="securityPass2" type="password" placeholder="再次输入新密码" autocomplete="new-password"></div><div class="modal-actions"><button type="button" class="secondary" data-close-modal="securityModal">取消</button><button type="button" id="saveSecurity">保存</button></div></div></div>
-<div id="siteModal" class="modal-overlay"><div class="modal-content"><h2 class="section-title">站点</h2><div class="field"><label for="siteName">站点标题</label><input id="siteName" value="${esc(settings.subName||'SUB')}" placeholder="SUB"></div><div class="field"><label for="sitePath">管理员路径</label><input id="sitePath" value="${esc(settings.adminPath||'admin')}" placeholder="admin"></div><div class="field"><label for="siteLogo">站点标签栏 Logo 地址</label><input id="siteLogo" value="${esc(settings.siteLogo||'')}" placeholder="https://example.com/favicon.png" type="url"><div class="section-note">支持 http:// 或 https:// 直链；留空则不设置。</div></div><div class="modal-actions"><button type="button" class="secondary" data-close-modal="siteModal">取消</button><button type="button" id="saveSite">保存</button></div></div></div>
+<div id="siteModal" class="modal-overlay"><div class="modal-content"><h2 class="section-title">站点</h2><div class="field"><label for="siteName">站点标题</label><input id="siteName" value="${esc(settings.subName||'SUB')}" placeholder="SUB"></div><div class="field"><label for="sitePath">管理员路径</label><input id="sitePath" value="${esc(settings.adminPath||'admin')}" placeholder="admin"></div><div class="field"><label for="siteLogo">全站 Logo 地址</label><input id="siteLogo" value="${esc(settings.siteLogo||'')}" placeholder="https://example.com/favicon.png" type="url"><div class="section-note">支持 http:// 或 https:// 直链；留空则不设置。此 Logo 会用于全站标签栏。</div></div><div class="modal-actions"><button type="button" class="secondary" data-close-modal="siteModal">取消</button><button type="button" id="saveSite">保存</button></div></div></div>
 <script src="/__cfsubs.js" defer></script></body></html>`;
 }
