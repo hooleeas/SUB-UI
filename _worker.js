@@ -38,15 +38,9 @@ https://cfxr.eu.org/getSub
 
 let urls = [];
 
-// ================= 全局默认配置 =================
-const defaultSubConverter = "SUBAPI.cmliussss.net";
-const defaultSubConfig = "https://raw.githubusercontent.com/hooleeas/ACL4SSR/refs/heads/master/Clash/config/China_Direct_Overseas_Proxy.ini";
-const defaultSubProtocol = "https";
-// ================================================
-
-let subConverter = defaultSubConverter;
-let subConfig = defaultSubConfig;
-let subProtocol = defaultSubProtocol;
+let subConverter = '';
+let subConfig = '';
+let subProtocol = 'https';
 let config_noAds = '';
 
 // ================= 主页配置 =================
@@ -105,9 +99,9 @@ async function handleRequest(request, env) {
 
                     FileName = kvConfig.subName || 'CF-SUBS';
 
-                    subConverter = kvConfig.subApi || '';
-                    subConfig = kvConfig.subConfig || '';
-                    config_noAds = kvConfig.noAds || '';
+                    subConverter = '';
+                    subConfig = '';
+                    config_noAds = '';
 
                     // 原 CF-SUB 配置仍然兼容
                     adminUser = kvConfig.user || adminUser;
@@ -131,18 +125,11 @@ async function handleRequest(request, env) {
 
         subConverter = customSubApi;
         subConfig = customSubConfig;
-        subProtocol = defaultSubProtocol;
+        subProtocol = /^http:\/\//i.test(customSubApi) ? 'http' : 'https';
 
-        if (subConverter.includes('http://')) {
-            subConverter = subConverter.split('//')[1];
-            subProtocol = 'http';
-        } else if (subConverter.includes('https://')) {
-            subConverter = subConverter.split('//')[1] || subConverter;
-        }
-
-        const effectiveSubConverter = hasCustomApi ? subConverter : defaultSubConverter;
-        const effectiveSubProtocol = hasCustomApi ? subProtocol : defaultSubProtocol;
-        const effectiveSubConfig = hasCustomConfig ? subConfig : defaultSubConfig;
+        const effectiveSubConverter = customSubApi.replace(/^https?:\/\//i, '').replace(/\/+$/,'');
+        const effectiveSubProtocol = customSubApi ? subProtocol : 'https';
+        const effectiveSubConfig = customSubConfig;
 
         const currentDate = new Date();
         currentDate.setHours(0, 0, 0, 0);
@@ -175,7 +162,19 @@ async function handleRequest(request, env) {
         // ==================== SUB-UI 公共 API ====================
         if (url.pathname === '/api/ui-config' && request.method === 'GET') {
             const cfg = await getConfig(env);
-            return jsonResponse({ ok: true, subApis: normalizeProviderList(cfg.subApis), subConfigs: normalizeProviderList(cfg.subConfigs) });
+            return jsonResponse({
+                ok: true,
+                subApis: normalizeProviderList(cfg.subApis),
+                subConfigs: normalizeProviderList(cfg.subConfigs),
+                defaultSubApiId: String(cfg.defaultSubApiId || ''),
+                defaultSubConfigId: String(cfg.defaultSubConfigId || '')
+            });
+        }
+        if (url.pathname === '/api/status' && request.method === 'GET') {
+            const api = String(url.searchParams.get('api') || '').trim();
+            const config = String(url.searchParams.get('config') || '').trim();
+            if (!api || !config) return jsonResponse({ ok:false, error:'缺少 SUBAPI 或 SUBCONFIG' }, 400);
+            return jsonResponse({ ok:true, ...(await probeBackend(api, config)) });
         }
         if (url.pathname === '/api/generate' && request.method === 'POST') {
             return await handlePublicGenerate(request, env, url);
@@ -210,153 +209,35 @@ async function handleRequest(request, env) {
             });
         }
 
-        // ==================== 解析公开 URL ====================
-        // 新版 URL：
-        //   /abc123
-        //   /abc123?clash
-        //   /?token=abc123
-        //
-        // 兼容旧 CF-SUB：
-        //   /auto
-        //   /?token=auto
+        // ==================== 解析公开订阅 URL ====================
         let publicToken = queryToken;
-
-        if (!publicToken && url.pathname !== '/') {
-            publicToken = decodeURIComponent(url.pathname.slice(1));
-        }
+        if (!publicToken && url.pathname !== '/') publicToken = decodeURIComponent(url.pathname.slice(1));
 
         let tokenData = null;
+        if (env.KV && publicToken) tokenData = await getToken(env, publicToken);
 
-        if (env.KV && publicToken) {
-            tokenData = await getToken(env, publicToken);
-        }
-
-        const legacyAdminPath =
-            publicToken === mytoken ||
-            publicToken.toLowerCase() === String(mytoken).toLowerCase();
-
-        const isFakeTokenRequest =
-            publicToken === fakeToken ||
-            url.pathname === '/' + fakeToken;
-
-        // 新 URL / auto / fakeToken 都属于有效入口
-        const validPublicEntry =
-            !!tokenData || legacyAdminPath || isFakeTokenRequest;
-
-        // ==================== 无效路径 / 主页 ====================
-        if (!validPublicEntry && url.pathname !== '/') {
+        // 只有真实生成的订阅 token 才是公开订阅入口；其余路径一律回到公开首页。
+        if (!tokenData && url.pathname !== '/') {
             return Response.redirect(url.origin + '/', 302);
         }
 
-        if (!validPublicEntry && url.pathname === '/') {
-            if (fakeMode === '1' && fakeUrl) {
-                try {
-                    return await proxyURL(fakeUrl, url, FileName);
-                } catch (e) {}
-            } else if (fakeMode === '2' && fakeUrl302) {
-                return Response.redirect(fakeUrl302, 302);
-            } else if (fakeMode === '3' && fakeCode && fakeCode.trim() !== '') {
-                let html = fakeCode;
-                const title = `<title>${escapeHTML(FileName)}</title>`;
-                if (/<title\b[^>]*>[\s\S]*?<\/title>/i.test(html)) {
-                    html = html.replace(/<title\b[^>]*>[\s\S]*?<\/title>/i, title);
-                } else if (/<head\b[^>]*>/i.test(html)) {
-                    html = html.replace(/<head\b[^>]*>/i, match => match + title);
-                } else {
-                    html = title + html;
-                }
-                return new Response(html, {
-                    headers: { 'Content-Type': 'text/html; charset=UTF-8' }
-                });
-            }
-
-            return new Response(await renderSubUIHome(url, env), {
+        // ==================== 公开首页 ====================
+        if (!tokenData && url.pathname === '/') {
+            return new Response(await renderSubUIHome(request, url, env), {
                 headers: { 'Content-Type': 'text/html; charset=UTF-8', 'Cache-Control': 'no-store' }
             });
         }
 
-        // ==================== 获取当前入口的来源 ====================
-        let selectedSources = [];
+        // ==================== 当前订阅入口的来源 ====================
+        const selectedSources = Array.isArray(tokenData?.sources) && tokenData.sources.length
+            ? cleanSourceList(tokenData.sources)
+            : [];
 
-        if (tokenData) {
-            // SUB-UI 生成链接直接保存来源；原有 URL 继续走 SUB 聚合。
-            selectedSources = Array.isArray(tokenData.sources) && tokenData.sources.length
-                ? cleanSourceList(tokenData.sources)
-                : await getSourcesForToken(env, tokenData);
-        } else {
-            // 兼容旧 CF-SUB：
-            // auto = 所有 SUBS；fake = 所有 SUBS
-            if (isFakeTokenRequest && conversionSourceToken) {
-                const sourceTokenData = await getToken(env, conversionSourceToken);
-                if (sourceTokenData) {
-                    selectedSources = await getSourcesForToken(env, sourceTokenData);
-                } else {
-                    selectedSources = await getAllManagedSources(env);
-                }
-            } else if (legacyAdminPath || isFakeTokenRequest) {
-                selectedSources = await getAllManagedSources(env);
-            } else if (legacyGuestPath) {
-                // 如果没有 SUBS，则使用旧 LINK.txt / LINK 环境变量。
-                selectedSources = await getLegacySources(env);
-                if (!selectedSources.length) {
-                    selectedSources = await getAllManagedSources(env);
-                }
-            }
-        }
-
-        // ==================== 浏览器 UI ====================
-        if (
-            userAgent.includes('mozilla') &&
-            !url.search &&
-            !isProxyClientUA
-        ) {
-            const status = await getBackendStatus(
-                effectiveSubConverter,
-                effectiveSubConfig,
-                effectiveSubProtocol,
-                hasCustomApi,
-                hasCustomConfig
-            );
-
-            // 新 URL：订阅页面
-            if (tokenData) {
-                return new Response(
-                    renderGuestPage(
-                        url,
-                        tokenData.url,
-                        tokenData.name
-                    ),
-                    { headers: { 'Content-Type': 'text/html;charset=utf-8' } }
-                );
-            }
-
-            // auto / mytoken：管理员后台仍支持旧入口，但新项目推荐 /admin
-            if (legacyAdminPath) {
-                if (isAdminLoginEnabled(adminUser, adminPass)) {
-                    const isLoggedIn = await isAdminLoggedIn(request, mytoken, adminUser, adminPass);
-                    if (!isLoggedIn) {
-                        if (request.method === 'POST') {
-                            return await handleAdminLogin(request, url, mytoken, adminUser, adminPass);
-                        }
-                        return new Response(renderLoginPage(url), {
-                            headers: {
-                                'Content-Type': 'text/html;charset=utf-8',
-                                'Cache-Control': 'no-store'
-                            }
-                        });
-                    }
-                }
-
-                return await handleAdmin(request, env, {
-                    adminUser,
-                    adminPass,
-                    effectiveSubConverter,
-                    effectiveSubConfig,
-                    effectiveSubProtocol,
-                    hasCustomApi,
-                    hasCustomConfig
-                });
-            }
+        // ==================== 浏览器订阅链接页面 ====================
+        if (userAgent.includes('mozilla') && !url.search && !isProxyClientUA && tokenData) {
+            return new Response(renderGuestPage(url, tokenData.url, tokenData.name), {
+                headers: { 'Content-Type': 'text/html;charset=utf-8', 'Cache-Control': 'no-store' }
+            });
         }
 
         // ==================== 原 CF-SUB 核心订阅处理 ====================
@@ -372,7 +253,7 @@ async function handleRequest(request, env) {
                 effectiveSubProtocol,
                 userAgent,
                 userAgentHeader,
-                config_noAds,
+                config_noAds: '',
                 FileName,
                 UD,
                 expire,
@@ -386,146 +267,33 @@ async function handleRequest(request, env) {
  * 配置 / 后台状态
  * ======================================================= */
 
-async function getBackendStatus(api, config, protocol, hasCustomApi, hasCustomConfig) {
-    let customApiOk = false;
-    let customApiVersion = '';
-    let defaultApiOk = false;
-    let defaultApiVersion = '';
-    let customConfigOk = false;
-    let defaultConfigOk = false;
-
-    async function probeApi(targetApi, targetProtocol) {
+async function probeBackend(apiUrl, configUrl) {
+    const rawApi = String(apiUrl || '').trim();
+    const protocol = /^http:\/\//i.test(rawApi) ? 'http' : 'https';
+    const host = rawApi.replace(/^https?:\/\//i,'').replace(/\/+$/,'');
+    const api = host ? `${protocol}://${host}` : '';
+    let apiOk = false, apiVersion = '';
+    if (api) {
         try {
             const controller = new AbortController();
-            const timeout = setTimeout(() => controller.abort(), 1200);
-            const res = await fetch(`${targetProtocol}://${targetApi}/version`, {
-                signal: controller.signal
-            });
+            const timeout = setTimeout(() => controller.abort(), 1800);
+            const res = await fetch(`${api}/version`, {signal:controller.signal,headers:{'User-Agent':'CF-SUBS/Status'}});
             clearTimeout(timeout);
-            if (res.ok) {
-                return {
-                    ok: true,
-                    version: (await res.text()).trim().substring(0, 30)
-                };
-            }
-        } catch (e) {}
-        return { ok: false };
+            if (res.ok) { apiOk=true; apiVersion=(await res.text()).trim().slice(0,50); }
+        } catch(e) {}
     }
-
-    async function probeConfig(configUrl) {
-        if (!configUrl) return false;
+    let configOk=false;
+    const config=String(configUrl||'').trim();
+    if (config) {
         try {
-            const controller = new AbortController();
-            const timeout = setTimeout(() => controller.abort(), 1200);
-            const res = await fetch(configUrl, {
-                method: 'GET',
-                signal: controller.signal
-            });
+            const controller=new AbortController();
+            const timeout=setTimeout(()=>controller.abort(),1800);
+            const res=await fetch(config,{signal:controller.signal,headers:{'User-Agent':'CF-SUBS/Status'}});
             clearTimeout(timeout);
-            return res.ok;
-        } catch (e) {
-            return false;
-        }
+            configOk=res.ok;
+        } catch(e) {}
     }
-
-    if (hasCustomApi) {
-        const res = await probeApi(api, protocol);
-        customApiOk = res.ok;
-        customApiVersion = res.version || '';
-        if (!customApiOk) {
-            const resDef = await probeApi(defaultSubConverter, defaultSubProtocol);
-            defaultApiOk = resDef.ok;
-            defaultApiVersion = resDef.version || '';
-        }
-    } else {
-        const resDef = await probeApi(defaultSubConverter, defaultSubProtocol);
-        defaultApiOk = resDef.ok;
-        defaultApiVersion = resDef.version || '';
-    }
-
-    if (hasCustomConfig) {
-        customConfigOk = await probeConfig(config);
-        if (!customConfigOk) defaultConfigOk = await probeConfig(defaultSubConfig);
-    } else {
-        defaultConfigOk = await probeConfig(defaultSubConfig);
-    }
-
-    let adminApiHtml = '';
-    let guestApiHtml = '';
-    let finalApiUrl = '';
-    let adminApiCss = '';
-    let guestApiCss = '';
-
-    if (hasCustomApi && customApiOk) {
-        adminApiHtml = `✅SUBAPI状态正常 (${escapeHTML(customApiVersion)})`;
-        guestApiHtml = adminApiHtml;
-        finalApiUrl = `${protocol}://${api}`;
-        adminApiCss = 'status-ok';
-        guestApiCss = 'status-ok';
-    } else if (hasCustomApi && !customApiOk && defaultApiOk) {
-        adminApiHtml = `⚠️SUBAPI无效 已切换为默认配置 ✅默认值可用`;
-        guestApiHtml = `✅SUBAPI状态正常 (${escapeHTML(defaultApiVersion)})`;
-        finalApiUrl = `${defaultSubProtocol}://${defaultSubConverter}`;
-        adminApiCss = 'status-warn';
-        guestApiCss = 'status-ok';
-    } else if (!hasCustomApi && defaultApiOk) {
-        adminApiHtml = `⚠️SUBAPI为空 已切换为默认配置 ✅默认值可用`;
-        guestApiHtml = `✅SUBAPI状态正常 (${escapeHTML(defaultApiVersion)})`;
-        finalApiUrl = `${defaultSubProtocol}://${defaultSubConverter}`;
-        adminApiCss = 'status-warn';
-        guestApiCss = 'status-ok';
-    } else {
-        adminApiHtml = '❌SUBAPI无效待维护';
-        guestApiHtml = adminApiHtml;
-        finalApiUrl = `${defaultSubProtocol}://${defaultSubConverter}`;
-        adminApiCss = 'status-error';
-        guestApiCss = 'status-error';
-    }
-
-    let adminConfigHtml = '';
-    let guestConfigHtml = '';
-    let finalConfigUrl = '';
-    let adminConfigCss = '';
-    let guestConfigCss = '';
-
-    if (hasCustomConfig && customConfigOk) {
-        adminConfigHtml = '✅SUBCONFIG状态正常';
-        guestConfigHtml = adminConfigHtml;
-        finalConfigUrl = config;
-        adminConfigCss = 'status-ok';
-        guestConfigCss = 'status-ok';
-    } else if (hasCustomConfig && !customConfigOk && defaultConfigOk) {
-        adminConfigHtml = '⚠️SUBCONFIG无效 已切换为默认配置 ✅默认值可用';
-        guestConfigHtml = '✅SUBCONFIG状态正常';
-        finalConfigUrl = defaultSubConfig;
-        adminConfigCss = 'status-warn';
-        guestConfigCss = 'status-ok';
-    } else if (!hasCustomConfig && defaultConfigOk) {
-        adminConfigHtml = '⚠️SUBCONFIG为空 已切换为默认配置 ✅默认值可用';
-        guestConfigHtml = '✅SUBCONFIG状态正常';
-        finalConfigUrl = defaultSubConfig;
-        adminConfigCss = 'status-warn';
-        guestConfigCss = 'status-ok';
-    } else {
-        adminConfigHtml = '❌SUBCONFIG无效待维护';
-        guestConfigHtml = adminConfigHtml;
-        finalConfigUrl = defaultSubConfig;
-        adminConfigCss = 'status-error';
-        guestConfigCss = 'status-error';
-    }
-
-    return {
-        adminApiHtml,
-        guestApiHtml,
-        finalApiUrl,
-        adminApiCss,
-        guestApiCss,
-        adminConfigHtml,
-        guestConfigHtml,
-        finalConfigUrl,
-        adminConfigCss,
-        guestConfigCss
-    };
+    return {api:{ok:apiOk,url:api,version:apiVersion},config:{ok:configOk,url:config},available:apiOk&&configOk};
 }
 
 /* =========================================================
@@ -757,218 +525,78 @@ async function handleAdmin(request, env, runtime) {
         try {
             const data = await request.json();
 
-            if (data.type === 'config') {
-                const old = await getConfig(env);
-
-                const next = {
+            if(data.type==='config'){
+                const old=await getConfig(env);
+                const next={
                     ...old,
-                    subName: normalizeName(data.settings?.subName) || 'CF-SUBS',
-                    subApi: String(data.settings?.subApi ?? old.subApi ?? '').trim(),
-                    subConfig: String(data.settings?.subConfig ?? old.subConfig ?? '').trim(),
-                    subApis: normalizeProviderList(data.settings?.subApis ?? old.subApis),
-                    subConfigs: normalizeProviderList(data.settings?.subConfigs ?? old.subConfigs),
-                    noAds: String(data.settings?.noAds ?? old.noAds ?? '').trim(),
-
-                    // 保留旧配置
-                    user: String(data.settings?.user || old.user || ''),
-                    pass: data.settings?.pass
-                        ? String(data.settings.pass)
-                        : String(old.pass || ''),
-                    adminPath: normalizeAdminPath(data.settings?.adminPath || old.adminPath) || DEFAULT_ADMIN_PATH,
-
-                    fakeMode: String(data.settings?.fakeMode ?? old.fakeMode ?? ''),
-                    fakeUrl: String(data.settings?.fakeUrl ?? old.fakeUrl ?? ''),
-                    fakeUrl302: String(data.settings?.fakeUrl302 ?? old.fakeUrl302 ?? ''),
-                    fakeCode: String(data.settings?.fakeCode ?? old.fakeCode ?? '')
+                    subName:normalizeName(data.settings?.subName??old.subName)||'CF-SUBS',
+                    subApis:normalizeProviderList(data.settings?.subApis??old.subApis),
+                    subConfigs:normalizeProviderList(data.settings?.subConfigs??old.subConfigs),
+                    defaultSubApiId:String(data.settings?.defaultSubApiId??old.defaultSubApiId??''),
+                    defaultSubConfigId:String(data.settings?.defaultSubConfigId??old.defaultSubConfigId??''),
+                    user:String(data.settings?.user??old.user??''),
+                    pass:data.settings?.pass?String(data.settings.pass):String(old.pass||''),
+                    adminPath:normalizeAdminPath(data.settings?.adminPath??old.adminPath)||DEFAULT_ADMIN_PATH,
+                    noAds:'',
+                    fakeMode:String(data.settings?.fakeMode??old.fakeMode??''),
+                    fakeUrl:String(data.settings?.fakeUrl??old.fakeUrl??''),
+                    fakeUrl302:String(data.settings?.fakeUrl302??old.fakeUrl302??''),
+                    fakeCode:String(data.settings?.fakeCode??old.fakeCode??'')
                 };
-
-                await env.KV.put('CONFIG.json', JSON.stringify(next));
-                return jsonResponse({ ok: true, adminPath: next.adminPath });
+                await env.KV.put('CONFIG.json',JSON.stringify(next));
+                return jsonResponse({ok:true,adminPath:next.adminPath});
             }
 
-            if (data.type === 'sub_create') {
-                const name = normalizeName(data.name);
-                const sources = cleanSourceList(data.sources);
-
-                if (!validName(name)) return new Response('SUBS 名称不能为空且不能超过 80 个字符', { status: 400 });
-                if (await isSubNameUsed(env, name)) return new Response('SUBS 名称已存在，不能重名', { status: 409 });
-                if (!sources.length) return new Response('至少添加一个订阅地址或单节点', { status: 400 });
-
-                const id = makeSubId();
-                const item = {
-                    id,
-                    name,
-                    enabled: data.enabled !== false,
-                    sources,
-                    createdAt: new Date().toISOString(),
-                    updatedAt: new Date().toISOString()
-                };
-
-                await env.KV.put(`${SUB_PREFIX}${id}`, JSON.stringify(item));
-                return jsonResponse({ ok: true, sub: item });
+            if(data.type==='security'){
+                const old=await getConfig(env), user=String(data.user||'').trim();
+                if(!user)return jsonResponse({ok:false,error:'管理员账号不能为空'},400);
+                await env.KV.put('CONFIG.json',JSON.stringify({...old,user,pass:data.pass?String(data.pass):String(old.pass||'')}));
+                return jsonResponse({ok:true});
             }
 
-            if (data.type === 'sub_update') {
-                const id = String(data.id || '');
-                const old = await getSub(env, id);
-                if (!old) return new Response('SUBS 不存在', { status: 404 });
-
-                const name = normalizeName(data.name);
-                const sources = cleanSourceList(data.sources);
-
-                if (!validName(name)) return new Response('SUBS 名称不能为空且不能超过 80 个字符', { status: 400 });
-                if (await isSubNameUsed(env, name, id)) return new Response('SUBS 名称已存在，不能重名', { status: 409 });
-                if (!sources.length) return new Response('至少添加一个订阅地址或单节点', { status: 400 });
-
-                const item = {
-                    ...old,
-                    name,
-                    sources,
-                    enabled: data.enabled !== false,
-                    updatedAt: new Date().toISOString()
-                };
-
-                await env.KV.put(`${SUB_PREFIX}${id}`, JSON.stringify(item));
-                return jsonResponse({ ok: true, sub: item });
+            if(data.type==='admin_path'){
+                const old=await getConfig(env), adminPath=normalizeAdminPath(data.adminPath);
+                if(!adminPath)return jsonResponse({ok:false,error:'管理员路径无效'},400);
+                await env.KV.put('CONFIG.json',JSON.stringify({...old,adminPath}));
+                return jsonResponse({ok:true,adminPath});
             }
 
-            if (data.type === 'sub_delete') {
-                const id = String(data.id || '');
-                if (!(await getSub(env, id))) return new Response('SUBS 不存在', { status: 404 });
-
-                await env.KV.delete(`${SUB_PREFIX}${id}`);
-
-                // 删除 SUB 后，自动从所有 URL 的绑定列表移除
-                const tokens = await listTokens(env);
-                const affected = tokens.filter(item => Array.isArray(item.subs) && item.subs.includes(id));
-                await Promise.all(affected.map(item => {
-                    item.subs = item.subs.filter(x => x !== id);
-                    item.updatedAt = new Date().toISOString();
-                    return env.KV.put(`${URL_PREFIX}${item.url}`, JSON.stringify(item));
-                }));
-
-                return jsonResponse({ ok: true });
+            if(data.type==='site_name'){
+                const old=await getConfig(env), subName=normalizeName(data.subName)||'CF-SUBS';
+                await env.KV.put('CONFIG.json',JSON.stringify({...old,subName}));
+                return jsonResponse({ok:true,subName});
             }
 
-            if (data.type === 'url_create') {
-                const name = normalizeName(data.name);
-                const mode = data.mode === 'custom' ? 'custom' : 'random';
-                let token = normalizeToken(data.url || data.token);
-                const selected = Array.isArray(data.subs)
-                    ? [...new Set(data.subs.map(String))]
-                    : [];
+            if(['subapi_create','subapi_update','subapi_delete','subconfig_create','subconfig_update','subconfig_delete'].includes(data.type)){
+                const cfg=await getConfig(env);
+                const isApi=data.type.startsWith('subapi_');
+                const key=isApi?'subApis':'subConfigs';
+                const defaultKey=isApi?'defaultSubApiId':'defaultSubConfigId';
+                const list=normalizeProviderList(cfg[key]);
+                const action=data.type.split('_')[1];
+                const id=String(data.id||'').trim();
 
-                if (!validName(name)) return new Response('链接名称不能为空且不能超过 80 个字符', { status: 400 });
-                if (await isTokenNameUsed(env, name)) return new Response('链接名称已存在，不能重名', { status: 409 });
-
-                if (mode === 'custom') {
-                    if (!validCustomToken(token)) {
-                        return new Response('自定义 URL 只能使用 3-80 位字母、数字、下划线和短横线', { status: 400 });
+                if(action==='delete'){
+                    if(!list.some(x=>x.id===id))return jsonResponse({ok:false,error:'项目不存在'},404);
+                    cfg[key]=list.filter(x=>x.id!==id);
+                    if(String(cfg[defaultKey]||'')===id)cfg[defaultKey]='';
+                }else{
+                    const name=normalizeName(data.name), value=String(data.url||'').trim();
+                    if(!validName(name))return jsonResponse({ok:false,error:'备注不能为空且不能超过 80 个字符'},400);
+                    if(!/^https?:\/\//i.test(value))return jsonResponse({ok:false,error:'URL 必须以 http:// 或 https:// 开头'},400);
+                    const itemId=id||makeSubId(), item={id:itemId,name,url:value,enabled:data.enabled!==false};
+                    if(action==='create')list.push(item);
+                    else{
+                        const index=list.findIndex(x=>x.id===id);
+                        if(index<0)return jsonResponse({ok:false,error:'项目不存在'},404);
+                        list[index]={...list[index],...item,id};
                     }
-                    if (await getToken(env, token)) {
-                        return new Response('URL 已存在，请使用其他 URL', { status: 409 });
-                    }
-                } else {
-                    token = await makeRandomToken(env, 6);
-                }
-
-                const validSubs = [];
-                for (const id of selected) {
-                    if (await getSub(env, id)) validSubs.push(id);
-                }
-
-                if (!validSubs.length) {
-                    return new Response('至少选择一个聚合节点', { status: 400 });
-                }
-
-                const item = {
-                    url: token,
-                    name,
-                    subs: validSubs,
-                    createdAt: new Date().toISOString(),
-                    updatedAt: new Date().toISOString()
-                };
-
-                await env.KV.put(`${URL_PREFIX}${token}`, JSON.stringify(item));
-                return jsonResponse({ ok: true, url: item });
-            }
-
-            if (data.type === 'url_update') {
-                const oldToken = normalizeToken(data.oldUrl || data.oldToken || data.url || data.token);
-                const newToken = normalizeToken(data.newUrl || data.newToken || data.url || data.token);
-                const old = await getToken(env, oldToken);
-                if (!old) return new Response('URL 不存在', { status: 404 });
-
-                const name = normalizeName(data.name);
-                const selected = Array.isArray(data.subs)
-                    ? [...new Set(data.subs.map(String))]
-                    : [];
-
-                if (!validName(name)) return new Response('链接名称不能为空且不能超过 80 个字符', { status: 400 });
-                if (!validCustomToken(newToken)) {
-                    return new Response('URL 只能使用 3-80 位字母、数字、下划线和短横线', { status: 400 });
-                }
-                if (await isTokenNameUsed(env, name, oldToken)) return new Response('链接名称已存在，不能重名', { status: 409 });
-
-                if (newToken !== oldToken && await getToken(env, newToken)) {
-                    return new Response('新的 URL 已存在，请使用其他 URL', { status: 409 });
-                }
-
-                const validSubs = [];
-                for (const id of selected) {
-                    if (await getSub(env, id)) validSubs.push(id);
-                }
-
-                if (!validSubs.length) return new Response('至少选择一个聚合节点', { status: 400 });
-
-                const item = {
-                    ...old,
-                    url: newToken,
-                    name,
-                    subs: validSubs,
-                    updatedAt: new Date().toISOString()
-                };
-
-                // URL 本身发生变化时，迁移 KV Key，确保旧地址立即失效、新地址立即生效。
-                if (newToken !== oldToken) {
-                    await env.KV.put(`${URL_PREFIX}${newToken}`, JSON.stringify(item));
-                    await env.KV.delete(`${URL_PREFIX}${oldToken}`);
-                } else {
-                    await env.KV.put(`${URL_PREFIX}${oldToken}`, JSON.stringify(item));
-                }
-
-                return jsonResponse({ ok: true, url: item, oldUrl: oldToken });
-            }
-
-            if (data.type === 'url_delete') {
-                const token = normalizeToken(data.url || data.token);
-                if (!(await getToken(env, token))) return new Response('URL 不存在', { status: 404 });
-
-                await env.KV.delete(`${URL_PREFIX}${token}`);
-                return jsonResponse({ ok: true });
-            }
-
-            if (['subapi_create','subapi_update','subapi_delete','subconfig_create','subconfig_update','subconfig_delete'].includes(data.type)) {
-                const cfg = await getConfig(env);
-                const key = data.type.startsWith('subapi_') ? 'subApis' : 'subConfigs';
-                const list = normalizeProviderList(cfg[key]);
-                const action = data.type.split('_')[1];
-                const id = String(data.id || '').trim();
-                if (action === 'delete') {
-                    if (!list.some(x => x.id === id)) return new Response('项目不存在', { status: 404 });
-                    cfg[key] = list.filter(x => x.id !== id);
-                } else {
-                    const name = normalizeName(data.name);
-                    const value = String(data.url || data.apiUrl || '').trim();
-                    if (!validName(name)) return new Response('备注不能为空且不能超过 80 个字符', { status: 400 });
-                    if (!/^https?:\/\//i.test(value)) return new Response('URL 必须以 http:// 或 https:// 开头', { status: 400 });
-                    const item = { id: id || makeSubId(), name, url: value, enabled: data.enabled !== false };
-                    if (action === 'create') list.push(item);
-                    else { const idx=list.findIndex(x=>x.id===id); if(idx<0) return new Response('项目不存在',{status:404}); list[idx]={...list[idx],...item,id}; }
+                    if(data.isDefault===true)cfg[defaultKey]=itemId;
+                    if(data.isDefault===false&&String(cfg[defaultKey]||'')===itemId)cfg[defaultKey]='';
                     cfg[key]=list;
                 }
-                await env.KV.put('CONFIG.json', JSON.stringify(cfg));
-                return jsonResponse({ ok:true, items:list });
+                await env.KV.put('CONFIG.json',JSON.stringify(cfg));
+                return jsonResponse({ok:true,items:normalizeProviderList(cfg[key]),defaultId:String(cfg[defaultKey]||'')});
             }
 
             return new Response('不支持的数据类型', { status: 400 });
@@ -979,20 +607,11 @@ async function handleAdmin(request, env, runtime) {
 
     const settings = await getConfig(env);
 
-    const status = await getBackendStatus(
-        runtime.effectiveSubConverter,
-        runtime.effectiveSubConfig,
-        runtime.effectiveSubProtocol,
-        runtime.hasCustomApi,
-        runtime.hasCustomConfig
-    );
-
     return new Response(
         renderAdminPage(
             new URL(request.url),
             env,
-            settings,
-            status
+            settings
         ),
         {
             headers: {
@@ -1005,348 +624,133 @@ async function handleAdmin(request, env, runtime) {
 
 async function getConfig(env) {
     const defaults = {
-        subName: 'CF-SUBS',
-        subApi: '',
-        subConfig: '',
-        subApis: [],
-        subConfigs: [],
-        noAds: '',
-        user: '',
-        pass: '',
-        adminPath: DEFAULT_ADMIN_PATH,
-        fakeMode: '',
-        fakeUrl: '',
-        fakeUrl302: '',
-        fakeCode: ''
+        subName:'CF-SUBS', subApi:'', subConfig:'',
+        subApis:[], subConfigs:[],
+        defaultSubApiId:'', defaultSubConfigId:'',
+        noAds:'', user:'', pass:'', adminPath:DEFAULT_ADMIN_PATH,
+        fakeMode:'', fakeUrl:'', fakeUrl302:'', fakeCode:''
     };
-
-    if (!env.KV) return defaults;
-
+    if(!env.KV) return defaults;
     try {
-        const raw = await env.KV.get('CONFIG.json');
-        return raw ? { ...defaults, ...JSON.parse(raw) } : defaults;
-    } catch (e) {
-        return defaults;
-    }
+        const raw=await env.KV.get('CONFIG.json');
+        return raw ? {...defaults,...JSON.parse(raw)} : defaults;
+    } catch(e) { return defaults; }
 }
-
-function jsonResponse(data, status = 200) {
-    return new Response(JSON.stringify(data), {
-        status,
-        headers: {
-            'Content-Type': 'application/json;charset=UTF-8',
-            'Cache-Control': 'no-store'
-        }
-    });
-}
-
-/* =========================================================
- * 订阅输出：保留 CF-SUB 原核心逻辑
- * ======================================================= */
-
-async function generateSubscription(request, env, sourceList, runtime, token) {
-    let allSources = [...new Set((sourceList || []).map(x => String(x).trim()).filter(Boolean))];
-
-    let 自建节点 = '';
-    let 订阅链接 = '';
-
-    for (const x of allSources) {
-        if (x.toLowerCase().startsWith('http')) {
-            订阅链接 += x + '\n';
-        } else {
-            自建节点 += x + '\n';
-        }
-    }
-
-    let nodeUrls = await ADD(订阅链接);
-    let req_data = 自建节点;
-
-    const isSubConverterRequest =
-        request.headers.get('subconverter-request') ||
-        request.headers.get('subconverter-version') ||
-        runtime.userAgent.includes('subconverter');
-
-    let 订阅格式 = 'base64';
-
-    if (
-        !(
-            runtime.userAgent.includes('null') ||
-            isSubConverterRequest ||
-            runtime.userAgent.includes('nekobox') ||
-            runtime.userAgent.includes('cf-sub')
-        )
-    ) {
-        if (
-            runtime.userAgent.includes('sing-box') ||
-            runtime.userAgent.includes('singbox') ||
-            new URL(request.url).searchParams.has('sb') ||
-            new URL(request.url).searchParams.has('singbox')
-        ) {
-            订阅格式 = 'singbox';
-        } else if (
-            runtime.userAgent.includes('surge') ||
-            new URL(request.url).searchParams.has('surge')
-        ) {
-            订阅格式 = 'surge';
-        } else if (
-            runtime.userAgent.includes('quantumult') ||
-            new URL(request.url).searchParams.has('quanx')
-        ) {
-            订阅格式 = 'quanx';
-        } else if (
-            runtime.userAgent.includes('loon') ||
-            new URL(request.url).searchParams.has('loon')
-        ) {
-            订阅格式 = 'loon';
-        } else if (
-            runtime.userAgent.includes('clash') ||
-            runtime.userAgent.includes('meta') ||
-            runtime.userAgent.includes('mihomo') ||
-            new URL(request.url).searchParams.has('clash')
-        ) {
-            订阅格式 = 'clash';
-        }
-    }
-
-    if (runtime.tokenData?.target && runtime.tokenData.target !== 'auto') {
-        订阅格式 = runtime.tokenData.target;
-    }
-
-    const sourceToken = new URL(request.url).searchParams.get('sourceToken') || token || '';
-    const conversionSeed = `${new URL(request.url).origin}/${await MD5MD5(runtime.fakeToken)}?token=${encodeURIComponent(runtime.fakeToken)}${sourceToken ? `&sourceToken=${encodeURIComponent(sourceToken)}` : ''}`;
-    let 订阅转换URL = conversionSeed;
-    let 追加UA = 'v2rayn';
-    const requestUrl = new URL(request.url);
-
-    if (requestUrl.searchParams.has('b64') || requestUrl.searchParams.has('base64')) {
-        订阅格式 = 'base64';
-    } else if (requestUrl.searchParams.has('clash')) {
-        追加UA = 'clash';
-    } else if (requestUrl.searchParams.has('singbox')) {
-        追加UA = 'singbox';
-    } else if (requestUrl.searchParams.has('surge')) {
-        追加UA = 'surge';
-    } else if (requestUrl.searchParams.has('quanx')) {
-        追加UA = 'Quantumult%20X';
-    } else if (requestUrl.searchParams.has('loon')) {
-        追加UA = 'Loon';
-    }
-
-    nodeUrls = [...new Set(nodeUrls)].filter(item => item && item.trim());
-
-    if (nodeUrls.length > 0) {
-        const 请求订阅响应内容 = await getSUB(
-            nodeUrls,
-            request,
-            追加UA,
-            runtime.userAgentHeader
-        );
-
-        req_data += 请求订阅响应内容[0].join('\n');
-        订阅转换URL += '|' + 请求订阅响应内容[1];
-
-        // 原 CF-SUB：base64 模式下，对结构化订阅再做 mixed 转换
-        if (
-            订阅格式 === 'base64' &&
-            !isSubConverterRequest &&
-            请求订阅响应内容[1].includes('://')
-        ) {
-            try {
-                const u = buildSubUrl(
-                    runtime.effectiveSubConverter,
-                    runtime.effectiveSubConfig,
-                    'mixed',
-                    请求订阅响应内容[1],
-                    runtime.effectiveSubProtocol
-                );
-
-                const res = await fetch(u, {
-                    headers: { 'User-Agent': 'v2rayn/CF-SUB' }
-                });
-
-                if (!res.ok) throw new Error();
-
-                req_data += '\n' + atob(await res.text());
-            } catch (error) {
-                try {
-                    const fallbackU = buildSubUrl(
-                        defaultSubConverter,
-                        defaultSubConfig,
-                        'mixed',
-                        请求订阅响应内容[1],
-                        defaultSubProtocol
-                    );
-
-                    const res2 = await fetch(fallbackU, {
-                        headers: { 'User-Agent': 'v2rayn/CF-SUB' }
-                    });
-
-                    if (res2.ok) req_data += '\n' + atob(await res2.text());
-                } catch (e) {}
-            }
-        }
-    }
-
-    // 原 CF-SUB WARP 支持
-    if (env.WARP) {
-        const warpList = await ADD(env.WARP);
-        订阅转换URL += '|' + warpList.join('|');
-    }
-
-    const text = new TextDecoder().decode(
-        new TextEncoder().encode(req_data)
-    );
-
-    // 原 CF-SUB NOADS
-    let filteredLines = text.split('\n');
-
-    if (runtime.config_noAds) {
-        const adKeywords = runtime.config_noAds
-            .split(/[, \r\n]+/)
-            .map(k => k.trim().toLowerCase())
-            .filter(k => k.length > 0);
-
-        if (adKeywords.length > 0) {
-            filteredLines = filteredLines.filter(line => {
-                const lowerLine = line.toLowerCase();
-                return !adKeywords.some(keyword => lowerLine.includes(keyword));
-            });
-        }
-    }
-
-    const uniqueLines = new Set(filteredLines);
-    const result = [...uniqueLines].join('\n');
-
-    let base64Data;
-
-    try {
-        base64Data = btoa(result);
-    } catch (e) {
-        base64Data = encodeBase64(result);
-    }
-
-    const responseHeaders = {
-        'content-type': 'text/plain; charset=utf-8',
-        'Profile-Update-Interval': `${SUBUpdateTime}`,
-        'Profile-web-page-url': request.url.includes('?')
-            ? request.url.split('?')[0]
-            : request.url
-    };
-
-    if (订阅格式 === 'base64' || token === runtime.fakeToken) {
-        return new Response(base64Data, { headers: responseHeaders });
-    }
-
-    try {
-        const backendPairs = await getSelectedBackends(env, runtime.tokenData, runtime);
-        let lastError;
-        for (const backend of backendPairs) {
-            try {
-                const finalUrl = buildSubUrl(backend.api, backend.config, 订阅格式, 订阅转换URL, backend.protocol);
-                const res = await fetch(finalUrl, { headers: { 'User-Agent': runtime.userAgentHeader } });
-                if (!res.ok) throw new Error(`SUBAPI ${res.status}`);
-                let content = await res.text();
-                if (订阅格式 === 'clash') content = clashFix(content);
-                if (!runtime.userAgent.includes('mozilla')) {
-                    responseHeaders['Content-Disposition'] = `attachment; filename*=utf-8''${encodeURIComponent(runtime.FileName)}`;
-                }
-                return new Response(content, { headers: responseHeaders });
-            } catch (e) { lastError = e; }
-        }
-        throw lastError || new Error('没有可用的 SUBAPI/SUBCONFIG');
-    } catch (error) {
-        try {
-            const fallbackUrl = buildSubUrl(defaultSubConverter, defaultSubConfig, 订阅格式, 订阅转换URL, defaultSubProtocol);
-            const resFb = await fetch(fallbackUrl, { headers: { 'User-Agent': runtime.userAgentHeader } });
-            if (!resFb.ok) throw new Error();
-            let contentFb = await resFb.text();
-            if (订阅格式 === 'clash') contentFb = clashFix(contentFb);
-            return new Response(contentFb, { headers: responseHeaders });
-        } catch (fallbackError) {
-            return new Response(base64Data, { headers: responseHeaders });
-        }
-    }
-
-}
-
-/* =========================================================
- * 以下为原 CF-SUB 核心函数：保持原行为
- * ======================================================= */
 
 function normalizeProviderList(input) {
-    if (!Array.isArray(input)) return [];
-    return input.map(x => ({
-        id: String(x?.id || makeSubId()),
-        name: normalizeName(x?.name || '未命名'),
-        url: String(x?.url || '').trim(),
-        enabled: x?.enabled !== false,
-        ...(x?.providerType ? { providerType: String(x.providerType) } : {})
-    })).filter(x => x.url);
+    if(!Array.isArray(input)) return [];
+    return input.map(x=>({
+        id:String(x?.id||makeSubId()),
+        name:normalizeName(x?.name||'未命名'),
+        url:String(x?.url||'').trim(),
+        enabled:x?.enabled!==false,
+        ...(x?.providerType?{providerType:String(x.providerType)}:{})
+    })).filter(x=>x.url);
+}
+
+function getCookieValue(request,name){
+    const cookie=request.headers.get('Cookie')||'';
+    for(const part of cookie.split(';')){
+        const item=part.trim(), i=item.indexOf('=');
+        if(i<0) continue;
+        if(item.slice(0,i)===name) return decodeURIComponent(item.slice(i+1));
+    }
+    return '';
+}
+function readPublicPreferences(request){
+    const raw=getCookieValue(request,'CF_SUB_PREFS');
+    if(!raw) return null;
+    try{
+        const value=JSON.parse(raw);
+        return value && typeof value==='object' ? value : null;
+    }catch(e){ return null; }
+}
+function buildPublicPreferencesCookie(value){
+    const encoded=encodeURIComponent(JSON.stringify(value));
+    if(encoded.length>3600) return '';
+    return `CF_SUB_PREFS=${encoded}; Max-Age=2592000; Path=/; SameSite=Lax; Secure`;
 }
 
 async function getSelectedBackends(env, tokenData, runtime) {
-    const cfg = await getConfig(env);
-    const apis = normalizeProviderList(cfg.subApis).filter(x => x.enabled);
-    const configs = normalizeProviderList(cfg.subConfigs).filter(x => x.enabled);
-    const selectedApis = (tokenData?.subApiIds || []).map(id => apis.find(x => x.id === id)).filter(Boolean);
-    const selectedConfigs = (tokenData?.subConfigIds || []).map(id => configs.find(x => x.id === id)).filter(Boolean);
-    const apiList = selectedApis.length ? selectedApis : (apis.length ? apis : [{ url: runtime.effectiveSubConverter }]);
-    const configList = selectedConfigs.length ? selectedConfigs : (configs.length ? configs : [{ url: runtime.effectiveSubConfig }]);
+    if(Array.isArray(tokenData?.backends) && tokenData.backends.length){
+        return tokenData.backends.map(x=>({
+            api:String(x.api||'').replace(/^https?:\/\//i,'').replace(/\/+$/,''),
+            config:String(x.config||'').trim(),
+            protocol:x.protocol==='http'?'http':'https'
+        })).filter(x=>x.api&&x.config);
+    }
+    const cfg=await getConfig(env);
+    const apis=normalizeProviderList(cfg.subApis).filter(x=>x.enabled);
+    const configs=normalizeProviderList(cfg.subConfigs).filter(x=>x.enabled);
+    const selectedApis=(tokenData?.subApiIds||[]).map(id=>apis.find(x=>x.id===id)).filter(Boolean);
+    const selectedConfigs=(tokenData?.subConfigIds||[]).map(id=>configs.find(x=>x.id===id)).filter(Boolean);
+    if(!selectedApis.length||!selectedConfigs.length) return [];
     const pairs=[];
-    for(const api of apiList){ let apiUrl=String(api.url||'').trim(), protocol=/^http:\/\//i.test(apiUrl)?'http':'https'; apiUrl=apiUrl.replace(/^https?:\/\//i,'').replace(/\/+$/,''); for(const config of configList) pairs.push({api:apiUrl,config:config.url,protocol}); }
-    return pairs.length ? pairs : [{api:runtime.effectiveSubConverter,config:runtime.effectiveSubConfig,protocol:runtime.effectiveSubProtocol}];
+    for(const api of selectedApis){
+        const raw=String(api.url||'').trim();
+        const protocol=/^http:\/\//i.test(raw)?'http':'https';
+        const host=raw.replace(/^https?:\/\//i,'').replace(/\/+$/,'');
+        for(const config of selectedConfigs) pairs.push({api:host,config:config.url,protocol});
+    }
+    return pairs;
 }
 
-async function handlePublicGenerate(request, env, requestUrl) {
-    if (!env.KV) return jsonResponse({ ok: false, error: '未绑定 KV' }, 500);
-    try {
-        const data = await request.json();
-        const sources = cleanSourceList(data.sources || data.url || '');
-        if (!sources.length) return jsonResponse({ ok: false, error: '请输入至少一个订阅链接' }, 400);
-        if (sources.length > 100) return jsonResponse({ ok: false, error: '订阅链接最多 100 条' }, 400);
+async function handlePublicGenerate(request,env,requestUrl){
+    if(!env.KV) return jsonResponse({ok:false,error:'未绑定 KV'},500);
+    try{
+        const data=await request.json();
+        const sources=cleanSourceList(data.sources||'');
+        if(!sources.length) return jsonResponse({ok:false,error:'请输入至少一个订阅链接'},400);
+        if(sources.length>100) return jsonResponse({ok:false,error:'订阅链接最多 100 条'},400);
 
-        const cfg = await getConfig(env);
-        const apis = normalizeProviderList(cfg.subApis).filter(x => x.enabled);
-        const configs = normalizeProviderList(cfg.subConfigs).filter(x => x.enabled);
-        const apiIds = Array.isArray(data.subApiIds)
-            ? [...new Set(data.subApiIds.map(String))].filter(id => apis.some(x => x.id === id))
-            : [];
-        const configIds = Array.isArray(data.subConfigIds)
-            ? [...new Set(data.subConfigIds.map(String))].filter(id => configs.some(x => x.id === id))
-            : [];
+        const cfg=await getConfig(env);
+        const apis=normalizeProviderList(cfg.subApis).filter(x=>x.enabled);
+        const configs=normalizeProviderList(cfg.subConfigs).filter(x=>x.enabled);
 
-        if (apis.length && !apiIds.length) return jsonResponse({ ok: false, error: '请选择至少一个 SUBAPI' }, 400);
-        if (configs.length && !configIds.length) return jsonResponse({ ok: false, error: '请选择至少一个 SUBCONFIG' }, 400);
+        const apiMode=data.apiMode==='custom'?'custom':'preset';
+        const configMode=data.configMode==='custom'?'custom':'preset';
+        const apiId=String(data.apiId||'').trim();
+        const configId=String(data.configId||'').trim();
+        const apiItem=apiMode==='preset'?apis.find(x=>x.id===apiId):null;
+        const configItem=configMode==='preset'?configs.find(x=>x.id===configId):null;
+        if(apiMode==='preset'&&!apiItem) return jsonResponse({ok:false,error:'请选择有效的 SUBAPI'},400);
+        if(configMode==='preset'&&!configItem) return jsonResponse({ok:false,error:'请选择有效的 SUBCONFIG'},400);
 
-        const token = await makeRandomToken(env, 8);
-        const name = normalizeName(data.name || `订阅链接 ${token}`);
-        const target = ['auto', 'clash', 'singbox', 'surge', 'quanx', 'loon', 'mixed'].includes(String(data.target))
-            ? String(data.target)
-            : 'auto';
+        const apiRaw=String(apiMode==='custom'?data.apiUrl:apiItem.url).trim();
+        const configRaw=String(configMode==='custom'?data.configUrl:configItem.url).trim();
+        if(!/^https?:\/\//i.test(apiRaw)) return jsonResponse({ok:false,error:'SUBAPI 必须以 http:// 或 https:// 开头'},400);
+        if(!/^https?:\/\//i.test(configRaw)) return jsonResponse({ok:false,error:'SUBCONFIG 必须以 http:// 或 https:// 开头'},400);
 
-        const item = {
-            url: token,
-            name,
-            sources,
-            subApiIds: apiIds,
-            subConfigIds: configIds,
-            target,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-            type: 'sub-ui'
+        const protocol=/^http:\/\//i.test(apiRaw)?'http':'https';
+        const apiHost=apiRaw.replace(/^https?:\/\//i,'').replace(/\/+$/,'');
+        if(!apiHost) return jsonResponse({ok:false,error:'SUBAPI 无效'},400);
+
+        const noAds=String(data.noAds||'').trim().slice(0,5000);
+        const token=await makeRandomToken(env,8);
+        const name=normalizeName(data.name||`订阅链接 ${token}`);
+        const target=['auto','clash','singbox','surge','quanx','loon','mixed'].includes(String(data.target))?String(data.target):'auto';
+
+        const item={
+            url:token,name,sources,
+            subApiIds:apiMode==='preset'?[apiItem.id]:[],
+            subConfigIds:configMode==='preset'?[configItem.id]:[],
+            backends:[{api:apiHost,config:configRaw,protocol}],
+            noAds,target,
+            createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),
+            type:'sub-ui'
         };
+        await env.KV.put(`${URL_PREFIX}${token}`,JSON.stringify(item));
 
-        await env.KV.put(`${URL_PREFIX}${token}`, JSON.stringify(item));
-
-        const subscriptionUrl = `${requestUrl.origin}/${encodeURIComponent(token)}`;
-        return jsonResponse({
-            ok: true,
-            url: item,
-            subscription_url: subscriptionUrl
-        });
-    } catch (e) {
-        return jsonResponse({ ok: false, error: e?.message || String(e) }, 500);
-    }
+        const prefs={
+            apiMode,apiId:apiMode==='preset'?apiItem.id:'',apiUrl:apiMode==='custom'?`${protocol}://${apiHost}`:'',
+            configMode,configId:configMode==='preset'?configItem.id:'',configUrl:configMode==='custom'?configRaw:'',
+            noAds
+        };
+        const cookie=buildPublicPreferencesCookie(prefs);
+        const headers=cookie?{'Set-Cookie':cookie}:{};
+        const subscriptionUrl=`${requestUrl.origin}/${encodeURIComponent(token)}`;
+        return jsonResponse({ok:true,url:item,subscription_url:subscriptionUrl},200,headers);
+    }catch(e){return jsonResponse({ok:false,error:e?.message||String(e)},500);}
 }
 
 function buildSubUrl(api, config, target, urlToConvert, protocol) {
@@ -1931,128 +1335,87 @@ document.getElementById('copyGuest').addEventListener('click',()=>{
 </html>`;
 }
 
-async function renderSubUIHome(url, env) {
-    const cfg = await getConfig(env);
-    const apis = normalizeProviderList(cfg.subApis).filter(x => x.enabled);
-    const configs = normalizeProviderList(cfg.subConfigs).filter(x => x.enabled);
-
+async function renderSubUIHome(request,url,env){
+    const cfg=await getConfig(env);
+    const apis=normalizeProviderList(cfg.subApis).filter(x=>x.enabled);
+    const configs=normalizeProviderList(cfg.subConfigs).filter(x=>x.enabled);
+    const prefs=readPublicPreferences(request);
+    const defaultApi=apis.find(x=>x.id===String(cfg.defaultSubApiId||''))||null;
+    const defaultConfig=configs.find(x=>x.id===String(cfg.defaultSubConfigId||''))||null;
+    const apiPreset=prefs?.apiMode==='preset'&&apis.some(x=>x.id===prefs.apiId)?prefs.apiId:(defaultApi?.id||'');
+    const configPreset=prefs?.configMode==='preset'&&configs.some(x=>x.id===prefs.configId)?prefs.configId:(defaultConfig?.id||'');
+    const apiCustom=prefs?.apiMode==='custom'?String(prefs.apiUrl||''):'';
+    const configCustom=prefs?.configMode==='custom'?String(prefs.configUrl||''):'';
+    const apiMode=prefs?.apiMode==='custom'&&apiCustom?'custom':'preset';
+    const configMode=prefs?.configMode==='custom'&&configCustom?'custom':'preset';
+    const noAds=String(prefs?.noAds||'');
+    const esc=x=>escapeHTML(String(x??''));
     return `<!doctype html>
-<html lang="zh-CN">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>订阅转换</title>
-<style>${getSubUIStyles()}</style>
-</head>
-<body>
-<main class="page">
-<header class="header">
-    <h1 class="title">订阅转换</h1>
-    <div class="subtitle">粘贴你的订阅链接，生成属于你的聚合订阅。</div>
-</header>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${esc(cfg.subName||'CF-SUBS')} · 订阅转换</title>
+<style>${getSubUIStyles()}
+.backend-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.mode-tabs{display:flex;gap:8px;margin-bottom:10px}
+.mode-tab{flex:1;min-height:36px;border:1px solid #c8c8c0;border-radius:10px;background:rgba(255,255,255,.7);color:#222;font-weight:600;cursor:pointer}
+.mode-tab.active{background:#2f3338;color:#fff;border-color:#343a40}.backend-list{display:grid;gap:8px}
+.backend-option{display:grid;grid-template-columns:18px minmax(0,1fr);gap:8px;align-items:center;padding:10px;border:1px solid rgba(229,229,223,.6);border-radius:10px;background:rgba(255,255,255,.5);cursor:pointer}
+.backend-option input{width:18px;height:18px;margin:0}.backend-option span{font-weight:600;overflow-wrap:anywhere}.backend-option small{grid-column:2;color:#888;font-size:12px;word-break:break-all;overflow-wrap:anywhere}
+.custom-box[hidden]{display:none}.availability{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.availability-item{padding:10px 12px;border-radius:10px;border:1px solid rgba(229,229,223,.7);background:rgba(255,255,255,.5)}
+.availability-label{font-size:12px;color:#777;margin-bottom:4px}.availability-value{font-weight:700}
+.available{color:#2e7d32}.unavailable{color:#c62828}.checking{color:#888}.site-name{font-size:12px;color:#888;margin-bottom:4px}
+.noads-box textarea{min-height:100px}@media(max-width:700px){.backend-grid,.availability{grid-template-columns:1fr}}
+@media(prefers-color-scheme:dark){.mode-tab{background:rgba(40,40,40,.7);color:#eee;border-color:rgba(255,255,255,.15)}.mode-tab.active{background:#3f4650;border-color:#69717c;color:#fff}
+.backend-option,.availability-item{background:rgba(40,40,40,.5);border-color:rgba(255,255,255,.1)}.backend-option small,.availability-label,.site-name{color:#aaa}
+.available{color:#81c784}.unavailable{color:#e57373}.checking{color:#aaa}}
+</style></head>
+<body><main class="page">
+<header class="header"><div class="site-name">${esc(cfg.subName||'CF-SUBS')}</div><h1 class="title">订阅转换</h1><div class="subtitle">粘贴你的订阅链接，生成属于你的聚合订阅。</div></header>
 
-<section class="panel">
-    <h2 class="section-title">订阅链接</h2>
-    <div class="section-note">支持多个订阅地址，每行一个。</div>
-    <div class="field">
-        <textarea id="sources" placeholder="https://example.com/subscribe\nhttps://example.com/another"></textarea>
-    </div>
-    <div class="row">
-        <div>
-            <label for="target">生成类型</label>
-            <select id="target">
-                <option value="auto">自动</option>
-                <option value="clash">Clash</option>
-                <option value="singbox">Sing-box</option>
-                <option value="surge">Surge</option>
-                <option value="quanx">Quantumult X</option>
-                <option value="loon">Loon</option>
-                <option value="mixed">Mixed</option>
-            </select>
-        </div>
-        <div>
-            <label for="name">订阅名称</label>
-            <input id="name" placeholder="可选，例如：我的订阅">
-        </div>
-    </div>
-</section>
+<section class="panel"><h2 class="section-title">订阅链接</h2><div class="section-note">支持多个订阅地址，每行一个。</div>
+<div class="field"><textarea id="sources" placeholder="https://example.com/subscribe&#10;https://example.com/another"></textarea></div>
+<div class="row"><div><label for="target">生成类型</label><select id="target"><option value="auto">自动</option><option value="clash">Clash</option><option value="singbox">Sing-box</option><option value="surge">Surge</option><option value="quanx">Quantumult X</option><option value="loon">Loon</option><option value="mixed">Mixed</option></select></div>
+<div><label for="name">订阅名称</label><input id="name" placeholder="可选，例如：我的订阅"></div></div></section>
 
-<section class="panel">
-    <h2 class="section-title">SUBAPI</h2>
-    <div class="section-note">选择要使用的订阅转换后端，可多选。</div>
-    <div class="checks" id="apiChecks">
-        ${apis.length ? apis.map(x => `
-        <label class="check">
-            <input type="checkbox" value="${escapeHTML(x.id)}" checked>
-            <span>${escapeHTML(x.name)}</span>
-            <small>${escapeHTML(x.url)}</small>
-        </label>`).join('') : '<div class="empty">暂无可用 SUBAPI，请先进入管理员后台添加。</div>'}
-    </div>
-</section>
+<section class="panel"><h2 class="section-title">可用状态</h2><div class="section-note">查看你当前选择的两个订阅后端是否可用。</div>
+<div class="availability"><div class="availability-item"><div class="availability-label">SUBAPI</div><div class="availability-value checking" id="apiStatus">等待选择</div></div>
+<div class="availability-item"><div class="availability-label">SUBCONFIG</div><div class="availability-value checking" id="configStatus">等待选择</div></div></div></section>
 
-<section class="panel">
-    <h2 class="section-title">SUBCONFIG</h2>
-    <div class="section-note">选择要使用的订阅转换规则，可多选。</div>
-    <div class="checks" id="configChecks">
-        ${configs.length ? configs.map(x => `
-        <label class="check">
-            <input type="checkbox" value="${escapeHTML(x.id)}" checked>
-            <span>${escapeHTML(x.name)}</span>
-            <small>${escapeHTML(x.url)}</small>
-        </label>`).join('') : '<div class="empty">暂无可用 SUBCONFIG，请先进入管理员后台添加。</div>'}
-    </div>
-</section>
+<section class="panel"><h2 class="section-title">SUBAPI</h2><div class="section-note">可以选择管理员预留的后端，也可以使用自己的后端。</div>
+<div class="mode-tabs"><button type="button" class="mode-tab ${apiMode==='preset'?'active':''}" data-mode="api" data-value="preset">管理员预留</button><button type="button" class="mode-tab ${apiMode==='custom'?'active':''}" data-mode="api" data-value="custom">自定义</button></div>
+<div id="apiPreset" class="backend-list" ${apiMode==='custom'?'hidden':''}>${apis.length?apis.map(x=>`<label class="backend-option"><input type="radio" name="apiPreset" value="${esc(x.id)}" ${x.id===apiPreset?'checked':''}><span>${esc(x.name)}${x.id===String(cfg.defaultSubApiId||'')?' · 默认':''}</span><small>${esc(x.url)}</small></label>`).join(''):'<div class="empty">管理员暂未预留 SUBAPI。</div>'}</div>
+<div id="apiCustom" class="custom-box" ${apiMode==='preset'?'hidden':''}><div class="field"><label for="apiCustomUrl">你的 SUBAPI</label><input id="apiCustomUrl" value="${esc(apiCustom)}" placeholder="https://subapi.example.com"></div></div></section>
+
+<section class="panel"><h2 class="section-title">SUBCONFIG</h2><div class="section-note">可以选择管理员预留的配置，也可以使用自己的配置。</div>
+<div class="mode-tabs"><button type="button" class="mode-tab ${configMode==='preset'?'active':''}" data-mode="config" data-value="preset">管理员预留</button><button type="button" class="mode-tab ${configMode==='custom'?'active':''}" data-mode="config" data-value="custom">自定义</button></div>
+<div id="configPreset" class="backend-list" ${configMode==='custom'?'hidden':''}>${configs.length?configs.map(x=>`<label class="backend-option"><input type="radio" name="configPreset" value="${esc(x.id)}" ${x.id===configPreset?'checked':''}><span>${esc(x.name)}${x.id===String(cfg.defaultSubConfigId||'')?' · 默认':''}</span><small>${esc(x.url)}</small></label>`).join(''):'<div class="empty">管理员暂未预留 SUBCONFIG。</div>'}</div>
+<div id="configCustom" class="custom-box" ${configMode==='preset'?'hidden':''}><div class="field"><label for="configCustomUrl">你的 SUBCONFIG</label><input id="configCustomUrl" value="${esc(configCustom)}" placeholder="https://example.com/config.ini"></div></div></section>
+
+<section class="panel noads-box"><h2 class="section-title">排除节点</h2><div class="section-note">公开使用。每行填写一个关键词，包含关键词的节点会被排除。</div>
+<div class="field"><textarea id="noAds" placeholder="例如：t.me&#10;广告&#10;example.com">${esc(noAds)}</textarea></div></section>
 
 <button class="primary" id="generate" type="button">生成订阅链接</button>
-
-<section id="result" class="panel result-panel" hidden>
-    <h2 class="section-title">订阅链接页面</h2>
-    <div class="section-note">生成成功。打开下面的地址即可进入你的订阅链接页面。</div>
-    <div class="result-label">订阅链接</div>
-    <div class="result-url" id="direct"></div>
-    <div class="actions">
-        <button class="button" id="copyDirect" type="button">复制订阅链接</button>
-        <a class="button secondary" id="openDirect" target="_blank" rel="noopener">打开订阅链接页面</a>
-    </div>
-</section>
+<section id="result" class="panel result-panel" hidden><h2 class="section-title">订阅链接页面</h2><div class="section-note">生成成功。打开下面的地址即可进入你的订阅链接页面。</div>
+<div class="result-label">订阅链接</div><div class="result-url" id="direct"></div><div class="actions"><button class="button" id="copyDirect" type="button">复制订阅链接</button><a class="button secondary" id="openDirect" target="_blank" rel="noopener">打开订阅链接页面</a></div></section>
 </main>
 <script>
-const $ = id => document.getElementById(id);
-function selectedIds(id){ return [...document.querySelectorAll('#'+id+' input[type="checkbox"]:checked')].map(x=>x.value); }
-function copyText(text){
-    if(!text) return;
-    navigator.clipboard.writeText(text).then(()=>alert('已复制')).catch(()=>alert('复制失败，请手动复制'));
+const state={apiMode:${JSON.stringify(apiMode)},configMode:${JSON.stringify(configMode)}},$=id=>document.getElementById(id);
+function copyText(t){if(!t)return;navigator.clipboard.writeText(t).then(()=>alert('已复制')).catch(()=>alert('复制失败，请手动复制'))}
+function savePrefs(){
+    const a=selected('api'),c=selected('config');
+    const value={apiMode:state.apiMode,apiId:a.id||'',apiUrl:a.custom?a.url:'',configMode:state.configMode,configId:c.id||'',configUrl:c.custom?c.url:'',noAds:$('noAds').value.trim()};
+    const encoded=encodeURIComponent(JSON.stringify(value));
+    if(encoded.length<=3600) document.cookie='CF_SUB_PREFS='+encoded+'; Max-Age=2592000; Path=/; SameSite=Lax';
 }
+function switchMode(k,v){state[k+'Mode']=v;$(k==='api'?'apiPreset':'configPreset').hidden=v==='custom';$(k==='api'?'apiCustom':'configCustom').hidden=v==='preset';document.querySelectorAll('.mode-tab[data-mode="'+k+'"]').forEach(b=>b.classList.toggle('active',b.dataset.value===v));checkAvailability()}
+document.querySelectorAll('.mode-tab').forEach(b=>b.addEventListener('click',()=>{switchMode(b.dataset.mode,b.dataset.value);savePrefs()}));
+document.querySelectorAll('input[name="apiPreset"],input[name="configPreset"]').forEach(e=>e.addEventListener('change',()=>{checkAvailability();savePrefs()}));
+document.querySelectorAll('#apiCustomUrl,#configCustomUrl').forEach(e=>e.addEventListener('input',()=>{clearTimeout(window.__st);window.__st=setTimeout(()=>{checkAvailability();savePrefs()},450)}));
+function selected(k){if(state[k+'Mode']==='custom')return{url:$(k==='api'?'apiCustomUrl':'configCustomUrl').value.trim(),custom:true};const i=document.querySelector('input[name="'+k+'Preset"]:checked'),list=k==='api'?${JSON.stringify(apis)}:${JSON.stringify(configs)},x=i?list.find(v=>v.id===i.value):null;return{url:x?.url||'',id:x?.id||'',custom:false}}
+async function checkAvailability(){const a=selected('api').url,c=selected('config').url,ae=$('apiStatus'),ce=$('configStatus');if(!a){ae.textContent='未选择';ae.className='availability-value checking'}if(!c){ce.textContent='未选择';ce.className='availability-value checking'}if(!a||!c)return;ae.textContent='检测中…';ce.textContent='检测中…';ae.className=ce.className='availability-value checking';try{const r=await fetch('/api/status?api='+encodeURIComponent(a)+'&config='+encodeURIComponent(c),{cache:'no-store'}),d=await r.json();if(!r.ok||!d.ok)throw new Error(d.error||'检测失败');ae.textContent=d.api.ok?'✓ 可用'+(d.api.version?' · '+d.api.version:''):'✕ 不可用';ce.textContent=d.config.ok?'✓ 可用':'✕ 不可用';ae.className='availability-value '+(d.api.ok?'available':'unavailable');ce.className='availability-value '+(d.config.ok?'available':'unavailable')}catch(e){ae.textContent='✕ 检测失败';ce.textContent='✕ 检测失败';ae.className=ce.className='availability-value unavailable'}}
 $('copyDirect').addEventListener('click',()=>copyText($('direct').textContent.trim()));
-$('generate').addEventListener('click', async ()=>{
-    const button=$('generate');
-    const sources=$('sources').value.trim();
-    const subApiIds=selectedIds('apiChecks');
-    const subConfigIds=selectedIds('configChecks');
-    if(!sources) return alert('请输入订阅链接');
-    if(!subApiIds.length && ${apis.length ? 'true' : 'false'}) return alert('请至少选择一个 SUBAPI');
-    if(!subConfigIds.length && ${configs.length ? 'true' : 'false'}) return alert('请至少选择一个 SUBCONFIG');
-    button.disabled=true; button.textContent='生成中…';
-    try{
-        const response=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
-            sources,
-            target:$('target').value,
-            name:$('name').value.trim(),
-            subApiIds,
-            subConfigIds
-        })});
-        const data=await response.json();
-        if(!response.ok||!data.ok) throw new Error(data.error||'生成失败');
-        $('direct').textContent=data.subscription_url;
-        $('openDirect').href=data.subscription_url;
-        $('result').hidden=false;
-        $('result').scrollIntoView({behavior:'smooth',block:'start'});
-    }catch(e){ alert(e.message||'生成失败'); }
-    finally{ button.disabled=false; button.textContent='生成订阅链接'; }
-});
-</script>
-</body>
-</html>`;
+$('generate').addEventListener('click',async()=>{savePrefs();const b=$('generate'),s=$('sources').value.trim(),a=selected('api'),c=selected('config');if(!s)return alert('请输入订阅链接');if(!a.url)return alert('请选择或填写 SUBAPI');if(!c.url)return alert('请选择或填写 SUBCONFIG');if(!/^https?:\/\//i.test(a.url)||!/^https?:\/\//i.test(c.url))return alert('SUBAPI / SUBCONFIG 必须以 http:// 或 https:// 开头');b.disabled=true;b.textContent='生成中…';try{const r=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},cache:'no-store',body:JSON.stringify({sources:s,target:$('target').value,name:$('name').value.trim(),apiMode:state.apiMode,apiId:a.id,apiUrl:a.custom?a.url:'',configMode:state.configMode,configId:c.id,configUrl:c.custom?c.url:'',noAds:$('noAds').value.trim()})}),d=await r.json();if(!r.ok||!d.ok)throw new Error(d.error||'生成失败');$('direct').textContent=d.subscription_url;$('openDirect').href=d.subscription_url;$('result').hidden=false;$('result').scrollIntoView({behavior:'smooth',block:'start'})}catch(e){alert(e.message||'生成失败')}finally{b.disabled=false;b.textContent='生成订阅链接'}});
+checkAvailability();
+</script></body></html>`;
 }
 
 function getSubUIStyles(){return getToolStyles()+`
@@ -2067,147 +1430,39 @@ function getSubUIStyles(){return getToolStyles()+`
 `;}
 
 
-function renderAdminPage(url, env, settings, status) {
-    const apis = normalizeProviderList(settings.subApis);
-    const configs = normalizeProviderList(settings.subConfigs);
-    const esc = x => escapeHTML(String(x ?? ''));
-    const apiStatusText = status?.adminApiHtml || 'SUBAPI 状态未知';
-    const configStatusText = status?.adminConfigHtml || 'SUBCONFIG 状态未知';
-    const apiStatusClass = status?.adminApiCss || 'status-warn';
-    const configStatusClass = status?.adminConfigCss || 'status-warn';
-
-    const providerRows = (arr, type, emptyText) => arr.length ? arr.map(x => `
-<div class="link-item provider-item">
-    <div class="sub-head">
-        <div class="provider-main">
-            <div class="link-label">${esc(x.name)}</div>
-            <div class="section-note provider-url">${esc(x.url)}</div>
-            <div class="chips"><span class="chip ${x.enabled !== false ? 'chip-on' : 'chip-off'}">${x.enabled !== false ? '启用' : '禁用'}</span></div>
-        </div>
-        <div class="actions" style="margin-top:0;">
-            <button type="button" class="secondary" data-action="edit" data-type="${type}" data-id="${esc(x.id)}">编辑</button>
-            <button type="button" class="danger" data-action="delete" data-type="${type}" data-id="${esc(x.id)}">删除</button>
-        </div>
-    </div>
-</div>`).join('') : `<div class="empty">${emptyText}</div>`;
-
-    return `<!doctype html>
-<html lang="zh-CN">
-<head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${esc(settings.subName || 'CF-SUBS')} 管理后台</title>
-<style>
+function renderAdminPage(url,env,settings){
+    const apis=normalizeProviderList(settings.subApis), configs=normalizeProviderList(settings.subConfigs), esc=x=>escapeHTML(String(x??''));
+    const defaultApiId=String(settings.defaultSubApiId||''), defaultConfigId=String(settings.defaultSubConfigId||'');
+    const rows=(arr,type,empty,def)=>arr.length?arr.map(x=>`<div class="link-item provider-item"><div class="sub-head"><div class="provider-main"><div class="link-label">${esc(x.name)}</div><div class="section-note provider-url">${esc(x.url)}</div><div class="chips"><span class="chip ${x.enabled!==false?'chip-on':'chip-off'}">${x.enabled!==false?'启用':'禁用'}</span>${x.id===def?'<span class="chip chip-default">管理员默认</span>':''}</div></div><div class="actions admin-row-actions" style="margin-top:0"><button type="button" class="secondary" data-action="edit" data-type="${type}" data-id="${esc(x.id)}">编辑</button><button type="button" class="danger" data-action="delete" data-type="${type}" data-id="${esc(x.id)}">删除</button></div></div></div>`).join(''):`<div class="empty">${empty}</div>`;
+    return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(settings.subName||'CF-SUBS')} · 管理后台</title><style>
 ${getToolStyles()}
-.sub-grid{display:grid;gap:10px}.sub-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap}
-.provider-main{min-width:0}.provider-url{margin-bottom:0;word-break:break-all;overflow-wrap:anywhere}.provider-item{padding:12px}.chip{display:inline-block;padding:3px 8px;margin:2px 3px 2px 0;border-radius:8px;background:rgba(31,75,153,.08);color:#1f4b99;font-size:12px}.chip-on{background:rgba(76,175,80,.1);color:#2e7d32}.chip-off{background:rgba(120,120,120,.1);color:#777}.empty{font-size:12px;color:#888}.security-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.field>label input[type=checkbox]{width:18px!important;height:18px!important;margin-right:7px;vertical-align:-4px}.save-note{margin-top:8px;color:#888;font-size:12px}
-@media(max-width:600px){.security-grid{grid-template-columns:1fr}}
-@media(prefers-color-scheme:dark){.chip{background:rgba(100,181,246,.1);color:#90caf9}.chip-on{background:rgba(129,199,132,.1);color:#81c784}.chip-off{background:rgba(255,255,255,.08);color:#aaa}.empty,.save-note{color:#aaa}}
-</style>
-</head>
-<body>
-<div id="copyNotice" class="toast"></div>
-<main class="page">
-<header class="header">
-    <h1 class="title">管理后台</h1>
-    <div class="subtitle">管理 SUBAPI、SUBCONFIG 和管理员安全设置。</div>
-    <div class="status-indicator ${apiStatusClass}">${apiStatusText}</div>
-    <div class="status-indicator ${configStatusClass}">${configStatusText}</div>
-    <div class="actions" style="margin-top:0;justify-content:flex-end;">
-        <a class="button danger" href="/${esc(settings.adminPath || 'admin')}/logout">退出</a>
-    </div>
-</header>
+.sub-grid{display:grid;gap:10px}.sub-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap}.provider-main{min-width:0}.provider-url{margin-bottom:0;word-break:break-all;overflow-wrap:anywhere}.provider-item{padding:12px}.chip{display:inline-flex;align-items:center;padding:3px 8px;margin:2px 3px 2px 0;border-radius:8px;background:rgba(31,75,153,.08);color:#1f4b99;font-size:12px}.chip-on{background:rgba(76,175,80,.1);color:#2e7d32}.chip-off{background:rgba(120,120,120,.1);color:#777}.chip-default{background:rgba(31,75,153,.1);color:#1f4b99}.empty{font-size:12px;color:#888}.topbar{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap}.topbar-main{min-width:0;flex:1}.site-title-input{font-size:28px!important;font-weight:700!important;border:0!important;background:transparent!important;padding:0!important;height:auto!important;box-shadow:none!important;color:#1a1a1a!important}.site-title-input:focus{box-shadow:none!important}.top-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}.top-actions .button{min-width:86px}.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.4);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);display:none;align-items:center;justify-content:center;z-index:1000;padding:20px}.modal-content{width:min(460px,100%);background:rgba(255,255,255,.95);border-radius:20px;padding:24px;box-shadow:0 10px 40px rgba(0,0,0,.2);border:1px solid rgba(255,255,255,.5)}.modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}@media(max-width:600px){.top-actions{width:100%;justify-content:stretch}.top-actions .button{flex:1}.modal-content{padding:20px}}@media(prefers-color-scheme:dark){.site-title-input{color:#f5f5f5!important}.modal-content{background:rgba(30,30,30,.96);border-color:rgba(255,255,255,.1)}.chip{background:rgba(100,181,246,.1);color:#90caf9}.chip-on{background:rgba(129,199,132,.1);color:#81c784}.chip-off{background:rgba(255,255,255,.08);color:#aaa}.chip-default{background:rgba(100,181,246,.12);color:#90caf9}.empty{color:#aaa}}</style></head>
+<body><main class="page">
+<header class="header topbar"><div class="topbar-main"><input id="siteName" class="site-title-input" value="${esc(settings.subName||'CF-SUBS')}" aria-label="站点标题"><div class="subtitle">管理 SUBAPI、SUBCONFIG 和站点安全设置。</div></div><div class="top-actions"><button type="button" class="button secondary" id="securityButton">安全</button><button type="button" class="button secondary" id="pathButton">管理员路径</button><a class="button danger" href="/${esc(settings.adminPath||'admin')}/logout">退出</a></div></header>
 
-<section class="panel">
-<div class="sub-head">
-    <div><h2 class="section-title">订阅转换后端 SUBAPI</h2><div class="section-note">首页生成订阅时可选择一个或多个后端。</div></div>
-    <button type="button" data-action="add" data-type="subapi">＋ 添加 SUBAPI</button>
-</div>
-<div class="sub-grid" style="margin-top:12px;">${providerRows(apis,'subapi','暂无 SUBAPI，请先添加一个。')}</div>
-</section>
-
-<section class="panel">
-<div class="sub-head">
-    <div><h2 class="section-title">订阅转换规则 SUBCONFIG</h2><div class="section-note">首页生成订阅时可选择一个或多个配置。</div></div>
-    <button type="button" data-action="add" data-type="subconfig">＋ 添加 SUBCONFIG</button>
-</div>
-<div class="sub-grid" style="margin-top:12px;">${providerRows(configs,'subconfig','暂无 SUBCONFIG，请先添加一个。')}</div>
-</section>
-
-<section class="panel">
-<h2 class="section-title">管理员设置</h2>
-<div class="security-grid">
-    <div class="field"><label for="adminPath">管理员路径</label><input id="adminPath" value="${esc(settings.adminPath || 'admin')}" placeholder="admin"></div>
-    <div class="field"><label for="adminUser">管理员账号</label><input id="adminUser" value="${esc(settings.user || '')}" placeholder="管理员账号"></div>
-</div>
-<div class="security-grid">
-    <div class="field"><label for="adminPass">管理员密码</label><input id="adminPass" type="password" value="" placeholder="留空保持原密码"></div>
-    <div class="field"><label for="subName">站点名称</label><input id="subName" value="${esc(settings.subName || 'CF-SUBS')}" placeholder="CF-SUBS"></div>
-</div>
-<div class="field"><label for="noAds">节点屏蔽（NOADS）</label><input id="noAds" value="${esc(settings.noAds || '')}" placeholder="每行一个关键词，例如：t.me"></div>
-<div class="actions" style="justify-content:flex-end;"><button type="button" id="saveSettings">保存设置</button></div>
-<div class="save-note">修改管理员路径或账号密码后，保存完成会自动进入新的管理员地址；密码留空则保持原密码。</div>
-</section>
+<section class="panel"><div class="sub-head"><div><h2 class="section-title">订阅转换后端 SUBAPI</h2><div class="section-note">管理员预留给访客使用的 SUBAPI。</div></div><button type="button" data-action="add" data-type="subapi">＋ 添加 SUBAPI</button></div><div class="sub-grid" style="margin-top:12px">${rows(apis,'subapi','暂无 SUBAPI，请手动添加。',defaultApiId)}</div></section>
+<section class="panel"><div class="sub-head"><div><h2 class="section-title">订阅转换规则 SUBCONFIG</h2><div class="section-note">管理员预留给访客使用的 SUBCONFIG。</div></div><button type="button" data-action="add" data-type="subconfig">＋ 添加 SUBCONFIG</button></div><div class="sub-grid" style="margin-top:12px">${rows(configs,'subconfig','暂无 SUBCONFIG，请手动添加。',defaultConfigId)}</div></section>
+<section class="panel"><h2 class="section-title">默认预留</h2><div class="section-note">访客没有偏好 Cookie 时，主页使用这里的默认组合。</div><div class="security-grid"><div class="field"><label>默认 SUBAPI</label><select id="defaultApi">${apis.map(x=>`<option value="${esc(x.id)}" ${x.id===defaultApiId?'selected':''}>${esc(x.name)}</option>`).join('')}</select></div><div class="field"><label>默认 SUBCONFIG</label><select id="defaultConfig">${configs.map(x=>`<option value="${esc(x.id)}" ${x.id===defaultConfigId?'selected':''}>${esc(x.name)}</option>`).join('')}</select></div></div><div class="actions"><button type="button" id="saveDefaults">保存默认预留</button></div></section>
 </main>
 
-<div id="providerModal" class="modal-overlay">
-<div class="modal-content">
-<h2 class="section-title" id="modalTitle">添加 SUBAPI</h2>
-<div class="field"><label for="modalName">备注</label><input id="modalName"></div>
-<div class="field"><label for="modalUrl">URL</label><input id="modalUrl" placeholder="https://..."></div>
-<div class="field"><label><input id="modalEnabled" type="checkbox" checked style="width:18px;height:18px;margin-right:7px;vertical-align:-4px;">启用</label></div>
-<div class="actions" style="justify-content:flex-end;"><button type="button" class="secondary" id="modalCancel">取消</button><button type="button" id="modalSave">保存</button></div>
-</div></div>
+<div id="providerModal" class="modal-overlay"><div class="modal-content"><h2 class="section-title" id="modalTitle">添加 SUBAPI</h2><div class="field"><label for="modalName">备注</label><input id="modalName"></div><div class="field"><label for="modalUrl">URL</label><input id="modalUrl" placeholder="https://..."></div><div class="field"><label><input id="modalEnabled" type="checkbox" checked style="width:18px;height:18px;margin-right:7px;vertical-align:-4px">启用</label></div><div class="field"><label><input id="modalDefault" type="checkbox" style="width:18px;height:18px;margin-right:7px;vertical-align:-4px">设为管理员默认</label></div><div class="modal-actions"><button type="button" class="secondary" id="modalCancel">取消</button><button type="button" id="modalSave">保存</button></div></div></div>
+
+<div id="securityModal" class="modal-overlay"><div class="modal-content"><h2 class="section-title">安全</h2><div class="section-note">修改管理员账号和密码。密码留空表示保持原密码。</div><div class="field"><label for="securityUser">管理员账号</label><input id="securityUser" value="${esc(settings.user||'')}" autocomplete="username"></div><div class="field"><label for="securityPass">管理员密码</label><input id="securityPass" type="password" placeholder="留空保持原密码" autocomplete="new-password"></div><div class="modal-actions"><button type="button" class="secondary" data-close="securityModal">取消</button><button type="button" id="saveSecurity">保存</button></div></div></div>
+<div id="pathModal" class="modal-overlay"><div class="modal-content"><h2 class="section-title">管理员路径</h2><div class="section-note">保存后立即进入新的管理员地址。</div><div class="field"><label for="pathValue">路径</label><input id="pathValue" value="${esc(settings.adminPath||'admin')}" placeholder="admin"></div><div class="modal-actions"><button type="button" class="secondary" data-close="pathModal">取消</button><button type="button" id="savePath">保存</button></div></div></div>
 
 <script>
-const DATA=${JSON.stringify({apis,configs}).replace(/</g,'\\u003c')};
-const $=id=>document.getElementById(id);
-let modalState=null;
-function showModal(type,id){
-    const list=type==='subapi'?DATA.apis:DATA.configs;
-    const old=id?list.find(x=>x.id===id):null;
-    modalState={type,id:id||'',old};
-    $('modalTitle').textContent=(id?'编辑 ':'添加 ')+(type==='subapi'?'SUBAPI':'SUBCONFIG');
-    $('modalName').value=old?.name||'';$('modalUrl').value=old?.url||'';$('modalEnabled').checked=old?.enabled!==false;$('providerModal').style.display='flex';
-    setTimeout(()=>$('modalName').focus(),0);
-}
-function hideModal(){$('providerModal').style.display='none';modalState=null;}
-async function post(o){
-    const r=await fetch(location.pathname,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(o)});
-    const text=await r.text();
-    let data={};try{data=text?JSON.parse(text):{};}catch(e){throw new Error(text||'服务器返回无效数据');}
-    if(!r.ok||data.ok===false)throw new Error(data.error||text||'操作失败');
-    return data;
-}
-$('modalCancel').addEventListener('click',hideModal);
-$('providerModal').addEventListener('click',e=>{if(e.target===$('providerModal'))hideModal();});
-$('modalSave').addEventListener('click',async()=>{
-    if(!modalState)return;
-    const name=$('modalName').value.trim(), url=$('modalUrl').value.trim();
-    if(!name)return alert('请输入备注'); if(!/^https?:\\/\\//i.test(url))return alert('URL 必须以 http:// 或 https:// 开头');
-    $('modalSave').disabled=true;
-    try{await post({type:modalState.type+'_'+(modalState.id?'update':'create'),id:modalState.id,name,url,enabled:$('modalEnabled').checked});location.reload();}
-    catch(e){alert(e.message);}finally{$('modalSave').disabled=false;}
-});
-document.querySelectorAll('[data-action="add"]').forEach(b=>b.addEventListener('click',()=>showModal(b.dataset.type,'')));
-document.querySelectorAll('[data-action="edit"]').forEach(b=>b.addEventListener('click',()=>showModal(b.dataset.type,b.dataset.id)));
-document.querySelectorAll('[data-action="delete"]').forEach(b=>b.addEventListener('click',async()=>{
-    if(!confirm('确定删除这个项目？'))return;
-    try{await post({type:b.dataset.type+'_delete',id:b.dataset.id});location.reload();}catch(e){alert(e.message);}
-}));
-$('saveSettings').addEventListener('click',async()=>{
-    const path=$('adminPath').value.trim(), user=$('adminUser').value.trim(), pass=$('adminPass').value;
-    if(!path)return alert('管理员路径不能为空');
-    if(!/^[A-Za-z0-9_-]{1,80}$/.test(path))return alert('管理员路径只能使用字母、数字、下划线和短横线');
-    if(!user)return alert('管理员账号不能为空');
-    const button=$('saveSettings');button.disabled=true;
-    try{
-        const data=await post({type:'config',settings:{subName:$('subName').value.trim()||'CF-SUBS',adminPath:path,user,pass,keepPass:!pass,noAds:$('noAds').value.trim(),subApis:DATA.apis,subConfigs:DATA.configs}});
-        alert('保存成功');
-        location.href='/'+data.adminPath;
-    }catch(e){alert(e.message);}finally{button.disabled=false;}
-});
-</script>
-</body>
-</html>`;
+const DATA=${JSON.stringify({apis,configs,defaultApiId,defaultConfigId}).replace(/</g,'\u003c')},$=id=>document.getElementById(id);let modalState=null;
+function openModal(id){$(id).style.display='flex'}function closeModal(id){$(id).style.display='none'}
+async function post(o){const r=await fetch(location.pathname,{method:'POST',headers:{'Content-Type':'application/json'},cache:'no-store',body:JSON.stringify(o)}),t=await r.text();let d={};try{d=t?JSON.parse(t):{}}catch(e){throw new Error(t||'服务器返回无效数据')}if(!r.ok||d.ok===false)throw new Error(d.error||t||'操作失败');return d}
+function showProvider(type,id){const list=type==='subapi'?DATA.apis:DATA.configs,old=id?list.find(x=>x.id===id):null,def=type==='subapi'?DATA.defaultApiId:DATA.defaultConfigId;modalState={type,id:id||''};$('modalTitle').textContent=(id?'编辑 ':'添加 ')+(type==='subapi'?'SUBAPI':'SUBCONFIG');$('modalName').value=old?.name||'';$('modalUrl').value=old?.url||'';$('modalEnabled').checked=old?.enabled!==false;$('modalDefault').checked=old?old.id===def:false;openModal('providerModal')}
+function hideProvider(){closeModal('providerModal');modalState=null}
+document.querySelectorAll('[data-close]').forEach(b=>b.onclick=()=>closeModal(b.dataset.close));document.querySelectorAll('.modal-overlay').forEach(m=>m.onclick=e=>{if(e.target===m)m.style.display='none'});$('securityButton').onclick=()=>openModal('securityModal');$('pathButton').onclick=()=>openModal('pathModal');
+document.querySelectorAll('[data-action="add"]').forEach(b=>b.onclick=()=>showProvider(b.dataset.type,''));document.querySelectorAll('[data-action="edit"]').forEach(b=>b.onclick=()=>showProvider(b.dataset.type,b.dataset.id));document.querySelectorAll('[data-action="delete"]').forEach(b=>b.onclick=async()=>{if(!confirm('确定删除这个项目？'))return;try{await post({type:b.dataset.type+'_delete',id:b.dataset.id});location.reload()}catch(e){alert(e.message)}});
+$('modalCancel').onclick=hideProvider;$('modalSave').onclick=async()=>{if(!modalState)return;const name=$('modalName').value.trim(),url=$('modalUrl').value.trim();if(!name)return alert('请输入备注');if(!/^https?:\/\//i.test(url))return alert('URL 必须以 http:// 或 https:// 开头');try{await post({type:modalState.type+'_'+(modalState.id?'update':'create'),id:modalState.id,name,url,enabled:$('modalEnabled').checked,isDefault:$('modalDefault').checked});location.reload()}catch(e){alert(e.message)}};
+$('saveDefaults').onclick=async()=>{try{await post({type:'config',settings:{subName:$('siteName').value.trim()||'CF-SUBS',subApis:DATA.apis,subConfigs:DATA.configs,defaultSubApiId:$('defaultApi').value,defaultSubConfigId:$('defaultConfig').value}});location.reload()}catch(e){alert(e.message)}};
+$('siteName').addEventListener('change',async()=>{const name=$('siteName').value.trim()||'CF-SUBS';try{await post({type:'site_name',subName:name})}catch(e){alert(e.message)}});
+$('saveSecurity').onclick=async()=>{const user=$('securityUser').value.trim(),pass=$('securityPass').value;if(!user)return alert('管理员账号不能为空');try{await post({type:'security',user,pass});alert('安全设置已保存');closeModal('securityModal');location.reload()}catch(e){alert(e.message)}};
+$('savePath').onclick=async()=>{const path=$('pathValue').value.trim();if(!/^[A-Za-z0-9_-]{2,60}$/.test(path))return alert('管理员路径只能使用 2-60 个字母、数字、下划线或短横线');try{const d=await post({type:'admin_path',adminPath:path});location.href='/'+d.adminPath}catch(e){alert(e.message)}};
+</script></body></html>`;
 }
 
