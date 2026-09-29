@@ -1775,7 +1775,7 @@ async function renderSubUIHome(request,url,env){
     const configCurrentValue=selectedConfig?.url||'';
     const noAds='';
     const esc=x=>escapeHTML(String(x??''));
-    const json=x=>JSON.stringify(x).replace(/<\\/script/gi,'<\\\\/script').replace(/</g,'\\u003c');
+    const json=x=>JSON.stringify(x).replaceAll('</script','<\\/script').replace(/</g,'\\u003c');
 
     return `<!doctype html>
 <html lang="zh-CN">
@@ -1960,7 +1960,7 @@ function renderAdminPage(url,env,settings){
     const apis=normalizeProviderList(settings.subApis),configs=normalizeProviderList(settings.subConfigs);
     
     const esc=x=>escapeHTML(String(x??''));
-    const safeJson=x=>JSON.stringify(x).replace(/<\\/script/gi,'<\\\\/script').replace(/</g,'\\u003c');
+    const safeJson=x=>JSON.stringify(x).replaceAll('</script','<\\/script').replace(/</g,'\\u003c');
     const defaultApiId=String(settings.defaultSubApiId||'');
     const defaultConfigId=String(settings.defaultSubConfigId||'');
     const rows=(list,type,empty)=>list.length?list.map(x=>{
