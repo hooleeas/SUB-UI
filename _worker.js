@@ -1681,11 +1681,10 @@ function getToolStyles() {
             #current-qrcode { background: rgba(255, 255, 255, 0.9); }
         }
     `;
-    `;
 }
 
 function getSubscriptionLinks(url, token) {
-    const base = `https://${url.hostname}/${token}`;
+    const base = "https://" + url.hostname + "/" + token;
     return [
         ['自适应订阅地址', base],
         ['Base64订阅地址', `${base}?b64`],
