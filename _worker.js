@@ -709,32 +709,44 @@ async function handlePublicGenerate(request,env,requestUrl){
         const apis=normalizeProviderList(cfg.subApis).filter(x=>x.enabled);
         const configs=normalizeProviderList(cfg.subConfigs).filter(x=>x.enabled);
 
-        const apiMode=data.apiMode==='custom'?'custom':'preset';
-        const configMode=data.configMode==='custom'?'custom':'preset';
-        const apiId=String(data.apiId||'').trim();
-        const configId=String(data.configId||'').trim();
-        const apiItem=apiMode==='preset'?apis.find(x=>x.id===apiId):null;
-        const configItem=configMode==='preset'?configs.find(x=>x.id===configId):null;
-        if(apiMode==='preset'&&!apiItem) return jsonResponse({ok:false,error:'请选择有效的订阅转换后端'},400);
-        if(configMode==='preset'&&!configItem) return jsonResponse({ok:false,error:'请选择有效的订阅转换规则'},400);
+        const apiIds=Array.isArray(data.apiIds)?[...new Set(data.apiIds.map(x=>String(x).trim()).filter(Boolean))]:[];
+        const configIds=Array.isArray(data.configIds)?[...new Set(data.configIds.map(x=>String(x).trim()).filter(Boolean))]:[];
+        const apiCustom=Boolean(data.apiCustom);
+        const configCustom=Boolean(data.configCustom);
+        const apiUrl=String(data.apiUrl||'').trim();
+        const configUrl=String(data.configUrl||'').trim();
 
-        const apiRaw=String(apiMode==='custom'?data.apiUrl:apiItem.url).trim();
-        const configRaw=String(configMode==='custom'?data.configUrl:configItem.url).trim();
-        if(!/^https?:\/\//i.test(apiRaw)) return jsonResponse({ok:false,error:'订阅转换后端必须以 http:// 或 https:// 开头'},400);
-        if(!/^https?:\/\//i.test(configRaw)) return jsonResponse({ok:false,error:'订阅转换规则必须以 http:// 或 https:// 开头'},400);
+        const selectedApis=apiIds.map(id=>apis.find(x=>x.id===id)).filter(Boolean);
+        const selectedConfigs=configIds.map(id=>configs.find(x=>x.id===id)).filter(Boolean);
+        if(!selectedApis.length && !apiCustom) return jsonResponse({ok:false,error:'请选择至少一个订阅转换后端'},400);
+        if(!selectedConfigs.length && !configCustom) return jsonResponse({ok:false,error:'请选择至少一个订阅转换规则'},400);
+        if(apiCustom && !/^https?:\/\//i.test(apiUrl)) return jsonResponse({ok:false,error:'自定义订阅转换后端必须以 http:// 或 https:// 开头'},400);
+        if(configCustom && !/^https?:\/\//i.test(configUrl)) return jsonResponse({ok:false,error:'自定义订阅转换规则必须以 http:// 或 https:// 开头'},400);
 
-        const protocol=/^http:\/\//i.test(apiRaw)?'http':'https';
-        const apiHost=apiRaw.replace(/^https?:\/\//i,'').replace(/\/+$/,'');
-        if(!apiHost) return jsonResponse({ok:false,error:'订阅转换后端无效'},400);
+        const apiEntries=[...selectedApis.map(x=>({id:x.id,url:x.url,name:x.name})),...(apiCustom?[{id:'',url:apiUrl,name:'自定义'}]:[])];
+        const configEntries=[...selectedConfigs.map(x=>({id:x.id,url:x.url,name:x.name})),...(configCustom?[{id:'',url:configUrl,name:'自定义'}]:[])];
+        const backends=[];
+        for(const api of apiEntries){
+            const rawApi=String(api.url||'').trim();
+            const protocol=/^http:\/\//i.test(rawApi)?'http':'https';
+            const host=rawApi.replace(/^https?:\/\//i,'').replace(/\/+$/,'');
+            if(!host) continue;
+            for(const config of configEntries){
+                const rawConfig=String(config.url||'').trim();
+                if(!/^https?:\/\//i.test(rawConfig)) continue;
+                backends.push({api:host,config:rawConfig,protocol});
+            }
+        }
+        if(!backends.length) return jsonResponse({ok:false,error:'没有有效的订阅转换后端与规则组合'},400);
 
         const noAds=String(data.noAds||'').trim().slice(0,5000);
         const token=await makeRandomToken(env,8);
         const name='订阅链接';
         const item={
             url:token,name,sources,
-            subApiIds:apiMode==='preset'?[apiItem.id]:[],
-            subConfigIds:configMode==='preset'?[configItem.id]:[],
-            backends:[{api:apiHost,config:configRaw,protocol}],
+            subApiIds:selectedApis.map(x=>x.id),
+            subConfigIds:selectedConfigs.map(x=>x.id),
+            backends,
             noAds,target:'auto',
             createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),
             type:'sub-ui'
@@ -742,12 +754,11 @@ async function handlePublicGenerate(request,env,requestUrl){
         await env.KV.put(`${URL_PREFIX}${token}`,JSON.stringify(item));
 
         const prefs={
-            apiMode,apiId:apiMode==='preset'?apiItem.id:'',apiUrl:apiMode==='custom'?apiRaw:'',
-            configMode,configId:configMode==='preset'?configItem.id:'',configUrl:configMode==='custom'?configRaw:'',
-            noAds
+            apiIds:selectedApis.map(x=>x.id),apiCustom,apiUrl:apiCustom?apiUrl:'',
+            configIds:selectedConfigs.map(x=>x.id),configCustom,configUrl:configCustom?configUrl:'',noAds
         };
         const cookie=buildPublicPreferencesCookie(prefs);
-        const headers=cookie?{'Set-Cookie':cookie}:{};
+        const headers=cookie?{'Set-Cookie':cookie}:{ };
         const subscriptionUrl=`${requestUrl.origin}/${encodeURIComponent(token)}`;
         return jsonResponse({ok:true,url:item,subscription_url:subscriptionUrl},200,headers);
     }catch(e){return jsonResponse({ok:false,error:e?.message||String(e)},500);}
@@ -1532,47 +1543,50 @@ async function renderSubUIHome(request,url,env){
     const cfg=await getConfig(env);
     const apis=normalizeProviderList(cfg.subApis).filter(x=>x.enabled);
     const configs=normalizeProviderList(cfg.subConfigs).filter(x=>x.enabled);
-    const prefs=readPublicPreferences(request);
-    const defaultApi=apis.find(x=>x.id===String(cfg.defaultSubApiId||''))||null;
-    const defaultConfig=configs.find(x=>x.id===String(cfg.defaultSubConfigId||''))||null;
-    const apiPreset=prefs?.apiMode==='preset'&&apis.some(x=>x.id===prefs.apiId)?prefs.apiId:(defaultApi?.id||'');
-    const configPreset=prefs?.configMode==='preset'&&configs.some(x=>x.id===prefs.configId)?prefs.configId:(defaultConfig?.id||'');
-    const apiCustom=prefs?.apiMode==='custom'?String(prefs.apiUrl||''):'';
-    const configCustom=prefs?.configMode==='custom'?String(prefs.configUrl||''):'';
-    const apiMode=prefs?.apiMode==='custom'&&apiCustom?'custom':'preset';
-    const configMode=prefs?.configMode==='custom'&&configCustom?'custom':'preset';
-    const noAds=String(prefs?.noAds||'');
+    const prefs=readPublicPreferences(request)||{};
+    const defaultApiId=String(cfg.defaultSubApiId||'');
+    const defaultConfigId=String(cfg.defaultSubConfigId||'');
+    const savedApiIds=Array.isArray(prefs.apiIds)?prefs.apiIds:((prefs.apiMode==='preset'&&prefs.apiId)?[prefs.apiId]:[]);
+    const savedConfigIds=Array.isArray(prefs.configIds)?prefs.configIds:((prefs.configMode==='preset'&&prefs.configId)?[prefs.configId]:[]);
+    const apiIds=savedApiIds.filter(id=>apis.some(x=>x.id===id));
+    const configIds=savedConfigIds.filter(id=>configs.some(x=>x.id===id));
+    if(!apiIds.length&&prefs.apiCustom!==true&&defaultApiId&&apis.some(x=>x.id===defaultApiId)) apiIds.push(defaultApiId);
+    if(!configIds.length&&prefs.configCustom!==true&&defaultConfigId&&configs.some(x=>x.id===defaultConfigId)) configIds.push(defaultConfigId);
+    const apiCustom=Boolean(prefs.apiCustom);
+    const configCustom=Boolean(prefs.configCustom);
+    const apiUrl=apiCustom?String(prefs.apiUrl||''):'';
+    const configUrl=configCustom?String(prefs.configUrl||''):'';
+    const noAds=String(prefs.noAds||'');
     const esc=x=>escapeHTML(String(x??''));
     const json=x=>JSON.stringify(x).replace(/</g,'\\u003c');
     return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${esc(cfg.subName||'CF-SUBS')} · 订阅转换</title><style>${getSubUIStyles()}
-.backend-list{display:grid;gap:8px}.backend-option{display:grid;grid-template-columns:18px minmax(0,1fr);gap:8px;align-items:center;padding:10px;border:1px solid rgba(229,229,223,.6);border-radius:10px;background:rgba(255,255,255,.5);cursor:pointer}.backend-option input{width:18px;height:18px;margin:0}.backend-option span{font-weight:600;overflow-wrap:anywhere}.backend-option small{grid-column:2;color:#888;font-size:12px;word-break:break-all;overflow-wrap:anywhere}.mode-tabs{display:flex;gap:8px;margin-bottom:10px}.mode-tab{flex:1;min-height:36px;border:1px solid #c8c8c0;border-radius:10px;background:rgba(255,255,255,.7);color:#222;font-weight:600;cursor:pointer}.mode-tab.active{background:#2f3338;color:#fff;border-color:#343a40}.custom-box[hidden],.preset-box[hidden]{display:none}.status-card{padding:0}.status-block{padding:14px;border:1px solid rgba(229,229,223,.7);border-radius:14px;background:rgba(255,255,255,.5);margin-top:10px}.status-okbar{background:rgba(76,175,80,.12);border:1px solid rgba(76,175,80,.25);color:#2e7d32;border-radius:9px;padding:9px 12px;font-weight:700;word-break:break-all}.status-badbar{background:rgba(244,67,54,.1);border:1px solid rgba(244,67,54,.22);color:#c62828;border-radius:9px;padding:9px 12px;font-weight:700;word-break:break-all}.status-waitbar{background:rgba(255,152,0,.1);border:1px solid rgba(255,152,0,.2);color:#f57c00;border-radius:9px;padding:9px 12px;font-weight:700}.current-label{margin:12px 0 6px;font-size:13px;font-weight:700}.current-url{padding:10px 12px;border:1px solid rgba(229,229,223,.8);border-radius:9px;background:rgba(250,250,250,.7);color:#1f4b99;word-break:break-all;overflow-wrap:anywhere}.current-url a{color:inherit;text-decoration:none}.site-name{font-size:12px;color:#888;margin-bottom:4px}.result-url{padding:10px 12px;border:1px solid rgba(229,229,223,.8);border-radius:9px;background:rgba(250,250,250,.7);color:#1f4b99;word-break:break-all;overflow-wrap:anywhere}.result-url a{color:inherit}@media(max-width:600px){.mode-tabs{gap:6px}}@media(prefers-color-scheme:dark){.backend-option,.status-block{background:rgba(40,40,40,.5);border-color:rgba(255,255,255,.1)}.backend-option small,.site-name{color:#aaa}.mode-tab{background:rgba(40,40,40,.7);color:#eee;border-color:rgba(255,255,255,.15)}.mode-tab.active{background:#3f4650;border-color:#69717c}.status-okbar{background:rgba(129,199,132,.1);color:#81c784;border-color:rgba(129,199,132,.2)}.status-badbar{background:rgba(229,115,115,.1);color:#e57373;border-color:rgba(229,115,115,.2)}.status-waitbar{background:rgba(255,183,77,.1);color:#ffb74d;border-color:rgba(255,183,77,.2)}.current-url,.result-url{background:rgba(0,0,0,.3);color:#64b5f6;border-color:rgba(255,255,255,.1)}}
+.selection-list{display:grid;gap:8px;margin-top:12px}.selection-option{display:grid;grid-template-columns:20px minmax(0,1fr);gap:9px;align-items:start;padding:11px 12px;border:1px solid rgba(229,229,223,.6);border-radius:10px;background:rgba(255,255,255,.5);cursor:pointer}.selection-option:hover{border-color:rgba(127,127,127,.55)}.selection-option input{width:18px;height:18px;margin:2px 0 0}.selection-option span{font-weight:650;overflow-wrap:anywhere}.selection-option small{grid-column:2;color:#888;font-size:12px;line-height:1.45;word-break:break-all;overflow-wrap:anywhere}.current-box{margin-top:12px;padding:12px;border:1px solid rgba(229,229,223,.7);border-radius:12px;background:rgba(255,255,255,.5)}.current-title{font-size:13px;font-weight:700;margin-bottom:8px}.current-items{display:grid;gap:7px}.current-item{padding:9px 10px;border:1px solid rgba(229,229,223,.7);border-radius:9px;background:rgba(250,250,250,.7);color:#1f4b99;word-break:break-all;overflow-wrap:anywhere}.custom-current{width:100%;min-height:42px}.status-box{margin-top:12px}.status-list{display:grid;gap:7px}.status-item{padding:8px 10px;border-radius:9px;font-weight:650;word-break:break-all}.status-item.wait{background:rgba(255,152,0,.1);border:1px solid rgba(255,152,0,.2);color:#f57c00}.status-item.ok{background:rgba(76,175,80,.12);border:1px solid rgba(76,175,80,.25);color:#2e7d32}.status-item.bad{background:rgba(244,67,54,.1);border:1px solid rgba(244,67,54,.22);color:#c62828}.empty-inline{padding:10px 11px;border:1px dashed rgba(127,127,127,.4);border-radius:10px;color:#888}.hint{margin-top:8px;color:#888;font-size:12px}@media(prefers-color-scheme:dark){.selection-option,.current-box{background:rgba(40,40,40,.5);border-color:rgba(255,255,255,.1)}.selection-option small,.hint{color:#aaa}.current-item{background:rgba(0,0,0,.3);color:#64b5f6;border-color:rgba(255,255,255,.1)}.status-item.ok{background:rgba(129,199,132,.1);color:#81c784;border-color:rgba(129,199,132,.2)}.status-item.bad{background:rgba(229,115,115,.1);color:#e57373;border-color:rgba(229,115,115,.2)}.status-item.wait{background:rgba(255,183,77,.1);color:#ffb74d;border-color:rgba(255,183,77,.2)}}
 </style></head><body><main class="page">
 <header class="header"><div class="site-name">${esc(cfg.subName||'CF-SUBS')}</div><h1 class="title">订阅转换</h1><div class="subtitle">粘贴你的订阅链接，生成属于你的聚合订阅。</div></header>
 <section class="panel"><h2 class="section-title">订阅链接</h2><div class="section-note">支持多个订阅地址，每行一个。</div><div class="field"><textarea id="sources" placeholder="https://example.com/subscribe&#10;https://example.com/another"></textarea></div></section>
-<section class="panel"><h2 class="section-title">可用状态</h2><div class="section-note">当前选择的订阅转换后端和订阅转换规则。</div>
-<div class="status-block"><div id="apiStatusBar" class="status-waitbar">⏳ 订阅转换后端状态检测中</div><div class="current-label">当前配置</div><div id="apiCurrent" class="current-url">未选择</div></div>
-<div class="status-block"><div id="configStatusBar" class="status-waitbar">⏳ 订阅转换规则状态检测中</div><div class="current-label">当前配置</div><div id="configCurrent" class="current-url">未选择</div></div></section>
-<section class="panel"><h2 class="section-title">订阅转换后端(SUBAPI)</h2><div class="section-note">选择管理员预留的后端，或填写你自己的 SUBAPI。</div><div class="mode-tabs"><button type="button" class="mode-tab ${apiMode==='preset'?'active':''}" data-mode="api" data-value="preset">管理员预留</button><button type="button" class="mode-tab ${apiMode==='custom'?'active':''}" data-mode="api" data-value="custom">自定义</button></div>
-<div id="apiPreset" class="preset-box" ${apiMode==='custom'?'hidden':''}><div class="backend-list">${apis.length?apis.map(x=>`<label class="backend-option"><input type="radio" name="apiPreset" value="${esc(x.id)}" ${x.id===apiPreset?'checked':''}><span>${esc(x.name)}${x.id===String(cfg.defaultSubApiId||'')?' · 默认':''}</span><small>${esc(x.url)}</small></label>`).join(''):'<div class="empty">管理员暂未预留订阅转换后端。</div>'}</div></div>
-<div id="apiCustom" class="custom-box" ${apiMode==='preset'?'hidden':''}><div class="field"><label for="apiCustomUrl">你的 SUBAPI</label><input id="apiCustomUrl" value="${esc(apiCustom)}" placeholder="https://subapi.example.com"></div></div></section>
-<section class="panel"><h2 class="section-title">订阅转换规则(SUBCONFIG)</h2><div class="section-note">选择管理员预留的规则，或填写你自己的 SUBCONFIG。</div><div class="mode-tabs"><button type="button" class="mode-tab ${configMode==='preset'?'active':''}" data-mode="config" data-value="preset">管理员预留</button><button type="button" class="mode-tab ${configMode==='custom'?'active':''}" data-mode="config" data-value="custom">自定义</button></div>
-<div id="configPreset" class="preset-box" ${configMode==='custom'?'hidden':''}><div class="backend-list">${configs.length?configs.map(x=>`<label class="backend-option"><input type="radio" name="configPreset" value="${esc(x.id)}" ${x.id===configPreset?'checked':''}><span>${esc(x.name)}${x.id===String(cfg.defaultSubConfigId||'')?' · 默认':''}</span><small>${esc(x.url)}</small></label>`).join(''):'<div class="empty">管理员暂未预留订阅转换规则。</div>'}</div></div>
-<div id="configCustom" class="custom-box" ${configMode==='preset'?'hidden':''}><div class="field"><label for="configCustomUrl">你的 SUBCONFIG</label><input id="configCustomUrl" value="${esc(configCustom)}" placeholder="https://example.com/config.ini"></div></div></section>
+<section class="panel"><h2 class="section-title">订阅转换后端(SUBAPI)</h2><div class="section-note">选择一个或多个可用的订阅转换后端，也可以使用自定义后端。</div>
+<div class="selection-list">${apis.map(x=>`<label class="selection-option"><input type="checkbox" name="apiChoice" value="${esc(x.id)}" ${apiIds.includes(x.id)?'checked':''}><span>${esc(x.name)}</span><small>${esc(x.url)}</small></label>`).join('')}${!apis.length?'':''}<label class="selection-option"><input type="checkbox" id="apiCustomCheck" ${apiCustom?'checked':''}><span>自定义</span><small>使用你自己的订阅转换后端</small></label></div>
+<div class="current-box"><div class="current-title">当前配置</div><div id="apiCurrent" class="current-items"></div><div id="apiCustomWrap" class="custom-wrap"><input id="apiCustomUrl" class="custom-current" ${apiCustom?'':'hidden'} value="${esc(apiUrl)}" placeholder="https://subapi.example.com"></div><div id="apiStatus" class="status-box"><div class="status-list"><div class="status-item wait">⏳ 状态检测中</div></div></div></div></section>
+<section class="panel"><h2 class="section-title">订阅转换规则(SUBCONFIG)</h2><div class="section-note">选择一个或多个可用的订阅转换规则，也可以使用自定义规则。</div>
+<div class="selection-list">${configs.map(x=>`<label class="selection-option"><input type="checkbox" name="configChoice" value="${esc(x.id)}" ${configIds.includes(x.id)?'checked':''}><span>${esc(x.name)}</span><small>${esc(x.url)}</small></label>`).join('')}${!configs.length?'':''}<label class="selection-option"><input type="checkbox" id="configCustomCheck" ${configCustom?'checked':''}><span>自定义</span><small>使用你自己的订阅转换规则</small></label></div>
+<div class="current-box"><div class="current-title">当前配置</div><div id="configCurrent" class="current-items"></div><div id="configCustomWrap" class="custom-wrap"><input id="configCustomUrl" class="custom-current" ${configCustom?'':'hidden'} value="${esc(configUrl)}" placeholder="https://example.com/config.ini"></div><div id="configStatus" class="status-box"><div class="status-list"><div class="status-item wait">⏳ 状态检测中</div></div></div></div></section>
 <section class="panel"><h2 class="section-title">排除节点</h2><div class="section-note">公开使用。每行填写一个关键词，包含关键词的节点会被排除。</div><div class="field"><textarea id="noAds" placeholder="例如：t.me&#10;广告&#10;example.com">${esc(noAds)}</textarea></div></section>
 <button class="primary" id="generate" type="button">生成聚合订阅</button>
 <section id="result" class="panel result-panel" hidden><h2 class="section-title">订阅链接页面</h2><div class="section-note">生成成功，打开下面的链接即可访问你的订阅链接页面。</div><div class="result-url" id="direct"></div><div class="actions"><button class="button" id="copyDirect" type="button">复制订阅链接</button><a class="button secondary" id="openDirect" target="_blank" rel="noopener">打开订阅链接页面</a></div></section>
 </main><script>
-const state={apiMode:${json(apiMode)},configMode:${json(configMode)}},$=id=>document.getElementById(id);const API_LIST=${json(apis)},CONFIG_LIST=${json(configs)};
-function selected(k){if(state[k+'Mode']==='custom'){const id=k==='api'?'apiCustomUrl':'configCustomUrl';return{url:$(id)?.value.trim()||'',id:'',custom:true}}const input=document.querySelector('input[name="'+k+'Preset"]:checked'),list=k==='api'?API_LIST:CONFIG_LIST,x=input?list.find(v=>v.id===input.value):null;return{url:x?.url||'',id:x?.id||'',custom:false}}
-function savePrefs(){const a=selected('api'),c=selected('config'),v={apiMode:state.apiMode,apiId:a.id,apiUrl:a.custom?a.url:'',configMode:state.configMode,configId:c.id,configUrl:c.custom?c.url:'',noAds:$('noAds').value.trim()},e=encodeURIComponent(JSON.stringify(v));if(e.length<=3600)document.cookie='CF_SUB_PREFS='+e+'; Max-Age=2592000; Path=/; SameSite=Lax; Secure'}
-function setMode(k,v){state[k+'Mode']=v;$(k==='api'?'apiPreset':'configPreset').hidden=v==='custom';$(k==='api'?'apiCustom':'configCustom').hidden=v==='preset';document.querySelectorAll('.mode-tab[data-mode="'+k+'"]').forEach(b=>b.classList.toggle('active',b.dataset.value===v));checkAvailability();savePrefs()}
-document.querySelectorAll('.mode-tab').forEach(b=>b.addEventListener('click',()=>setMode(b.dataset.mode,b.dataset.value)));document.querySelectorAll('input[name="apiPreset"],input[name="configPreset"]').forEach(e=>e.addEventListener('change',()=>{checkAvailability();savePrefs()}));document.querySelectorAll('#apiCustomUrl,#configCustomUrl').forEach(e=>e?.addEventListener('input',()=>{clearTimeout(window.__st);window.__st=setTimeout(()=>{checkAvailability();savePrefs()},400)}));
-function showStatus(bar,cur,kind,text,url){bar.textContent=text;bar.className=kind;cur.innerHTML=url?'<a href="'+url.replace(/"/g,'&quot;')+'" target="_blank" rel="noopener">'+url.replace(/&/g,'&amp;').replace(/</g,'&lt;')+'</a>':'未选择'}
-async function checkAvailability(){const a=selected('api').url,c=selected('config').url;const ab=$('apiStatusBar'),cb=$('configStatusBar'),ac=$('apiCurrent'),cc=$('configCurrent');if(!a){showStatus(ab,ac,'status-waitbar','⏳ 未选择订阅转换后端','');}if(!c){showStatus(cb,cc,'status-waitbar','⏳ 未选择订阅转换规则','');}if(!a||!c)return;showStatus(ab,ac,'status-waitbar','⏳ 订阅转换后端状态检测中',a);showStatus(cb,cc,'status-waitbar','⏳ 订阅转换规则状态检测中',c);try{const r=await fetch('/api/status?api='+encodeURIComponent(a)+'&config='+encodeURIComponent(c),{cache:'no-store'}),d=await r.json();if(!r.ok||!d.ok)throw new Error(d.error||'检测失败');showStatus(ab,ac,d.api.ok?'status-okbar':'status-badbar',d.api.ok?'✅ 订阅转换后端状态正常'+(d.api.version?' ('+d.api.version+')':''):'❌ 订阅转换后端不可用',d.api.url||a);showStatus(cb,cc,d.config.ok?'status-okbar':'status-badbar',d.config.ok?'✅ 订阅转换规则状态正常':'❌ 订阅转换规则不可用',d.config.url||c)}catch(e){showStatus(ab,ac,'status-badbar','❌ 订阅转换后端检测失败',a);showStatus(cb,cc,'status-badbar','❌ 订阅转换规则检测失败',c)}}
+const state={apiCustom:${apiCustom},configCustom:${configCustom}},$=id=>document.getElementById(id);const API_LIST=${json(apis)},CONFIG_LIST=${json(configs)};
+function checkedIds(name){return [...document.querySelectorAll('input[name="'+name+'"]:checked')].map(x=>x.value)}
+function selected(k){const list=k==='api'?API_LIST:CONFIG_LIST,name=k==='api'?'apiChoice':'configChoice',custom=k==='api'?state.apiCustom:state.configCustom,ids=checkedIds(name),ci=k==='api'?'apiCustomUrl':'configCustomUrl',items=ids.map(id=>list.find(x=>x.id===id)).filter(Boolean);const cu=custom?$(ci).value.trim():'';return{items,ids,custom,url:cu,all:[...items.map(x=>x.url),...(custom&&cu?[cu]:[])]}}
+function savePrefs(){const a=selected('api'),c=selected('config'),v={apiIds:a.ids,apiCustom:a.custom,apiUrl:a.custom?a.url:'',configIds:c.ids,configCustom:c.custom,configUrl:c.custom?c.url:'',noAds:$('noAds').value.trim()},e=encodeURIComponent(JSON.stringify(v));if(e.length<=3600)document.cookie='CF_SUB_PREFS='+e+'; Max-Age=2592000; Path=/; SameSite=Lax; Secure'}
+function renderCurrent(k){const s=selected(k),box=$(k+'Current'),ci=$(k==='api'?'apiCustomUrl':'configCustomUrl');box.innerHTML='';if(s.items.length){s.items.forEach(x=>{const d=document.createElement('div');d.className='current-item';d.textContent=x.url;box.appendChild(d)})}else if(!s.custom){const d=document.createElement('div');d.className='current-item';d.textContent='未选择';box.appendChild(d)}ci.hidden=!s.custom}
+function renderStatusBox(k,states){const box=$(k+'Status');box.innerHTML='<div class="status-list">'+states.map(x=>'<div class="status-item '+x.kind+'">'+x.text.replace(/</g,'&lt;')+'</div>').join('')+'</div>'}
+async function checkAvailability(){const a=selected('api'),c=selected('config');renderCurrent('api');renderCurrent('config');if(!a.all.length){renderStatusBox('api',[{kind:'wait',text:'⏳ 未选择订阅转换后端'}]);}else if(!c.all.length){renderStatusBox('api',[{kind:'wait',text:'⏳ 等待选择订阅转换规则'}]);}else{renderStatusBox('api',a.all.map(x=>({kind:'wait',text:'⏳ '+x})));}if(!c.all.length){renderStatusBox('config',[{kind:'wait',text:'⏳ 未选择订阅转换规则'}]);return}if(!a.all.length){renderStatusBox('config',[{kind:'wait',text:'⏳ 等待选择订阅转换后端'}]);return}renderStatusBox('config',c.all.map(x=>({kind:'wait',text:'⏳ '+x})));const pairs=[];a.all.forEach(api=>c.all.forEach(config=>pairs.push({api,config})));const results=await Promise.all(pairs.map(async p=>{try{const r=await fetch('/api/status?api='+encodeURIComponent(p.api)+'&config='+encodeURIComponent(p.config),{cache:'no-store'}),d=await r.json();return{...p,ok:Boolean(r.ok&&d.ok&&d.api?.ok&&d.config?.ok),apiOk:Boolean(d.api?.ok),configOk:Boolean(d.config?.ok),version:d.api?.version||''}}catch(e){return{...p,ok:false,apiOk:false,configOk:false}}}));renderStatusBox('api',a.all.map(api=>{const rs=results.filter(x=>x.api===api),ok=rs.length>0&&rs.some(x=>x.apiOk);const ver=rs.find(x=>x.api===api&&x.version)?.version;return{kind:ok?'ok':'bad',text:(ok?'✅ ':'❌ ')+api+(ver?' ('+ver+')':'')}}));renderStatusBox('config',c.all.map(config=>{const rs=results.filter(x=>x.config===config),ok=rs.length>0&&rs.some(x=>x.configOk);return{kind:ok?'ok':'bad',text:(ok?'✅ ':'❌ ')+config}}))}
+function bindChoices(name,k){document.querySelectorAll('input[name="'+name+'"]').forEach(e=>e.addEventListener('change',()=>{checkAvailability();savePrefs()}))}
+$('apiCustomCheck').addEventListener('change',e=>{state.apiCustom=e.target.checked;renderCurrent('api');checkAvailability();savePrefs()});$('configCustomCheck').addEventListener('change',e=>{state.configCustom=e.target.checked;renderCurrent('config');checkAvailability();savePrefs()});bindChoices('apiChoice','api');bindChoices('configChoice','config');['apiCustomUrl','configCustomUrl'].forEach(id=>$(id).addEventListener('input',()=>{clearTimeout(window.__st);window.__st=setTimeout(()=>{checkAvailability();savePrefs()},400)}));$('noAds').addEventListener('input',()=>savePrefs());
 $('copyDirect').addEventListener('click',()=>navigator.clipboard.writeText($('direct').textContent.trim()).then(()=>alert('已复制')).catch(()=>alert('复制失败，请手动复制')));
-$('generate').addEventListener('click',async()=>{const b=$('generate'),s=$('sources').value.trim(),a=selected('api'),c=selected('config');if(!s)return alert('请输入订阅链接');if(!a.url)return alert('请选择或填写订阅转换后端');if(!c.url)return alert('请选择或填写订阅转换规则');if(!new RegExp('^https?://','i').test(a.url)||!new RegExp('^https?://','i').test(c.url))return alert('后端地址必须以 http:// 或 https:// 开头');savePrefs();b.disabled=true;b.textContent='生成中…';try{const r=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},cache:'no-store',body:JSON.stringify({sources:s,apiMode:state.apiMode,apiId:a.id,apiUrl:a.custom?a.url:'',configMode:state.configMode,configId:c.id,configUrl:c.custom?c.url:'',noAds:$('noAds').value.trim()})}),d=await r.json();if(!r.ok||!d.ok)throw new Error(d.error||'生成失败');$('direct').innerHTML='<a href="'+d.subscription_url+'" target="_blank" rel="noopener">'+d.subscription_url.replace(/&/g,'&amp;').replace(/</g,'&lt;')+'</a>';$('openDirect').href=d.subscription_url;$('result').hidden=false;$('result').scrollIntoView({behavior:'smooth',block:'start'})}catch(e){alert(e.message||'生成失败')}finally{b.disabled=false;b.textContent='生成聚合订阅'}});
-checkAvailability();
+$('generate').addEventListener('click',async()=>{const b=$('generate'),s=$('sources').value.trim(),a=selected('api'),c=selected('config');if(!s)return alert('请输入订阅链接');if(!a.all.length)return alert('请选择至少一个订阅转换后端');if(!c.all.length)return alert('请选择至少一个订阅转换规则');if(a.custom&&!/^https?:\/\//i.test(a.url))return alert('自定义订阅转换后端必须以 http:// 或 https:// 开头');if(c.custom&&!/^https?:\/\//i.test(c.url))return alert('自定义订阅转换规则必须以 http:// 或 https:// 开头');savePrefs();b.disabled=true;b.textContent='生成中…';try{const r=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},cache:'no-store',body:JSON.stringify({sources:s,apiIds:a.ids,apiCustom:a.custom,apiUrl:a.custom?a.url:'',configIds:c.ids,configCustom:c.custom,configUrl:c.custom?c.url:'',noAds:$('noAds').value.trim()})}),d=await r.json();if(!r.ok||!d.ok)throw new Error(d.error||'生成失败');$('direct').innerHTML='<a href="'+d.subscription_url+'" target="_blank" rel="noopener">'+d.subscription_url.replace(/&/g,'&amp;').replace(/</g,'&lt;')+'</a>';$('openDirect').href=d.subscription_url;$('result').hidden=false;$('result').scrollIntoView({behavior:'smooth',block:'start'})}catch(e){alert(e.message||'生成失败')}finally{b.disabled=false;b.textContent='生成聚合订阅'}});
+renderCurrent('api');renderCurrent('config');checkAvailability();
 </script></body></html>`;
 }
 function getSubUIStyles(){return getToolStyles()+`
