@@ -27,7 +27,8 @@
  */
 
 let mytoken = 'auto';
-let FileName = 'CF-SUBS';
+let FileName = 'SUB';
+let SiteLogo = '';
 let SUBUpdateTime = 6;
 let total = 99;
 let timestamp = 4102329600000;
@@ -89,6 +90,7 @@ async function handleRequest(request, env) {
         fakeUrl = env.URL || '';
         fakeUrl302 = env.URL302 || '';
         fakeCode = env.CODE || '';
+        SiteLogo = '';
 
         // 读取 KV 配置
         if (env.KV) {
@@ -97,7 +99,7 @@ async function handleRequest(request, env) {
                 if (kvConfigStr) {
                     const kvConfig = JSON.parse(kvConfigStr);
 
-                    FileName = kvConfig.subName || 'CF-SUBS';
+                    FileName = kvConfig.subName || 'SUB';
 
                     subConverter = '';
                     subConfig = '';
@@ -112,6 +114,7 @@ async function handleRequest(request, env) {
                     fakeUrl = kvConfig.fakeUrl !== undefined ? kvConfig.fakeUrl : fakeUrl;
                     fakeUrl302 = kvConfig.fakeUrl302 !== undefined ? kvConfig.fakeUrl302 : fakeUrl302;
                     fakeCode = kvConfig.fakeCode !== undefined ? kvConfig.fakeCode : fakeCode;
+                    SiteLogo = String(kvConfig.siteLogo || '');
                 }
             } catch (e) {
                 console.error('解析 KV 配置失败', e);
@@ -589,7 +592,7 @@ async function handleAdmin(request, env, runtime) {
                 const old=await getConfig(env);
                 const next={
                     ...old,
-                    subName:normalizeName(data.settings?.subName??old.subName)||'CF-SUBS',
+                    subName:normalizeName(data.settings?.subName??old.subName)||'SUB',
                     subApis:normalizeProviderList(data.settings?.subApis??old.subApis),
                     subConfigs:normalizeProviderList(data.settings?.subConfigs??old.subConfigs),
                     defaultSubApiId:String(data.settings?.defaultSubApiId??old.defaultSubApiId??''),
@@ -601,7 +604,8 @@ async function handleAdmin(request, env, runtime) {
                     fakeMode:String(data.settings?.fakeMode??old.fakeMode??''),
                     fakeUrl:String(data.settings?.fakeUrl??old.fakeUrl??''),
                     fakeUrl302:String(data.settings?.fakeUrl302??old.fakeUrl302??''),
-                    fakeCode:String(data.settings?.fakeCode??old.fakeCode??'')
+                    fakeCode:String(data.settings?.fakeCode??old.fakeCode??''),
+                    siteLogo:String(data.settings?.siteLogo??old.siteLogo??'')
                 };
                 await env.KV.put('CONFIG.json',JSON.stringify(next));
                 return jsonResponse({ok:true,adminPath:next.adminPath});
@@ -622,9 +626,20 @@ async function handleAdmin(request, env, runtime) {
             }
 
             if(data.type==='site_name'){
-                const old=await getConfig(env), subName=normalizeName(data.subName)||'CF-SUBS';
+                const old=await getConfig(env), subName=normalizeName(data.subName)||'SUB';
                 await env.KV.put('CONFIG.json',JSON.stringify({...old,subName}));
                 return jsonResponse({ok:true,subName});
+            }
+
+            if(data.type==='site_settings'){
+                const old=await getConfig(env);
+                const subName=normalizeName(data.subName)||'SUB';
+                const adminPath=normalizeAdminPath(data.adminPath)||DEFAULT_ADMIN_PATH;
+                const siteLogo=String(data.siteLogo||'').trim();
+                if(siteLogo && !/^https?:\/\//i.test(siteLogo)) return jsonResponse({ok:false,error:'站点标签栏 Logo 必须是 http:// 或 https:// URL'},400);
+                const next={...old,subName,adminPath,siteLogo};
+                await env.KV.put('CONFIG.json',JSON.stringify(next));
+                return jsonResponse({ok:true,subName,adminPath,siteLogo});
             }
 
             if(['subapi_create','subapi_update','subapi_delete','subapi_default','subconfig_create','subconfig_update','subconfig_delete','subconfig_default'].includes(data.type)){
@@ -695,16 +710,19 @@ async function handleAdmin(request, env, runtime) {
 
 async function getConfig(env) {
     const defaults = {
-        subName:'CF-SUBS', subApi:'', subConfig:'',
+        subName:'SUB', subApi:'', subConfig:'',
         subApis:[], subConfigs:[],
         defaultSubApiId:'', defaultSubConfigId:'',
-        noAds:'', user:'', pass:'', adminPath:DEFAULT_ADMIN_PATH,
+        noAds:'', user:'', pass:'', adminPath:DEFAULT_ADMIN_PATH, siteLogo:'',
         fakeMode:'', fakeUrl:'', fakeUrl302:'', fakeCode:''
     };
     if(!env.KV) return defaults;
     try {
         const raw=await env.KV.get('CONFIG.json');
-        return raw ? {...defaults,...JSON.parse(raw)} : defaults;
+        if(!raw) return defaults;
+        const parsed={...defaults,...JSON.parse(raw)};
+        if(parsed.subName==='CF-SUBS') parsed.subName='SUB';
+        return parsed;
     } catch(e) { return defaults; }
 }
 
@@ -1587,7 +1605,7 @@ function renderLoginPage(url, error = '') {
     return `<!DOCTYPE html>
 <html>
 <head>
-<title>${escapeHTML(FileName)}管理面板</title>
+<title>${escapeHTML(FileName)}管理面板</title>${SiteLogo?`<link rel="icon" href="${escapeHTML(SiteLogo)}">`:''}
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
@@ -1646,7 +1664,7 @@ function renderGuestPage(url, guest, guestName = '', backend = null, status = nu
     return `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-<title>${escapeHTML(guestName || FileName)}访客订阅</title>
+<title>${escapeHTML(guestName || FileName)}访客订阅</title>${SiteLogo?`<link rel="icon" href="${escapeHTML(SiteLogo)}">`:''}
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>${getToolStyles()}
@@ -1764,7 +1782,7 @@ async function renderSubUIHome(request,url,env){
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${esc(cfg.subName||'CF-SUBS')} · 订阅转换</title>
+<title>${esc(cfg.subName||'SUB')}</title>
 <style>
 ${getSubUIStyles()}
 .native-picker{display:block;width:100%;min-height:42px;padding:8px 12px;border:1px solid rgba(229,229,223,.8);border-radius:10px;background:rgba(250,250,250,.7);color:inherit;font:inherit;cursor:pointer;appearance:auto;-webkit-appearance:auto}
@@ -1779,7 +1797,7 @@ ${getSubUIStyles()}
 </head>
 <body>
 <main class="page">
-<header class="header"><h1 class="title">订阅转换</h1><div class="subtitle">粘贴你的订阅链接，生成属于你的聚合订阅。</div></header>
+<header class="header"><h1 class="title">${esc(cfg.subName||'SUB')}</h1><div class="subtitle">粘贴你的订阅链接，生成属于你的聚合订阅。</div></header>
 
 <section class="panel"><h2 class="section-title">订阅链接</h2><div class="section-note">支持多个订阅地址，每行一个。</div><div class="field"><textarea id="sources" placeholder="https://example.com/subscribe&#10;https://example.com/another"></textarea></div></section>
 
@@ -1964,15 +1982,15 @@ function renderAdminPage(url,env,settings){
         </select>`;
     };
 
-    return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(settings.subName||'CF-SUBS')} · 管理后台</title><style>${getToolStyles()}
-.sub-head{display:grid;grid-template-columns:minmax(0,1fr) 700px;align-items:start;gap:18px}.sub-head-actions{display:grid;grid-template-columns:minmax(0,1fr) 210px;align-items:center;gap:10px;width:700px}.default-provider-select{width:480px;min-width:480px;height:44px;padding:0 34px 0 14px;border:1px solid rgba(120,120,120,.45);border-radius:10px;background:rgba(255,255,255,.7);color:inherit;font-size:17px;font-weight:600;cursor:pointer;box-sizing:border-box}.default-provider-select:focus{outline:none;border-color:#3b82f6;box-shadow:0 0 0 2px rgba(59,130,246,.18);width:max-content;min-width:480px;max-width:100%}.sub-head-actions>button{width:210px;min-width:210px;height:44px;white-space:nowrap;word-break:keep-all;overflow:hidden;text-overflow:clip}.provider-main{min-width:0;width:100%}.provider-url{display:block;width:100%;margin-bottom:0;word-break:break-all;overflow-wrap:anywhere}.provider-item{position:relative;padding:12px 104px 12px 12px}.admin-row-actions{position:absolute;top:12px;right:12px;display:flex;flex-direction:column;gap:7px;margin-top:0;align-items:stretch}.admin-row-actions button{min-width:68px}.empty{font-size:12px;color:#888}.topbar{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap}.topbar-main{min-width:0;flex:1}.site-title-input{font-size:28px!important;font-weight:700!important;border:0!important;background:transparent!important;padding:0!important;height:auto!important;box-shadow:none!important;color:#1a1a1a!important}.site-title-input:focus{box-shadow:none!important}.top-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}.top-actions .button{min-width:86px}.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.4);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);display:none;align-items:center;justify-content:center;z-index:1000;padding:20px}.modal-content{width:min(460px,100%);background:rgba(255,255,255,.95);border-radius:20px;padding:24px;box-shadow:0 10px 40px rgba(0,0,0,.2);border:1px solid rgba(255,255,255,.5)}.modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}@media(max-width:760px){.sub-head{grid-template-columns:1fr;gap:10px}.sub-head-actions{width:100%;grid-template-columns:minmax(0,1fr) 210px}.default-provider-select{width:100%;min-width:0}.default-provider-select:focus{width:max-content;min-width:0;max-width:100%}}@media(max-width:600px){.top-actions{width:100%;justify-content:stretch}.top-actions .button{flex:1}.sub-head-actions{width:100%;grid-template-columns:minmax(0,1fr) 180px}.default-provider-select{width:100%;min-width:0}.default-provider-select:focus{width:max-content;min-width:0;max-width:100%}.sub-head-actions>button{width:180px;min-width:180px;white-space:nowrap}.provider-item{padding-right:12px}.admin-row-actions{position:absolute;top:12px;right:12px;width:auto;justify-content:flex-start}.admin-row-actions button{flex:none}.modal-content{padding:20px}}@media(prefers-color-scheme:dark){.site-title-input{color:#f5f5f5!important}.default-provider-select{background:rgba(30,30,30,.92);border-color:rgba(255,255,255,.18);color:#fff}.modal-content{background:rgba(30,30,30,.96);border-color:rgba(255,255,255,.1)}.empty{color:#aaa}}</style></head><body><main class="page">
-<header class="header topbar"><div class="topbar-main"><input id="siteName" class="site-title-input" value="${esc(settings.subName||'CF-SUBS')}" aria-label="站点标题"><div class="subtitle">管理订阅转换后端、订阅转换规则和站点安全设置。</div></div><div class="top-actions"><button type="button" class="button secondary" onclick="openModal('securityModal')">安全</button><button type="button" class="button secondary" onclick="openModal('pathModal')">管理员路径</button><a class="button danger" href="/${esc(settings.adminPath||'admin')}/logout">退出</a></div></header>
+    return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(settings.subName||'SUB')} · 管理后台</title>${settings.siteLogo?`<link rel="icon" href="${esc(settings.siteLogo)}">`:''}<style>${getToolStyles()}
+.sub-head{display:grid;grid-template-columns:190px minmax(0,1fr);align-items:start;gap:14px}.sub-head-actions{display:grid;grid-template-columns:280px 210px;align-items:center;justify-content:end;gap:10px;width:100%}.default-provider-select{width:280px;min-width:280px;height:40px;padding:0 30px 0 12px;border:1px solid rgba(120,120,120,.45);border-radius:9px;background:rgba(255,255,255,.7);color:inherit;font-size:15px;font-weight:600;cursor:pointer;box-sizing:border-box}.default-provider-select:focus{outline:none;border-color:#3b82f6;box-shadow:0 0 0 2px rgba(59,130,246,.18);width:max-content;min-width:280px;max-width:calc(100vw - 40px)}.sub-head-actions>button{width:210px;min-width:210px;height:40px;white-space:nowrap;word-break:keep-all;overflow:hidden;text-overflow:clip;font-size:15px}.provider-main{min-width:0;width:100%}.provider-url{display:block;width:100%;margin-bottom:0;word-break:break-all;overflow-wrap:anywhere}.provider-item{position:relative;padding:12px 104px 12px 12px}.admin-row-actions{position:absolute;top:12px;right:12px;display:flex;flex-direction:column;gap:7px;margin-top:0;align-items:stretch}.admin-row-actions button{min-width:68px}.empty{font-size:12px;color:#888}.topbar{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap}.topbar-main{min-width:0;flex:1}.site-title-display{font-size:28px;font-weight:700;line-height:1.2;color:#1a1a1a}.site-title-input{font-size:15px!important}.site-title-input:focus{box-shadow:none!important}.top-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}.top-actions .button{min-width:86px}.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.4);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);display:none;align-items:center;justify-content:center;z-index:1000;padding:20px}.modal-content{width:min(460px,100%);background:rgba(255,255,255,.95);border-radius:20px;padding:24px;box-shadow:0 10px 40px rgba(0,0,0,.2);border:1px solid rgba(255,255,255,.5)}.modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}@media(max-width:760px){.sub-head{grid-template-columns:1fr;gap:8px}.sub-head-actions{width:100%;grid-template-columns:minmax(0,1fr) 210px}.default-provider-select{width:100%;min-width:0;font-size:14px}.default-provider-select:focus{width:max-content;min-width:0;max-width:100%}}@media(max-width:600px){.top-actions{width:100%;justify-content:stretch}.top-actions .button{flex:1}.sub-head-actions{width:100%;grid-template-columns:minmax(0,1fr) 180px}.default-provider-select{width:100%;min-width:0}.default-provider-select:focus{width:max-content;min-width:0;max-width:100%}.sub-head-actions>button{width:180px;min-width:180px;white-space:nowrap}.provider-item{padding-right:12px}.admin-row-actions{position:absolute;top:12px;right:12px;width:auto;justify-content:flex-start}.admin-row-actions button{flex:none}.modal-content{padding:20px}}@media(prefers-color-scheme:dark){.site-title-display{color:#f5f5f5}.site-title-input{color:#f5f5f5!important}.default-provider-select{background:rgba(30,30,30,.92);border-color:rgba(255,255,255,.18);color:#fff}.modal-content{background:rgba(30,30,30,.96);border-color:rgba(255,255,255,.1)}.empty{color:#aaa}}</style></head><body><main class="page">
+<header class="header topbar"><div class="topbar-main"><div class="site-title-display">${esc(settings.subName||'SUB')}</div><div class="subtitle">管理订阅转换后端、订阅转换规则和站点安全设置。</div></div><div class="top-actions"><button type="button" class="button secondary" onclick="openModal('securityModal')">安全</button><button type="button" class="button secondary" onclick="openModal('siteModal')">站点</button><a class="button danger" href="/${esc(settings.adminPath||'admin')}/logout">退出</a></div></header>
 <section class="panel"><div class="sub-head"><div><h2 class="section-title">订阅转换后端(SUBAPI)</h2></div><div class="sub-head-actions">${defaultSelect(apis,'subapi',defaultApiId)}<button type="button" onclick="showProvider('subapi','')">＋ 添加订阅转换后端</button></div></div><div class="sub-grid" style="margin-top:12px">${rows(apis,'subapi','暂无订阅转换后端，请手动添加。')}</div></section>
 <section class="panel"><div class="sub-head"><div><h2 class="section-title">订阅转换规则(SUBCONFIG)</h2></div><div class="sub-head-actions">${defaultSelect(configs,'subconfig',defaultConfigId)}<button type="button" onclick="showProvider('subconfig','')">＋ 添加订阅转换规则</button></div></div><div class="sub-grid" style="margin-top:12px">${rows(configs,'subconfig','暂无订阅转换规则，请手动添加。')}</div></section>
 </main>
 <div id="providerModal" class="modal-overlay"><div class="modal-content"><h2 class="section-title" id="modalTitle">添加</h2><div class="field"><label for="modalName">备注</label><input id="modalName"></div><div class="field"><label for="modalUrl">URL</label><input id="modalUrl" placeholder="https://..."></div><div class="modal-actions"><button type="button" class="secondary" onclick="hideProvider()">取消</button><button type="button" id="modalSave" onclick="saveProvider()">保存</button></div></div></div>
 <div id="securityModal" class="modal-overlay"><div class="modal-content"><h2 class="section-title">安全</h2><div class="section-note">修改管理员账号和密码。密码留空表示保持原密码。</div><div class="field"><label for="securityUser">管理员账号</label><input id="securityUser" value="${esc(settings.user||'')}" autocomplete="username"></div><div class="field"><label for="securityPass">管理员密码</label><input id="securityPass" type="password" placeholder="留空保持原密码" autocomplete="new-password"></div><div class="modal-actions"><button type="button" class="secondary" onclick="closeModal('securityModal')">取消</button><button type="button" id="saveSecurity" onclick="saveSecurity()">保存</button></div></div></div>
-<div id="pathModal" class="modal-overlay"><div class="modal-content"><h2 class="section-title">管理员路径</h2><div class="section-note">保存后立即进入新的管理员地址。</div><div class="field"><label for="pathValue">路径</label><input id="pathValue" value="${esc(settings.adminPath||'admin')}" placeholder="admin"></div><div class="modal-actions"><button type="button" class="secondary" onclick="closeModal('pathModal')">取消</button><button type="button" id="savePath" onclick="savePath()">保存</button></div></div></div>
+<div id="siteModal" class="modal-overlay"><div class="modal-content"><h2 class="section-title">站点</h2><div class="field"><label for="siteName">站点标题</label><input id="siteName" value="${esc(settings.subName||'SUB')}" placeholder="SUB"></div><div class="field"><label for="sitePath">管理员路径</label><input id="sitePath" value="${esc(settings.adminPath||'admin')}" placeholder="admin"></div><div class="field"><label for="siteLogo">站点标签栏 Logo 地址</label><input id="siteLogo" value="${esc(settings.siteLogo||'')}" placeholder="https://example.com/favicon.png" type="url"><div class="section-note">支持 http:// 或 https:// 直链；留空则不设置。</div></div><div class="modal-actions"><button type="button" class="secondary" onclick="closeModal('siteModal')">取消</button><button type="button" id="saveSite" onclick="saveSiteSettings()">保存</button></div></div></div>
 <script>
 let toastTimer;
 function showToast(message){
@@ -2040,27 +2058,17 @@ async function saveSecurity(){
  try{await post({type:'security',user,pass});closeModal('securityModal');showToast('安全设置已保存');setTimeout(()=>location.reload(),700)}
  catch(e){alert(e.message||'保存失败')}finally{b.disabled=false;b.textContent='保存'}
 }
-async function savePath(){
- const path=$('pathValue').value.trim();
+async function saveSiteSettings(){
+ const name=$('siteName').value.trim()||'SUB';
+ const path=$('sitePath').value.trim();
+ const logo=$('siteLogo').value.trim();
  if(!/^[A-Za-z0-9_-]{2,60}$/.test(path))return alert('管理员路径只能使用 2-60 个字母、数字、下划线或短横线');
- const b=$('savePath');b.disabled=true;b.textContent='保存中...';
- try{const d=await post({type:'admin_path',adminPath:path});closeModal('pathModal');showToast('管理员路径已保存');setTimeout(()=>{location.href='/'+d.adminPath},700)}
+ if(logo && !/^https?:\/\//i.test(logo))return alert('站点标签栏 Logo 必须是 http:// 或 https:// URL');
+ const b=$('saveSite');b.disabled=true;b.textContent='保存中...';
+ try{const d=await post({type:'site_settings',subName:name,adminPath:path,siteLogo:logo});closeModal('siteModal');showToast('站点设置已保存');setTimeout(()=>{location.href='/'+d.adminPath},700)}
  catch(e){alert(e.message||'保存失败')}finally{b.disabled=false;b.textContent='保存'}
-}
-function saveSiteName(){
- const name=$('siteName').value.trim()||'CF-SUBS';
- post({type:'site_name',subName:name}).then(()=>showToast('站点标题已保存')).catch(e=>alert(e.message||'保存失败'));
 }
 
 document.querySelectorAll('.modal-overlay').forEach(m=>m.addEventListener('click',e=>{if(e.target===m)m.style.display='none'}));
-$('siteName').addEventListener('change',async()=>{
-    const name=$('siteName').value.trim()||'CF-SUBS';
-    try{
-        await post({type:'site_name',subName:name});
-        showToast('站点标题已保存');
-    }catch(e){
-        alert(e.message);
-    }
-});
 </script></body></html>`;
 }
