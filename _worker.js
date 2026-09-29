@@ -1586,30 +1586,31 @@ async function renderSubUIHome(request,url,env){
     const apis=normalizeProviderList(cfg.subApis).filter(x=>x.enabled);
     const configs=normalizeProviderList(cfg.subConfigs).filter(x=>x.enabled);
     const prefs=readPublicPreferences(request)||{};
+
     const defaultApiId=String(cfg.defaultSubApiId||'');
     const defaultConfigId=String(cfg.defaultSubConfigId||'');
 
-    const savedApiId=String(prefs.apiIds?.[0]||'');
-    const savedConfigId=String(prefs.configIds?.[0]||'');
-    let apiId=apis.some(x=>x.id===savedApiId)?savedApiId:'';
-    let configId=configs.some(x=>x.id===savedConfigId)?savedConfigId:'';
+    let apiId=String(prefs.apiIds?.[0]||'');
+    let configId=String(prefs.configIds?.[0]||'');
+    let apiCustom=Boolean(prefs.apiCustom);
+    let configCustom=Boolean(prefs.configCustom);
+    let apiUrl=apiCustom?String(prefs.apiUrl||''):'';
+    let configUrl=configCustom?String(prefs.configUrl||''):'';
 
-    const apiCustom=Boolean(prefs.apiCustom);
-    const configCustom=Boolean(prefs.configCustom);
-    const apiUrl=apiCustom?String(prefs.apiUrl||''):'';
-    const configUrl=configCustom?String(prefs.configUrl||''):'';
-
-    if(!apiId && !apiCustom && defaultApiId && apis.some(x=>x.id===defaultApiId)) apiId=defaultApiId;
-    if(!configId && !configCustom && defaultConfigId && configs.some(x=>x.id===defaultConfigId)) configId=defaultConfigId;
-
-    const noAds=String(prefs.noAds||'');
-    const esc=x=>escapeHTML(String(x??''));
-    const json=x=>JSON.stringify(x).replace(/</g,'\\u003c');
+    if(!apiCustom && !apis.some(x=>x.id===apiId)) apiId='';
+    if(!configCustom && !configs.some(x=>x.id===configId)) configId='';
+    if(!apiCustom && !apiId && defaultApiId && apis.some(x=>x.id===defaultApiId)) apiId=defaultApiId;
+    if(!configCustom && !configId && defaultConfigId && configs.some(x=>x.id===defaultConfigId)) configId=defaultConfigId;
+    if(!apiCustom && !apiId && apis[0]) apiId=apis[0].id;
+    if(!configCustom && !configId && configs[0]) configId=configs[0].id;
 
     const selectedApi=apiCustom?null:apis.find(x=>x.id===apiId);
     const selectedConfig=configCustom?null:configs.find(x=>x.id===configId);
     const apiCurrentValue=apiCustom?apiUrl:(selectedApi?.url||'');
     const configCurrentValue=configCustom?configUrl:(selectedConfig?.url||'');
+    const noAds=String(prefs.noAds||'');
+    const esc=x=>escapeHTML(String(x??''));
+    const json=x=>JSON.stringify(x).replace(/</g,'\\u003c');
 
     return `<!doctype html>
 <html lang="zh-CN">
@@ -1618,369 +1619,151 @@ async function renderSubUIHome(request,url,env){
 <title>${esc(cfg.subName||'CF-SUBS')} · 订阅转换</title>
 <style>
 ${getSubUIStyles()}
-.choice-list{display:grid;gap:8px;margin-top:12px}
-.choice{display:grid;grid-template-columns:20px minmax(0,1fr);gap:9px;align-items:start;padding:11px 12px;border:1px solid rgba(229,229,223,.6);border-radius:10px;background:rgba(255,255,255,.5);cursor:pointer}
-.choice:hover{border-color:rgba(127,127,127,.55)}
-.choice input{width:18px;height:18px;margin:2px 0 0}
-.choice-name{font-weight:650;overflow-wrap:anywhere}
-.choice-url{grid-column:2;color:#888;font-size:12px;line-height:1.45;word-break:break-all;overflow-wrap:anywhere}
-.current-box{margin-top:12px}
-.current-title{font-size:13px;font-weight:700;margin:0 0 7px}
-.current-row{display:flex;align-items:center;gap:8px}
-.current-api-input{width:100%;height:42px;min-width:0}
-.current-config-input{width:100%;min-height:54px;resize:none;line-height:1.5;word-break:break-all;overflow-wrap:anywhere}
-.current-input[readonly]{cursor:default}
-.edit-custom{display:none;flex:0 0 auto;min-width:72px}
-.custom-selected + .custom-panel .edit-custom{display:inline-flex}
-.custom-editor{display:none}
-.status-box{margin-top:12px}
-.status-title{font-size:13px;font-weight:700;margin:0 0 7px}
-.status-list{display:grid;gap:7px}
-.status-item{padding:8px 10px;border-radius:9px;font-weight:650;word-break:break-all}
-.status-item.wait{background:rgba(255,152,0,.1);border:1px solid rgba(255,152,0,.2);color:#f57c00}
-.status-item.ok{background:rgba(76,175,80,.12);border:1px solid rgba(76,175,80,.25);color:#2e7d32}
-.status-item.bad{background:rgba(244,67,54,.1);border:1px solid rgba(244,67,54,.22);color:#c62828}
- .native-picker{display:block;width:100%;min-height:42px;padding:8px 38px 8px 12px;border:1px solid rgba(229,229,223,.8);border-radius:10px;background:rgba(250,250,250,.7);color:inherit;font:inherit;cursor:pointer;appearance:auto;-webkit-appearance:auto}
+.native-picker{display:block;width:100%;min-height:42px;padding:8px 12px;border:1px solid rgba(229,229,223,.8);border-radius:10px;background:rgba(250,250,250,.7);color:inherit;font:inherit;cursor:pointer;appearance:auto;-webkit-appearance:auto}
 .native-picker:focus{outline:none;border-color:#287ea8;box-shadow:0 0 0 2px rgba(40,126,168,.15)}
-.native-picker option{font:inherit;padding:8px}
-.current-row{display:flex;align-items:center;gap:8px}
-.current-api-input{min-width:0;flex:1;height:42px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.current-config-input{min-width:0;flex:1;min-height:42px;height:auto;resize:none;line-height:1.5;overflow:hidden}
-@media(prefers-color-scheme:dark){
- .native-picker{background:#111;color:#f1f1f1;border-color:rgba(255,255,255,.14)}
- .native-picker option{background:#1b1b1b;color:#f1f1f1}
-}
-.custom-modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.42);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);display:none;align-items:center;justify-content:center;z-index:1200;padding:20px}
-.custom-modal{width:min(480px,100%);background:rgba(255,255,255,.96);border:1px solid rgba(229,229,223,.9);border-radius:18px;padding:20px;box-shadow:0 18px 50px rgba(0,0,0,.22)}
-.custom-modal h3{margin:0;font-size:17px}.custom-modal p{margin:6px 0 14px;color:#888;font-size:12px}.custom-modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}
-@media(prefers-color-scheme:dark){
- .choice{background:rgba(40,40,40,.5);border-color:rgba(255,255,255,.1)}.choice-url{color:#aaa}
- .current-api-input,.current-config-input{background:rgba(0,0,0,.3);color:#f1f1f1;border-color:rgba(255,255,255,.12)}
- .status-item.ok{background:rgba(129,199,132,.1);color:#81c784;border-color:rgba(129,199,132,.2)}
- .status-item.bad{background:rgba(229,115,115,.1);color:#e57373;border-color:rgba(229,115,115,.2)}
- .status-item.wait{background:rgba(255,183,77,.1);color:#ffb74d;border-color:rgba(255,183,77,.2)}
- .custom-modal{background:rgba(30,30,30,.97);border-color:rgba(255,255,255,.1)}
-}
+.current-box{margin-top:12px}.current-title{font-size:13px;font-weight:700;margin:0 0 7px}.current-row{display:flex;align-items:flex-start;gap:8px}
+.current-api-input{width:100%;height:42px;min-width:0}.current-config-input{width:100%;min-height:70px;resize:none;line-height:1.5;word-break:break-all;overflow-wrap:anywhere}
+.edit-custom{display:none;flex:0 0 auto;min-width:72px}.status-box{margin-top:12px}.status-title{font-size:13px;font-weight:700;margin:0 0 7px}.status-list{display:grid;gap:7px}
+.status-item{padding:8px 10px;border-radius:9px;font-weight:650;word-break:break-all}.status-item.wait{background:rgba(255,152,0,.1);border:1px solid rgba(255,152,0,.2);color:#f57c00}.status-item.ok{background:rgba(76,175,80,.12);border:1px solid rgba(76,175,80,.25);color:#2e7d32}.status-item.bad{background:rgba(244,67,54,.1);border:1px solid rgba(244,67,54,.22);color:#c62828}
+.custom-modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.42);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);display:none;align-items:center;justify-content:center;z-index:1200;padding:20px}.custom-modal{width:min(480px,100%);background:rgba(255,255,255,.96);border:1px solid rgba(229,229,223,.9);border-radius:18px;padding:20px;box-shadow:0 18px 50px rgba(0,0,0,.22)}.custom-modal h3{margin:0;font-size:17px}.custom-modal p{margin:6px 0 14px;color:#888;font-size:12px}.custom-modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}
+@media(prefers-color-scheme:dark){.native-picker{background:#111;color:#f1f1f1;border-color:rgba(255,255,255,.14)}.native-picker option{background:#1b1b1b;color:#f1f1f1}.current-api-input,.current-config-input{background:rgba(0,0,0,.3);color:#f1f1f1;border-color:rgba(255,255,255,.12)}.status-item.ok{background:rgba(129,199,132,.1);color:#81c784;border-color:rgba(129,199,132,.2)}.status-item.bad{background:rgba(229,115,115,.1);color:#e57373;border-color:rgba(229,115,115,.2)}.status-item.wait{background:rgba(255,183,77,.1);color:#ffb74d;border-color:rgba(255,183,77,.2)}.custom-modal{background:rgba(30,30,30,.97);border-color:rgba(255,255,255,.1)}}
 </style>
 </head>
 <body>
 <main class="page">
-<header class="header"><h1 class="title">${esc(cfg.subName||'CF-SUBS')}</h1><div class="subtitle">粘贴你的订阅链接，生成属于你的聚合订阅。</div></header>
+<header class="header"><h1 class="title">订阅转换</h1><div class="subtitle">粘贴你的订阅链接，生成属于你的聚合订阅。</div></header>
+
+<section class="panel"><h2 class="section-title">订阅链接</h2><div class="section-note">支持多个订阅地址，每行一个。</div><div class="field"><textarea id="sources" placeholder="https://example.com/subscribe&#10;https://example.com/another"></textarea></div></section>
 
 <section class="panel">
-<h2 class="section-title">订阅链接</h2>
-<div class="section-note">支持多个订阅地址，每行一个。</div>
-<div class="field"><textarea id="sources" placeholder="https://example.com/subscribe&#10;https://example.com/another"></textarea></div>
-</section>
-
-<section class="panel">
-<h2 class="section-title">订阅转换后端(SUBAPI)</h2>
-<div class="section-note">点击选择订阅转换后端。</div>
+<h2 class="section-title">订阅转换后端(SUBAPI)</h2><div class="section-note">选择一个订阅转换后端。</div>
 <select class="native-picker" id="apiPicker" aria-label="选择订阅转换后端">
-${apis.map(x=>`<option value="${esc(x.url)}" data-id="${esc(x.id)}" ${!apiCustom&&apiId===x.id?'selected':''}>${esc(x.name)}</option>`).join('')}
-<option value="__custom" ${apiCustom?'selected':''}>自定义</option>
+${apis.map(x=>`<option value="${esc(x.url)}" data-id="${esc(x.id)}">${esc(x.name)}</option>`).join('')}
+<option value="__custom">自定义</option>
 </select>
-<div class="current-box"><div class="current-title">当前配置</div><div class="current-row">
-<input id="apiCurrent" class="current-api-input" readonly value="${esc(apiCurrentValue)}" placeholder="请选择订阅转换后端">
-<button type="button" class="button secondary edit-custom" id="editApiCustom">编辑</button>
-</div></div>
+<div class="current-box"><div class="current-title">当前配置</div><div class="current-row"><input id="apiCurrent" class="current-api-input" readonly value="${esc(apiCurrentValue)}" placeholder="请选择订阅转换后端"><button type="button" class="button secondary edit-custom" id="editApiCustom">编辑</button></div></div>
 <div class="status-box"><div class="status-title">可用状态</div><div id="apiStatus" class="status-list"><div class="status-item wait">⏳ 状态检测中</div></div></div>
 </section>
 
 <section class="panel">
-<h2 class="section-title">订阅转换规则(SUBCONFIG)</h2>
-<div class="section-note">点击选择订阅转换规则。</div>
+<h2 class="section-title">订阅转换规则(SUBCONFIG)</h2><div class="section-note">选择一个订阅转换规则。</div>
 <select class="native-picker" id="configPicker" aria-label="选择订阅转换规则">
-${configs.map(x=>`<option value="${esc(x.url)}" data-id="${esc(x.id)}" ${!configCustom&&configId===x.id?'selected':''}>${esc(x.name)}</option>`).join('')}
-<option value="__custom" ${configCustom?'selected':''}>自定义</option>
+${configs.map(x=>`<option value="${esc(x.url)}" data-id="${esc(x.id)}">${esc(x.name)}</option>`).join('')}
+<option value="__custom">自定义</option>
 </select>
-<div class="current-box"><div class="current-title">当前配置</div><div class="current-row">
-<textarea id="configCurrent" class="current-config-input" readonly placeholder="请选择订阅转换规则">${esc(configCurrentValue)}</textarea>
-<button type="button" class="button secondary edit-custom" id="editConfigCustom">编辑</button>
-</div></div>
+<div class="current-box"><div class="current-title">当前配置</div><div class="current-row"><textarea id="configCurrent" class="current-config-input" readonly placeholder="请选择订阅转换规则">${esc(configCurrentValue)}</textarea><button type="button" class="button secondary edit-custom" id="editConfigCustom">编辑</button></div></div>
 <div class="status-box"><div class="status-title">可用状态</div><div id="configStatus" class="status-list"><div class="status-item wait">⏳ 状态检测中</div></div></div>
 </section>
 
-<section class="panel">
-<h2 class="section-title">排除节点</h2>
-<div class="section-note">公开使用。每行填写一个关键词，包含关键词的节点会被排除。</div>
-<div class="field"><textarea id="noAds" placeholder="例如：t.me&#10;广告&#10;example.com">${esc(noAds)}</textarea></div>
-</section>
-
+<section class="panel"><h2 class="section-title">排除节点</h2><div class="section-note">公开使用。每行填写一个关键词，包含关键词的节点会被排除。</div><div class="field"><textarea id="noAds" placeholder="例如：t.me&#10;广告&#10;example.com">${esc(noAds)}</textarea></div></section>
 <button class="primary" id="generate" type="button">生成聚合订阅</button>
-<section id="result" class="panel result-panel" hidden><h2 class="section-title">订阅链接页面</h2><div class="section-note">生成成功，打开下面的链接即可访问你的订阅链接页面。</div><div class="result-url" id="direct"></div><div class="actions"><button class="button" id="copyDirect" type="button">复制订阅链接</button><a class="button secondary" id="openDirect" target="_blank" rel="noopener">打开订阅链接页面</a></div></section>
+<section id="result" class="panel result-panel" hidden><h2 class="section-title">订阅链接</h2><div class="section-note">生成成功，打开下面的链接即可访问你的订阅链接页面。</div><div class="result-url" id="direct"></div><div class="actions"><button class="button" id="copyDirect" type="button">复制订阅链接</button><a class="button secondary" id="openDirect" target="_blank" rel="noopener">打开订阅链接</a></div></section>
 </main>
 
 <div id="customApiModal" class="custom-modal-overlay"><div class="custom-modal"><h3>自定义订阅转换后端</h3><p>输入你自己的 SUBAPI 地址。</p><input id="customApiInput" placeholder="https://subapi.example.com"><div class="custom-modal-actions"><button type="button" class="button secondary" id="cancelApiCustom">取消</button><button type="button" class="button" id="saveApiCustom">保存</button></div></div></div>
 <div id="customConfigModal" class="custom-modal-overlay"><div class="custom-modal"><h3>自定义订阅转换规则</h3><p>输入你自己的 SUBCONFIG 地址。</p><input id="customConfigInput" placeholder="https://example.com/config.ini"><div class="custom-modal-actions"><button type="button" class="button secondary" id="cancelConfigCustom">取消</button><button type="button" class="button" id="saveConfigCustom">保存</button></div></div></div>
 
 <script id="cf-subs-public-script">
-const API_LIST=${json(apis)};
-const CONFIG_LIST=${json(configs)};
+const API_LIST=${json(apis)},CONFIG_LIST=${json(configs)};
+const PUBLIC_STATE={apiId:${json(apiId)},configId:${json(configId)},apiCustom:${apiCustom},configCustom:${configCustom},apiUrl:${json(apiUrl)},configUrl:${json(configUrl)}};
 const $=id=>document.getElementById(id);
-const state={apiId:${json(apiId)},configId:${json(configId)},apiCustom:${apiCustom},configCustom:${configCustom},apiUrl:${json(apiUrl)},configUrl:${json(configUrl)}};
 
-function selected(kind){
- const api=kind==='api';
- const picker=$(api?'apiPicker':'configPicker');
- const option=picker&&picker.options.length?picker.options[picker.selectedIndex]:null;
- const value=option?String(option.value||''):'';
- const custom=value==='__custom';
- const id=custom?'':String(option?.dataset?.id||'');
- const list=api?API_LIST:CONFIG_LIST;
- const item=id?(list.find(x=>String(x.id)===id)||null):null;
- const customUrl=api?String(state.apiUrl||''):String(state.configUrl||'');
- const url=custom?customUrl:value;
- return {id,custom,item,customUrl,all:url?[url]:[],url};
+function currentValue(kind){
+ const api=kind==='api',picker=$(api?'apiPicker':'configPicker');
+ if(!picker)return '';
+ if(picker.value==='__custom') return api?PUBLIC_STATE.apiUrl:PUBLIC_STATE.configUrl;
+ return String(picker.value||'');
 }
-function renderCurrent(kind){
- const api=kind==='api',s=selected(kind);
- const box=$(api?'apiCurrent':'configCurrent');
- const value=s.custom?s.customUrl:(s.all[0]||'');
- box.value=value;
- if(!api){
-   box.style.height='auto';
-   box.style.height=Math.max(54,Math.min(260,box.scrollHeight))+'px';
- }
- const edit=$(api?'editApiCustom':'editConfigCustom');
- if(edit){
-   edit.hidden=!s.custom;
-   edit.style.display=s.custom?'inline-flex':'none';
- }
+function currentId(kind){
+ const api=kind==='api',picker=$(api?'apiPicker':'configPicker'),o=picker?.options[picker.selectedIndex];
+ return String(o?.dataset?.id||'');
+}
+function updateCurrent(kind){
+ const api=kind==='api',picker=$(api?'apiPicker':'configPicker'),current=$(api?'apiCurrent':'configCurrent'),edit=$(api?'editApiCustom':'editConfigCustom');
+ const custom=picker.value==='__custom';
+ const value=currentValue(kind);
+ current.value=value;
+ if(api){edit.style.display=custom?'inline-flex':'none';edit.hidden=!custom;}
+ else{edit.style.display=custom?'inline-flex':'none';edit.hidden=!custom;current.style.height='auto';current.style.height=Math.max(70,Math.min(260,current.scrollHeight))+'px';}
 }
 function savePrefs(){
- const a=selected('api'),c=selected('config');
- const v={apiIds:a.id?[a.id]:[],apiCustom:a.custom,apiUrl:a.custom?state.apiUrl:'',configIds:c.id?[c.id]:[],configCustom:c.custom,configUrl:c.custom?state.configUrl:'',noAds:$('#noAds').value.trim()};
+ const a=$('apiPicker'),c=$('configPicker');
+ const v={apiIds:a?.value==='__custom'?[]:[currentId('api')],apiCustom:a?.value==='__custom',apiUrl:a?.value==='__custom'?PUBLIC_STATE.apiUrl:'',configIds:c?.value==='__custom'?[]:[currentId('config')],configCustom:c?.value==='__custom',configUrl:c?.value==='__custom'?PUBLIC_STATE.configUrl:'',noAds:($('noAds')?.value||'').trim()};
  const e=encodeURIComponent(JSON.stringify(v));
  if(e.length<=3600)document.cookie='CF_SUB_PREFS='+e+'; Max-Age=2592000; Path=/; SameSite=Lax; Secure';
 }
-function escText(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
-function setStatus(id,html){$(id).innerHTML=html}
-async function checkOneStatus(kind){
- const api=kind==='api',s=selected(kind);
- const statusId=api?'apiStatus':'configStatus';
- const value=s.url||'';
-
- renderCurrent(kind);
-
- if(!value){
-   setStatus(statusId,'<div class="status-item wait">⏳ 未配置'+(api?'订阅转换后端':'订阅转换规则')+'</div>');
-   return;
- }
-
- setStatus(statusId,'<div class="status-item wait">⏳ 状态检测中</div>');
-
- const query=api
-   ? '/api/status?api='+encodeURIComponent(value)
-   : '/api/status?config='+encodeURIComponent(value);
-
+function setStatus(id,html){const el=$(id);if(el)el.innerHTML=html;}
+async function checkStatus(kind){
+ const api=kind==='api',value=currentValue(kind),id=api?'apiStatus':'configStatus';
+ if(!value){setStatus(id,'<div class="status-item bad">❌ 未配置</div>');return;}
+ setStatus(id,'<div class="status-item wait">⏳ 状态检测中</div>');
+ const query=api?'/api/status?api='+encodeURIComponent(value):'/api/status?config='+encodeURIComponent(value);
  try{
-   const timeout=new Promise(resolve=>setTimeout(()=>resolve({timeout:true}),6000));
-   const request=fetch(query,{method:'GET',cache:'no-store',headers:{'Accept':'application/json'}})
-     .then(async r=>{
-       let d={};
-       try{d=await r.json()}catch(e){}
-       return {response:r,data:d};
-     })
-     .catch(error=>({error}));
-
-   const result=await Promise.race([request,timeout]);
-
-   if(result.timeout){
-     setStatus(statusId,'<div class="status-item bad">❌ 检测超时 · '+escText(value)+'</div>');
-     return;
-   }
-
-   if(result.error){
-     setStatus(statusId,'<div class="status-item bad">❌ 检测失败 · '+escText(value)+'</div>');
-     return;
-   }
-
-   const r=result.response,d=result.data||{};
-   const info=api?d.api:d.config;
-   const ok=Boolean(r?.ok&&r.status>=200&&r.status<300&&info?.ok);
-   const version=api?(info?.version||''):'';
-
-   setStatus(
-     statusId,
-     '<div class="status-item '+(ok?'ok':'bad')+'">'+
-     (ok?'✅ ':'❌ ')+(ok?'可用':'不可用')+' · '+escText(value)+
-     (version?' ('+escText(version)+')':'')+
-     '</div>'
-   );
- }catch(e){
-   setStatus(statusId,'<div class="status-item bad">❌ 检测失败 · '+escText(value)+'</div>');
- }
+  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),5000);
+  const r=await fetch(query,{cache:'no-store',headers:{Accept:'application/json'},signal:controller.signal});clearTimeout(timer);
+  const d=await r.json().catch(()=>({}));const info=api?d.api:d.config;const ok=Boolean(r.ok&&d.ok&&info?.ok);
+  setStatus(id,'<div class="status-item '+(ok?'ok':'bad')+'">'+(ok?'✅ 可用':'❌ 不可用')+' · '+escapeHTML(value)+(api&&info?.version?' ('+escapeHTML(info.version)+')':'')+'</div>');
+ }catch(e){setStatus(id,'<div class="status-item bad">❌ 检测失败 · '+escapeHTML(value)+'</div>');}
 }
-function checkAvailability(){
- checkOneStatus('api');
- checkOneStatus('config');
-}
-function publicPickerChanged(kind,picker){
- const api=kind==='api';
- const value=String(picker?.value||'');
- const option=picker&&picker.options.length?picker.options[picker.selectedIndex]:null;
- const id=String(option?.dataset?.id||'');
- if(value==='__custom'){
-   if(api){
-     if(!state.apiCustom)state.prevApiId=state.apiId;
-     state.apiCustom=true;
-     state.apiId='';
-   }else{
-     if(!state.configCustom)state.prevConfigId=state.configId;
-     state.configCustom=true;
-     state.configId='';
-   }
-   renderCurrent(kind);
+function onPickerChange(kind){
+ const api=kind==='api',picker=$(api?'apiPicker':'configPicker');
+ if(!picker)return;
+ if(picker.value==='__custom'){
+   const old=api?PUBLIC_STATE.apiUrl:PUBLIC_STATE.configUrl;
+   $(api?'customApiInput':'customConfigInput').value=old||'';
+   $(api?'customApiModal':'customConfigModal').style.display='flex';
+   setTimeout(()=>$(api?'customApiInput':'customConfigInput').focus(),0);
+   updateCurrent(kind);
    savePrefs();
-   openCustomModal(kind);
    return;
  }
- if(api){
-   state.apiId=id;
-   state.apiCustom=false;
- }else{
-   state.configId=id;
-   state.configCustom=false;
- }
- renderCurrent(kind);
+ if(api){PUBLIC_STATE.apiId=currentId('api');PUBLIC_STATE.apiCustom=false;}else{PUBLIC_STATE.configId=currentId('config');PUBLIC_STATE.configCustom=false;}
+ updateCurrent(kind);
  savePrefs();
- checkOneStatus(kind);
+ checkStatus(kind);
 }
-
-window.__cfPickerFallback = function(kind,picker){
- const api=kind==='api';
- const value=String(picker?.value||'');
- const current=$(api?'apiCurrent':'configCurrent');
- const edit=$(api?'editApiCustom':'editConfigCustom');
- if(current){
-   current.value=value==='__custom'?'':value;
-   if(!api){current.style.height='auto';current.style.height=Math.max(54,Math.min(260,current.scrollHeight))+'px';}
- }
- if(edit){edit.style.display=value==='__custom'?'inline-flex':'none';edit.hidden=value!=='__custom';}
- const status=$(api?'apiStatus':'configStatus');
- if(status && value!=='__custom') status.innerHTML='<div class="status-item wait">⏳ 状态检测中</div>';
-};
-window.publicPickerChanged = publicPickerChanged;
-window.openCustomModal = openCustomModal;
-window.closeCustomModal = closeCustomModal;
-window.saveCustom = saveCustom;
-
-function choiceChanged(kind){
- const picker=$(kind==='api'?'apiPicker':'configPicker');
- publicPickerChanged(kind,picker);
-}
-function openCustomModal(kind){
- const api=kind==='api';
- const overlay=$(api?'customApiModal':'customConfigModal');
- const input=$(api?'customApiInput':'customConfigInput');
- input.value=api?state.apiUrl:state.configUrl;
- overlay.style.display='flex';
- setTimeout(()=>input.focus(),0);
-}
-function closeCustomModal(kind){
- const api=kind==='api',overlay=$(api?'customApiModal':'customConfigModal');
- overlay.style.display='none';
- const picker=$(api?'apiPicker':'configPicker');
- if(api){
-   if(!state.apiUrl){
-     state.apiCustom=false;
-     state.apiId=state.prevApiId||API_LIST[0]?.id||'';
-     picker.value=state.apiId;
-   }else{
-     picker.value='__custom';
-   }
- }else{
-   if(!state.configUrl){
-     state.configCustom=false;
-     state.configId=state.prevConfigId||CONFIG_LIST[0]?.id||'';
-     picker.value=state.configId;
-   }else{
-     picker.value='__custom';
-   }
- }
- renderCurrent(kind);
- savePrefs();
- checkAvailability();
+function openCustom(kind){const api=kind==='api';$(api?'customApiInput':'customConfigInput').value=api?PUBLIC_STATE.apiUrl:PUBLIC_STATE.configUrl;$(api?'customApiModal':'customConfigModal').style.display='flex';}
+function cancelCustom(kind){
+ const api=kind==='api',picker=$(api?'apiPicker':'configPicker');
+ if(api){PUBLIC_STATE.apiCustom=false;PUBLIC_STATE.apiUrl='';if(PUBLIC_STATE.apiId)picker.value=API_LIST.find(x=>x.id===PUBLIC_STATE.apiId)?.url||API_LIST[0]?.url||'';else picker.selectedIndex=0;}
+ else{PUBLIC_STATE.configCustom=false;PUBLIC_STATE.configUrl='';if(PUBLIC_STATE.configId)picker.value=CONFIG_LIST.find(x=>x.id===PUBLIC_STATE.configId)?.url||CONFIG_LIST[0]?.url||'';else picker.selectedIndex=0;}
+ $(api?'customApiModal':'customConfigModal').style.display='none';updateCurrent(kind);savePrefs();checkStatus(kind);
 }
 function saveCustom(kind){
  const api=kind==='api',input=$(api?'customApiInput':'customConfigInput'),value=input.value.trim();
- if(!/^https?:\/\//i.test(value))return alert('URL 必须以 http:// 或 https:// 开头');
- if(api){
-   state.apiUrl=value;state.apiCustom=true;state.apiId='';
-   $('#apiPicker').value='__custom';
- }else{
-   state.configUrl=value;state.configCustom=true;state.configId='';
-   $('#configPicker').value='__custom';
+ if(!/^https?:\\/\\//i.test(value)){alert('URL 必须以 http:// 或 https:// 开头');return;}
+ if(api){PUBLIC_STATE.apiUrl=value;PUBLIC_STATE.apiCustom=true;PUBLIC_STATE.apiId='';$('apiPicker').value='__custom';}
+ else{PUBLIC_STATE.configUrl=value;PUBLIC_STATE.configCustom=true;PUBLIC_STATE.configId='';$('configPicker').value='__custom';}
+ $(api?'customApiModal':'customConfigModal').style.display='none';updateCurrent(kind);savePrefs();checkStatus(kind);
+}
+function initPublicHome(){
+ const ap=$('apiPicker'),cp=$('configPicker');
+ if(ap){
+  if(PUBLIC_STATE.apiCustom)ap.value='__custom';else{const item=API_LIST.find(x=>x.id===PUBLIC_STATE.apiId)||API_LIST[0];if(item)ap.value=item.url;}
+  ap.addEventListener('change',()=>onPickerChange('api'));
  }
- $(api?'customApiModal':'customConfigModal').style.display='none';
- renderCurrent(kind);
- savePrefs();
- checkAvailability();
-}
-function updatePickerLabel(kind){
- const api=kind==='api',picker=$(api?'apiPicker':'configPicker');
- if(!picker)return;
-}
-
-try{
- $('#apiPicker').addEventListener('change',e=>publicPickerChanged('api',e.currentTarget));
- $('#configPicker').addEventListener('change',e=>publicPickerChanged('config',e.currentTarget));
- $('#editApiCustom').onclick=()=>openCustomModal('api');
- $('#editConfigCustom').onclick=()=>openCustomModal('config');
- $('#cancelApiCustom').onclick=()=>closeCustomModal('api');
- $('#cancelConfigCustom').onclick=()=>closeCustomModal('config');
- $('#saveApiCustom').onclick=()=>saveCustom('api');
- $('#saveConfigCustom').onclick=()=>saveCustom('config');
- document.querySelectorAll('.custom-modal-overlay').forEach(m=>m.addEventListener('click',e=>{if(e.target===m)m.style.display='none'}));
- $('#noAds').addEventListener('input',savePrefs);
- $('#copyDirect').onclick=async()=>{
-   const v=$('#direct').textContent.trim();
-   try{await navigator.clipboard.writeText(v);alert('已复制')}catch(e){alert('复制失败，请手动复制')}
- };
- $('#generate').onclick=async()=>{
-   const button=$('#generate'),sources=$('#sources').value.trim(),a=selected('api'),c=selected('config');
-   if(!sources)return alert('请输入订阅链接');
-   if(!a.all.length)return alert('请选择订阅转换后端');
-   if(!c.all.length)return alert('请选择订阅转换规则');
-   if(a.custom&&!/^https?:\/\//i.test(a.customUrl))return alert('请先在自定义弹窗中填写有效的订阅转换后端');
-   if(c.custom&&!/^https?:\/\//i.test(c.customUrl))return alert('请先在自定义弹窗中填写有效的订阅转换规则');
-   savePrefs();button.disabled=true;button.textContent='生成中…';
-   try{
-     const r=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},cache:'no-store',body:JSON.stringify({sources,apiIds:a.id?[a.id]:[],apiCustom:a.custom,apiUrl:a.custom?a.customUrl:'',configIds:c.id?[c.id]:[],configCustom:c.custom,configUrl:c.custom?c.customUrl:'',noAds:$('#noAds').value.trim()})});
-     const d=await r.json();if(!r.ok||!d.ok)throw new Error(d.error||'生成失败');
-     $('#direct').textContent=d.subscription_url;$('#openDirect').href=d.subscription_url;$('#result').hidden=false;$('#result').scrollIntoView({behavior:'smooth',block:'start'});
-   }catch(e){alert(e.message||'生成失败')}finally{button.disabled=false;button.textContent='生成聚合订阅'}
- };
-}catch(e){
- console.error('CF-SUBS public UI init failed',e);
-}
-function syncPicker(kind){
- const api=kind==='api';
- const picker=$(api?'apiPicker':'configPicker');
- const list=api?API_LIST:CONFIG_LIST;
- const id=api?state.apiId:state.configId;
- const custom=api?state.apiCustom:state.configCustom;
- if(!picker)return;
- if(custom){
-   picker.value='__custom';
- }else{
-   const item=list.find(x=>String(x.id)===String(id))||list[0];
-   if(item){
-     if(api)state.apiId=String(item.id);else state.configId=String(item.id);
-     const index=Array.from(picker.options).findIndex(o=>String(o.dataset.id||'')===String(item.id));
-     if(index>=0)picker.selectedIndex=index;
-   }
+ if(cp){
+  if(PUBLIC_STATE.configCustom)cp.value='__custom';else{const item=CONFIG_LIST.find(x=>x.id===PUBLIC_STATE.configId)||CONFIG_LIST[0];if(item)cp.value=item.url;}
+  cp.addEventListener('change',()=>onPickerChange('config'));
  }
- renderCurrent(kind);
+ $('editApiCustom')?.addEventListener('click',()=>openCustom('api'));$('editConfigCustom')?.addEventListener('click',()=>openCustom('config'));
+ $('cancelApiCustom')?.addEventListener('click',()=>cancelCustom('api'));$('cancelConfigCustom')?.addEventListener('click',()=>cancelCustom('config'));
+ $('saveApiCustom')?.addEventListener('click',()=>saveCustom('api'));$('saveConfigCustom')?.addEventListener('click',()=>saveCustom('config'));
+ updateCurrent('api');updateCurrent('config');savePrefs();checkStatus('api');checkStatus('config');
+ $('noAds')?.addEventListener('input',savePrefs);
+ $('copyDirect')?.addEventListener('click',async()=>{const v=$('direct').textContent.trim();try{await navigator.clipboard.writeText(v);alert('已复制')}catch(e){alert('复制失败，请手动复制')}});
+ $('generate')?.addEventListener('click',async()=>{
+  const sources=$('sources').value.trim(),a=$('apiPicker'),c=$('configPicker'),apiCustom=a.value==='__custom',configCustom=c.value==='__custom',apiValue=currentValue('api'),configValue=currentValue('config');
+  if(!sources)return alert('请输入订阅链接');if(!apiValue)return alert('请选择订阅转换后端');if(!configValue)return alert('请选择订阅转换规则');
+  const body={sources,apiIds:apiCustom?[]:[currentId('api')],apiCustom,apiUrl:apiCustom?apiValue:'',configIds:configCustom?[]:[currentId('config')],configCustom,configUrl:configCustom?configValue:'',noAds:($('noAds').value||'').trim()};
+  const button=$('generate');button.disabled=true;button.textContent='生成中…';
+  try{const r=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},cache:'no-store',body:JSON.stringify(body)});const d=await r.json();if(!r.ok||!d.ok)throw new Error(d.error||'生成失败');$('direct').textContent=d.subscription_url;$('openDirect').href=d.subscription_url;$('result').hidden=false;$('result').scrollIntoView({behavior:'smooth',block:'start'});}catch(e){alert(e.message||'生成失败')}finally{button.disabled=false;button.textContent='生成聚合订阅';}
+ });
 }
-window.__CF_SUBS_PUBLIC_READY = true;
-syncPicker('api');syncPicker('config');savePrefs();checkAvailability();
+if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',initPublicHome);else initPublicHome();
 </script>
-</body>
-</html>`;
+</body></html>`;
 }
-
 function getSubUIStyles(){return getToolStyles()+`
 .page{width:100%;max-width:760px;margin:0 auto;padding:18px 14px 28px}
 .header{margin-bottom:14px}.title{margin:0;font-size:28px;font-weight:700;line-height:1.2}.subtitle{margin-top:8px}
