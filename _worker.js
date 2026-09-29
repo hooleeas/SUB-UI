@@ -1669,13 +1669,13 @@ ${getSubUIStyles()}
 <section class="panel">
 <h2 class="section-title">订阅转换后端(SUBAPI)</h2>
 <div class="section-note">点击选择订阅转换后端。</div>
-<select class="native-picker" id="apiPicker" aria-label="选择订阅转换后端" onchange="publicPickerChanged('api',this)">
+<select class="native-picker" id="apiPicker" aria-label="选择订阅转换后端" onchange="window.__cfPickerFallback && window.__cfPickerFallback('api',this); window.publicPickerChanged && window.publicPickerChanged('api',this)">
 ${apis.map(x=>`<option value="${esc(x.url)}" data-id="${esc(x.id)}" ${!apiCustom&&apiId===x.id?'selected':''}>${esc(x.name)}</option>`).join('')}
 <option value="__custom" ${apiCustom?'selected':''}>自定义</option>
 </select>
 <div class="current-box"><div class="current-title">当前配置</div><div class="current-row">
 <input id="apiCurrent" class="current-api-input" readonly value="${esc(apiCurrentValue)}" placeholder="请选择订阅转换后端">
-<button type="button" class="button secondary edit-custom" id="editApiCustom">编辑</button>
+<button type="button" class="button secondary edit-custom" id="editApiCustom" onclick="window.openCustomModal && window.openCustomModal('api')">编辑</button>
 </div></div>
 <div class="status-box"><div class="status-title">可用状态</div><div id="apiStatus" class="status-list"><div class="status-item wait">⏳ 状态检测中</div></div></div>
 </section>
@@ -1683,13 +1683,13 @@ ${apis.map(x=>`<option value="${esc(x.url)}" data-id="${esc(x.id)}" ${!apiCustom
 <section class="panel">
 <h2 class="section-title">订阅转换规则(SUBCONFIG)</h2>
 <div class="section-note">点击选择订阅转换规则。</div>
-<select class="native-picker" id="configPicker" aria-label="选择订阅转换规则" onchange="publicPickerChanged('config',this)">
+<select class="native-picker" id="configPicker" aria-label="选择订阅转换规则" onchange="window.__cfPickerFallback && window.__cfPickerFallback('config',this); window.publicPickerChanged && window.publicPickerChanged('config',this)">
 ${configs.map(x=>`<option value="${esc(x.url)}" data-id="${esc(x.id)}" ${!configCustom&&configId===x.id?'selected':''}>${esc(x.name)}</option>`).join('')}
 <option value="__custom" ${configCustom?'selected':''}>自定义</option>
 </select>
 <div class="current-box"><div class="current-title">当前配置</div><div class="current-row">
 <textarea id="configCurrent" class="current-config-input" readonly placeholder="请选择订阅转换规则">${esc(configCurrentValue)}</textarea>
-<button type="button" class="button secondary edit-custom" id="editConfigCustom">编辑</button>
+<button type="button" class="button secondary edit-custom" id="editConfigCustom" onclick="window.openCustomModal && window.openCustomModal('config')">编辑</button>
 </div></div>
 <div class="status-box"><div class="status-title">可用状态</div><div id="configStatus" class="status-list"><div class="status-item wait">⏳ 状态检测中</div></div></div>
 </section>
@@ -1841,6 +1841,24 @@ function publicPickerChanged(kind,picker){
  checkOneStatus(kind);
 }
 
+window.__cfPickerFallback = function(kind,picker){
+ const api=kind==='api';
+ const value=String(picker?.value||'');
+ const current=$(api?'apiCurrent':'configCurrent');
+ const edit=$(api?'editApiCustom':'editConfigCustom');
+ if(current){
+   current.value=value==='__custom'?'':value;
+   if(!api){current.style.height='auto';current.style.height=Math.max(54,Math.min(260,current.scrollHeight))+'px';}
+ }
+ if(edit){edit.style.display=value==='__custom'?'inline-flex':'none';edit.hidden=value!=='__custom';}
+ const status=$(api?'apiStatus':'configStatus');
+ if(status && value!=='__custom') status.innerHTML='<div class="status-item wait">⏳ 状态检测中</div>';
+};
+window.publicPickerChanged = publicPickerChanged;
+window.openCustomModal = openCustomModal;
+window.closeCustomModal = closeCustomModal;
+window.saveCustom = saveCustom;
+
 function choiceChanged(kind){
  const picker=$(kind==='api'?'apiPicker':'configPicker');
  publicPickerChanged(kind,picker);
@@ -1898,45 +1916,57 @@ function updatePickerLabel(kind){
  if(!picker)return;
 }
 
-$('#editApiCustom').addEventListener('click',()=>openCustomModal('api'));
-$('#editConfigCustom').addEventListener('click',()=>openCustomModal('config'));
-$('#cancelApiCustom').addEventListener('click',()=>closeCustomModal('api'));
-$('#cancelConfigCustom').addEventListener('click',()=>closeCustomModal('config'));
-$('#saveApiCustom').addEventListener('click',()=>saveCustom('api'));
-$('#saveConfigCustom').addEventListener('click',()=>saveCustom('config'));
-document.querySelectorAll('.custom-modal-overlay').forEach(m=>m.addEventListener('click',e=>{if(e.target===m)m.style.display='none'}));
-$('#noAds').addEventListener('input',savePrefs);
-$('#copyDirect').addEventListener('click',async()=>{
- const v=$('#direct').textContent.trim();
- try{await navigator.clipboard.writeText(v);alert('已复制')}catch(e){alert('复制失败，请手动复制')}
-});
-$('#generate').addEventListener('click',async()=>{
- const button=$('#generate'),sources=$('#sources').value.trim(),a=selected('api'),c=selected('config');
- if(!sources)return alert('请输入订阅链接');
- if(!a.all.length)return alert('请选择订阅转换后端');
- if(!c.all.length)return alert('请选择订阅转换规则');
- if(a.custom&&!/^https?:\/\//i.test(a.customUrl))return alert('请先在自定义弹窗中填写有效的订阅转换后端');
- if(c.custom&&!/^https?:\/\//i.test(c.customUrl))return alert('请先在自定义弹窗中填写有效的订阅转换规则');
- savePrefs();button.disabled=true;button.textContent='生成中…';
- try{
-   const r=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},cache:'no-store',body:JSON.stringify({sources,apiIds:a.id?[a.id]:[],apiCustom:a.custom,apiUrl:a.custom?a.customUrl:'',configIds:c.id?[c.id]:[],configCustom:c.custom,configUrl:c.custom?c.customUrl:'',noAds:$('#noAds').value.trim()})});
-   const d=await r.json();if(!r.ok||!d.ok)throw new Error(d.error||'生成失败');
-   $('#direct').textContent=d.subscription_url;$('#openDirect').href=d.subscription_url;$('#result').hidden=false;$('#result').scrollIntoView({behavior:'smooth',block:'start'});
- }catch(e){alert(e.message||'生成失败')}finally{button.disabled=false;button.textContent='生成聚合订阅'}
-});
-if(state.apiCustom){
-  $('#apiPicker').value='__custom';
-}else{
-  state.apiId=state.apiId||API_LIST[0]?.id||'';
-  $('#apiPicker').value=state.apiId;
+try{
+ $('#editApiCustom').onclick=()=>openCustomModal('api');
+ $('#editConfigCustom').onclick=()=>openCustomModal('config');
+ $('#cancelApiCustom').onclick=()=>closeCustomModal('api');
+ $('#cancelConfigCustom').onclick=()=>closeCustomModal('config');
+ $('#saveApiCustom').onclick=()=>saveCustom('api');
+ $('#saveConfigCustom').onclick=()=>saveCustom('config');
+ document.querySelectorAll('.custom-modal-overlay').forEach(m=>m.addEventListener('click',e=>{if(e.target===m)m.style.display='none'}));
+ $('#noAds').addEventListener('input',savePrefs);
+ $('#copyDirect').onclick=async()=>{
+   const v=$('#direct').textContent.trim();
+   try{await navigator.clipboard.writeText(v);alert('已复制')}catch(e){alert('复制失败，请手动复制')}
+ };
+ $('#generate').onclick=async()=>{
+   const button=$('#generate'),sources=$('#sources').value.trim(),a=selected('api'),c=selected('config');
+   if(!sources)return alert('请输入订阅链接');
+   if(!a.all.length)return alert('请选择订阅转换后端');
+   if(!c.all.length)return alert('请选择订阅转换规则');
+   if(a.custom&&!/^https?:\/\//i.test(a.customUrl))return alert('请先在自定义弹窗中填写有效的订阅转换后端');
+   if(c.custom&&!/^https?:\/\//i.test(c.customUrl))return alert('请先在自定义弹窗中填写有效的订阅转换规则');
+   savePrefs();button.disabled=true;button.textContent='生成中…';
+   try{
+     const r=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},cache:'no-store',body:JSON.stringify({sources,apiIds:a.id?[a.id]:[],apiCustom:a.custom,apiUrl:a.custom?a.customUrl:'',configIds:c.id?[c.id]:[],configCustom:c.custom,configUrl:c.custom?c.customUrl:'',noAds:$('#noAds').value.trim()})});
+     const d=await r.json();if(!r.ok||!d.ok)throw new Error(d.error||'生成失败');
+     $('#direct').textContent=d.subscription_url;$('#openDirect').href=d.subscription_url;$('#result').hidden=false;$('#result').scrollIntoView({behavior:'smooth',block:'start'});
+   }catch(e){alert(e.message||'生成失败')}finally{button.disabled=false;button.textContent='生成聚合订阅'}
+ };
+}catch(e){
+ console.error('CF-SUBS public UI init failed',e);
 }
-if(state.configCustom){
-  $('#configPicker').value='__custom';
-}else{
-  state.configId=state.configId||CONFIG_LIST[0]?.id||'';
-  $('#configPicker').value=state.configId;
+function syncPicker(kind){
+ const api=kind==='api';
+ const picker=$(api?'apiPicker':'configPicker');
+ const list=api?API_LIST:CONFIG_LIST;
+ const id=api?state.apiId:state.configId;
+ const custom=api?state.apiCustom:state.configCustom;
+ if(!picker)return;
+ if(custom){
+   picker.value='__custom';
+ }else{
+   const item=list.find(x=>String(x.id)===String(id))||list[0];
+   if(item){
+     if(api)state.apiId=String(item.id);else state.configId=String(item.id);
+     const index=Array.from(picker.options).findIndex(o=>String(o.dataset.id||'')===String(item.id));
+     if(index>=0)picker.selectedIndex=index;
+   }
+ }
+ renderCurrent(kind);
 }
-renderCurrent('api');renderCurrent('config');savePrefs();checkAvailability();
+window.__CF_SUBS_PUBLIC_READY = true;
+syncPicker('api');syncPicker('config');savePrefs();checkAvailability();
 </script>
 </body>
 </html>`;
