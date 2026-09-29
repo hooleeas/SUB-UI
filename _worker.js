@@ -1,6 +1,6 @@
 /**
  * CF-SUBS
- * 基于 CF-SUB 核心能力扩展的多 SUB / 多订阅链接 URL 管理版
+ * 基于 CF-SUB 核心能力扩展的公开订阅聚合转换版
  *
  * 核心原则：
  * 1. 只使用一个 Cloudflare KV Binding：KV
@@ -12,7 +12,7 @@
  * KV：
  *   CONFIG.json
  *   SUB:<id>
- *   URL:<url>
+ *   URL:<token>
  *
  * Pages / Workers 环境变量仍兼容原 CF-SUB：
  *   USER
@@ -175,7 +175,7 @@ async function handleRequest(request, env) {
         // ==================== SUB-UI 公共 API ====================
         if (url.pathname === '/api/ui-config' && request.method === 'GET') {
             const cfg = await getConfig(env);
-            return jsonResponse({ ok: true, subApis: normalizeProviderList(cfg.subApis), subConfigs: normalizeProviderList(cfg.subConfigs), shortLinks: normalizeProviderList(cfg.shortLinks) });
+            return jsonResponse({ ok: true, subApis: normalizeProviderList(cfg.subApis), subConfigs: normalizeProviderList(cfg.subConfigs) });
         }
         if (url.pathname === '/api/generate' && request.method === 'POST') {
             return await handlePublicGenerate(request, env, url);
@@ -746,7 +746,7 @@ async function handleAdmin(request, env, runtime) {
         );
     }
 
-    // 管理后台 POST：统一处理配置 / SUB / URL
+    // 管理后台 POST：只处理站点配置、SUBAPI、SUBCONFIG
     if (request.method === 'POST') {
         const contentType = request.headers.get('content-type') || '';
 
@@ -767,7 +767,6 @@ async function handleAdmin(request, env, runtime) {
                     subConfig: String(data.settings?.subConfig ?? old.subConfig ?? '').trim(),
                     subApis: normalizeProviderList(data.settings?.subApis ?? old.subApis),
                     subConfigs: normalizeProviderList(data.settings?.subConfigs ?? old.subConfigs),
-                    shortLinks: normalizeProviderList(data.settings?.shortLinks ?? old.shortLinks),
                     noAds: String(data.settings?.noAds ?? old.noAds ?? '').trim(),
 
                     // 保留旧配置
@@ -949,9 +948,9 @@ async function handleAdmin(request, env, runtime) {
                 return jsonResponse({ ok: true });
             }
 
-            if (['subapi_create','subapi_update','subapi_delete','subconfig_create','subconfig_update','subconfig_delete','shortlink_create','shortlink_update','shortlink_delete'].includes(data.type)) {
+            if (['subapi_create','subapi_update','subapi_delete','subconfig_create','subconfig_update','subconfig_delete'].includes(data.type)) {
                 const cfg = await getConfig(env);
-                const key = data.type.startsWith('subapi_') ? 'subApis' : data.type.startsWith('subconfig_') ? 'subConfigs' : 'shortLinks';
+                const key = data.type.startsWith('subapi_') ? 'subApis' : 'subConfigs';
                 const list = normalizeProviderList(cfg[key]);
                 const action = data.type.split('_')[1];
                 const id = String(data.id || '').trim();
@@ -964,7 +963,6 @@ async function handleAdmin(request, env, runtime) {
                     if (!validName(name)) return new Response('备注不能为空且不能超过 80 个字符', { status: 400 });
                     if (!/^https?:\/\//i.test(value)) return new Response('URL 必须以 http:// 或 https:// 开头', { status: 400 });
                     const item = { id: id || makeSubId(), name, url: value, enabled: data.enabled !== false };
-                    if (key === 'shortLinks') item.providerType = String(data.providerType || 'json-root');
                     if (action === 'create') list.push(item);
                     else { const idx=list.findIndex(x=>x.id===id); if(idx<0) return new Response('项目不存在',{status:404}); list[idx]={...list[idx],...item,id}; }
                     cfg[key]=list;
@@ -979,11 +977,7 @@ async function handleAdmin(request, env, runtime) {
         }
     }
 
-    const [subs, tokens, settings] = await Promise.all([
-        listSubs(env),
-        listTokens(env),
-        getConfig(env)
-    ]);
+    const settings = await getConfig(env);
 
     const status = await getBackendStatus(
         runtime.effectiveSubConverter,
@@ -997,8 +991,6 @@ async function handleAdmin(request, env, runtime) {
         renderAdminPage(
             new URL(request.url),
             env,
-            subs,
-            tokens,
             settings,
             status
         ),
@@ -1018,9 +1010,6 @@ async function getConfig(env) {
         subConfig: '',
         subApis: [],
         subConfigs: [],
-        shortLinks: [
-            { id: 'hooleeas', name: 'Hulian Short', url: 'https://url.hooleeas.com/', providerType: 'json-root', enabled: true }
-        ],
         noAds: '',
         user: '',
         pass: '',
@@ -1309,32 +1298,55 @@ async function getSelectedBackends(env, tokenData, runtime) {
 }
 
 async function handlePublicGenerate(request, env, requestUrl) {
-    if (!env.KV) return jsonResponse({ok:false,error:'未绑定 KV'},500);
+    if (!env.KV) return jsonResponse({ ok: false, error: '未绑定 KV' }, 500);
     try {
-        const data=await request.json(); const sources=cleanSourceList(data.sources||data.url||'');
-        if(!sources.length) return jsonResponse({ok:false,error:'请输入至少一个订阅链接'},400);
-        if(sources.length>100) return jsonResponse({ok:false,error:'订阅链接最多 100 条'},400);
-        const cfg=await getConfig(env); const apis=normalizeProviderList(cfg.subApis).filter(x=>x.enabled), configs=normalizeProviderList(cfg.subConfigs).filter(x=>x.enabled);
-        const apiIds=Array.isArray(data.subApiIds)?[...new Set(data.subApiIds.map(String))].filter(id=>apis.some(x=>x.id===id)):[];
-        const configIds=Array.isArray(data.subConfigIds)?[...new Set(data.subConfigIds.map(String))].filter(id=>configs.some(x=>x.id===id)):[];
-        if(apis.length&&!apiIds.length)return jsonResponse({ok:false,error:'请选择至少一个 SUBAPI'},400);
-        if(configs.length&&!configIds.length)return jsonResponse({ok:false,error:'请选择至少一个 SUBCONFIG'},400);
-        const token=await makeRandomToken(env,8); const name=normalizeName(data.name||`SUB-UI ${token}`);
-        const target=['auto','clash','singbox','surge','quanx','loon','mixed'].includes(String(data.target))?String(data.target):'auto';
-        const item={url:token,name,sources,subs:[],subApiIds:apiIds,subConfigIds:configIds,target,shortLinkId:String(data.shortLinkId||''),createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),type:'sub-ui'};
-        await env.KV.put(`${URL_PREFIX}${token}`,JSON.stringify(item));
-        const subscriptionUrl=`${requestUrl.origin}/${encodeURIComponent(token)}`; let shortUrl='';
-        const provider=normalizeProviderList(cfg.shortLinks).find(x=>x.id===item.shortLinkId&&x.enabled);
-        if(provider){ shortUrl=await createShortUrl(provider,subscriptionUrl); if(shortUrl){item.shortUrl=shortUrl;await env.KV.put(`${URL_PREFIX}${token}`,JSON.stringify(item));} }
-        return jsonResponse({ok:true,url:item,subscription_url:subscriptionUrl,short_url:shortUrl||subscriptionUrl});
-    }catch(e){return jsonResponse({ok:false,error:e?.message||String(e)},500)}
-}
+        const data = await request.json();
+        const sources = cleanSourceList(data.sources || data.url || '');
+        if (!sources.length) return jsonResponse({ ok: false, error: '请输入至少一个订阅链接' }, 400);
+        if (sources.length > 100) return jsonResponse({ ok: false, error: '订阅链接最多 100 条' }, 400);
 
-async function createShortUrl(provider,longUrl){
-    const type=provider.providerType||'json-root';
-    if(type==='json-root'){const res=await fetch(provider.url,{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},body:JSON.stringify({url:longUrl})});if(!res.ok)throw new Error(`短链服务返回 HTTP ${res.status}`);const data=await res.json();if(!data.short_url)throw new Error('短链服务未返回 short_url');return new URL(data.short_url,provider.url).toString();}
-    if(type==='v1mk'){const form=new FormData();form.append('longUrl',btoa(longUrl));const res=await fetch(provider.url,{method:'POST',body:form});if(!res.ok)throw new Error(`短链服务返回 HTTP ${res.status}`);const data=await res.json();return String(data.short_url||data.url||data.shortUrl||'').trim();}
-    throw new Error('不支持的短链服务类型');
+        const cfg = await getConfig(env);
+        const apis = normalizeProviderList(cfg.subApis).filter(x => x.enabled);
+        const configs = normalizeProviderList(cfg.subConfigs).filter(x => x.enabled);
+        const apiIds = Array.isArray(data.subApiIds)
+            ? [...new Set(data.subApiIds.map(String))].filter(id => apis.some(x => x.id === id))
+            : [];
+        const configIds = Array.isArray(data.subConfigIds)
+            ? [...new Set(data.subConfigIds.map(String))].filter(id => configs.some(x => x.id === id))
+            : [];
+
+        if (apis.length && !apiIds.length) return jsonResponse({ ok: false, error: '请选择至少一个 SUBAPI' }, 400);
+        if (configs.length && !configIds.length) return jsonResponse({ ok: false, error: '请选择至少一个 SUBCONFIG' }, 400);
+
+        const token = await makeRandomToken(env, 8);
+        const name = normalizeName(data.name || `订阅链接 ${token}`);
+        const target = ['auto', 'clash', 'singbox', 'surge', 'quanx', 'loon', 'mixed'].includes(String(data.target))
+            ? String(data.target)
+            : 'auto';
+
+        const item = {
+            url: token,
+            name,
+            sources,
+            subApiIds: apiIds,
+            subConfigIds: configIds,
+            target,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            type: 'sub-ui'
+        };
+
+        await env.KV.put(`${URL_PREFIX}${token}`, JSON.stringify(item));
+
+        const subscriptionUrl = `${requestUrl.origin}/${encodeURIComponent(token)}`;
+        return jsonResponse({
+            ok: true,
+            url: item,
+            subscription_url: subscriptionUrl
+        });
+    } catch (e) {
+        return jsonResponse({ ok: false, error: e?.message || String(e) }, 500);
+    }
 }
 
 function buildSubUrl(api, config, target, urlToConvert, protocol) {
@@ -1881,15 +1893,48 @@ ${error ? `<div class="error">${escapeHTML(error)}</div>` : ''}
 }
 
 function renderGuestPage(url, guest, guestName = '') {
-    return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>订阅链接</title><style>${getSubUIStyles()}</style></head><body><main class="wrap"><section class="card center"><h1>订阅链接</h1><p>${escapeHTML(guestName || '订阅转换')}</p><div class="result-url"><a href="${escapeHTML(url.pathname)}">${escapeHTML(url.origin + url.pathname)}</a></div><div class="grid"><a class="btn" href="${escapeHTML(url.pathname + '?clash')}">Clash</a><a class="btn" href="${escapeHTML(url.pathname + '?singbox')}">Sing-box</a><a class="btn" href="${escapeHTML(url.pathname + '?surge')}">Surge</a><a class="btn" href="${escapeHTML(url.pathname + '?quanx')}">Quantumult X</a></div></section></main></body></html>`;
+    const base = url.pathname;
+    return `<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>订阅链接页面</title>
+<style>${getSubUIStyles()}</style>
+</head>
+<body>
+<main class="page">
+<header class="header">
+    <h1 class="title">订阅链接页面</h1>
+    <div class="subtitle">${escapeHTML(guestName || '你的聚合订阅')}</div>
+</header>
+<section class="panel">
+    <h2 class="section-title">订阅链接</h2>
+    <div class="section-note">这是你的专属聚合订阅入口，可直接复制到支持的客户端。</div>
+    <div class="result-url" style="margin-top:12px;">${escapeHTML(url.origin + base)}</div>
+    <div class="actions">
+        <button type="button" id="copyGuest">复制订阅链接</button>
+        <a class="button secondary" href="${escapeHTML(base + '?clash')}">Clash</a>
+        <a class="button secondary" href="${escapeHTML(base + '?singbox')}">Sing-box</a>
+        <a class="button secondary" href="${escapeHTML(base + '?surge')}">Surge</a>
+        <a class="button secondary" href="${escapeHTML(base + '?quanx')}">Quantumult X</a>
+        <a class="button secondary" href="${escapeHTML(base + '?loon')}">Loon</a>
+    </div>
+</section>
+</main>
+<script>
+document.getElementById('copyGuest').addEventListener('click',()=>{
+ const text=${JSON.stringify(url.origin + base)};
+ navigator.clipboard.writeText(text).then(()=>alert('已复制')).catch(()=>alert('复制失败，请手动复制'));
+});
+</script>
+</body>
+</html>`;
 }
 
 async function renderSubUIHome(url, env) {
     const cfg = await getConfig(env);
     const apis = normalizeProviderList(cfg.subApis).filter(x => x.enabled);
     const configs = normalizeProviderList(cfg.subConfigs).filter(x => x.enabled);
-    const shorts = normalizeProviderList(cfg.shortLinks).filter(x => x.enabled);
-    const adminPath = normalizeAdminPath(cfg.adminPath) || DEFAULT_ADMIN_PATH;
 
     return `<!doctype html>
 <html lang="zh-CN">
@@ -1900,287 +1945,163 @@ async function renderSubUIHome(url, env) {
 <style>${getSubUIStyles()}</style>
 </head>
 <body>
-<main class="wrap">
-<header class="page-header">
-<div>
-<h1>订阅转换</h1>
-<p>生成属于你自己的持久订阅链接。</p>
-</div>
-<a class="admin" href="/${escapeHTML(adminPath)}">管理后台</a>
+<main class="page">
+<header class="header">
+    <h1 class="title">订阅转换</h1>
+    <div class="subtitle">粘贴你的订阅链接，生成属于你的聚合订阅。</div>
 </header>
 
-<section class="card">
-<h2>订阅链接</h2>
-<p class="muted">支持多个订阅地址，每行填写一个。</p>
-<textarea id="sources" placeholder="https://example.com/subscribe\nhttps://example.com/another"></textarea>
-<div class="row">
-<div>
-<label for="target">生成类型</label>
-<select id="target">
-<option value="auto">自动</option>
-<option value="clash">Clash</option>
-<option value="singbox">Sing-box</option>
-<option value="surge">Surge</option>
-<option value="quanx">Quantumult X</option>
-<option value="loon">Loon</option>
-<option value="mixed">Mixed</option>
-</select>
-</div>
-<div>
-<label for="name">订阅名称</label>
-<input id="name" placeholder="可选，例如：我的订阅">
-</div>
-</div>
+<section class="panel">
+    <h2 class="section-title">订阅链接</h2>
+    <div class="section-note">支持多个订阅地址，每行一个。</div>
+    <div class="field">
+        <textarea id="sources" placeholder="https://example.com/subscribe\nhttps://example.com/another"></textarea>
+    </div>
+    <div class="row">
+        <div>
+            <label for="target">生成类型</label>
+            <select id="target">
+                <option value="auto">自动</option>
+                <option value="clash">Clash</option>
+                <option value="singbox">Sing-box</option>
+                <option value="surge">Surge</option>
+                <option value="quanx">Quantumult X</option>
+                <option value="loon">Loon</option>
+                <option value="mixed">Mixed</option>
+            </select>
+        </div>
+        <div>
+            <label for="name">订阅名称</label>
+            <input id="name" placeholder="可选，例如：我的订阅">
+        </div>
+    </div>
 </section>
 
-<section class="card">
-<div class="section-head">
-<div>
-<h2>SUBAPI</h2>
-<p class="muted">选择要使用的订阅转换后端，可多选。</p>
-</div>
-</div>
-<div class="checks">
-${apis.length ? apis.map(x => `
-<label class="check">
-<input type="checkbox" value="${escapeHTML(x.id)}" checked>
-<span>${escapeHTML(x.name)}</span>
-<small>${escapeHTML(x.url)}</small>
-</label>`).join('') : '<div class="empty">暂无可用 SUBAPI，请在管理后台添加。</div>'}
-</div>
+<section class="panel">
+    <h2 class="section-title">SUBAPI</h2>
+    <div class="section-note">选择要使用的订阅转换后端，可多选。</div>
+    <div class="checks" id="apiChecks">
+        ${apis.length ? apis.map(x => `
+        <label class="check">
+            <input type="checkbox" value="${escapeHTML(x.id)}" checked>
+            <span>${escapeHTML(x.name)}</span>
+            <small>${escapeHTML(x.url)}</small>
+        </label>`).join('') : '<div class="empty">暂无可用 SUBAPI，请先进入管理员后台添加。</div>'}
+    </div>
 </section>
 
-<section class="card">
-<div class="section-head">
-<div>
-<h2>SUBCONFIG</h2>
-<p class="muted">选择要使用的订阅转换规则，可多选。</p>
-</div>
-</div>
-<div class="checks">
-${configs.length ? configs.map(x => `
-<label class="check">
-<input type="checkbox" value="${escapeHTML(x.id)}" checked>
-<span>${escapeHTML(x.name)}</span>
-<small>${escapeHTML(x.url)}</small>
-</label>`).join('') : '<div class="empty">暂无可用 SUBCONFIG，请在管理后台添加。</div>'}
-</div>
+<section class="panel">
+    <h2 class="section-title">SUBCONFIG</h2>
+    <div class="section-note">选择要使用的订阅转换规则，可多选。</div>
+    <div class="checks" id="configChecks">
+        ${configs.length ? configs.map(x => `
+        <label class="check">
+            <input type="checkbox" value="${escapeHTML(x.id)}" checked>
+            <span>${escapeHTML(x.name)}</span>
+            <small>${escapeHTML(x.url)}</small>
+        </label>`).join('') : '<div class="empty">暂无可用 SUBCONFIG，请先进入管理员后台添加。</div>'}
+    </div>
 </section>
 
-<section class="card">
-<div class="section-head">
-<div>
-<h2>短链选择</h2>
-<p class="muted">可选。生成后会把你的订阅链接转换成短链接。</p>
-</div>
-</div>
-<div class="checks">
-${shorts.length ? shorts.map((x, i) => `
-<label class="check single">
-<input type="radio" name="short" value="${escapeHTML(x.id)}" ${i === 0 ? 'checked' : ''}>
-<span>${escapeHTML(x.name)}</span>
-<small>${escapeHTML(x.url)}</small>
-</label>`).join('') : '<div class="empty">暂无短链服务，将直接使用订阅链接。</div>'}
-</div>
-</section>
+<button class="primary" id="generate" type="button">生成订阅链接</button>
 
-<button class="primary" id="generate" onclick="generate()">生成订阅链接</button>
-
-<section id="result" class="card result-card" hidden>
-<h2>订阅链接</h2>
-<p class="muted">生成成功后，下面的链接就是你的持久订阅入口。</p>
-<div class="result-label">短链接</div>
-<div class="result-url" id="short"></div>
-<div class="result-label">订阅链接</div>
-<div class="result-url secondary" id="direct"></div>
-<div class="actions">
-<button class="btn" type="button" onclick="copyResult('short')">复制短链接</button>
-<button class="btn secondary-btn" type="button" onclick="copyResult('direct')">复制订阅链接</button>
-</div>
+<section id="result" class="panel result-panel" hidden>
+    <h2 class="section-title">订阅链接页面</h2>
+    <div class="section-note">生成成功。打开下面的地址即可进入你的订阅链接页面。</div>
+    <div class="result-label">订阅链接</div>
+    <div class="result-url" id="direct"></div>
+    <div class="actions">
+        <button class="button" id="copyDirect" type="button">复制订阅链接</button>
+        <a class="button secondary" id="openDirect" target="_blank" rel="noopener">打开订阅链接页面</a>
+    </div>
 </section>
 </main>
 <script>
-function selectedIds(sectionTitle) {
-    const section = [...document.querySelectorAll('.card')].find(x => x.querySelector('h2')?.textContent === sectionTitle);
-    return section ? [...section.querySelectorAll('input[type="checkbox"]:checked')].map(x => x.value) : [];
+const $ = id => document.getElementById(id);
+function selectedIds(id){ return [...document.querySelectorAll('#'+id+' input[type="checkbox"]:checked')].map(x=>x.value); }
+function copyText(text){
+    if(!text) return;
+    navigator.clipboard.writeText(text).then(()=>alert('已复制')).catch(()=>alert('复制失败，请手动复制'));
 }
-function copyResult(id) {
-    const text = document.getElementById(id).textContent.trim();
-    if (!text) return;
-    navigator.clipboard.writeText(text).then(() => alert('已复制')).catch(() => alert('复制失败，请手动复制'));
-}
-async function generate() {
-    const button = document.getElementById('generate');
-    const sources = document.getElementById('sources').value.trim();
-    const subApiIds = selectedIds('SUBAPI');
-    const subConfigIds = selectedIds('SUBCONFIG');
-    const short = document.querySelector('input[name="short"]:checked');
-
-    if (!sources) return alert('请输入订阅链接');
-    if (!subApiIds.length) return alert('请至少选择一个 SUBAPI');
-    if (!subConfigIds.length) return alert('请至少选择一个 SUBCONFIG');
-
-    button.disabled = true;
-    button.textContent = '生成中…';
-    try {
-        const response = await fetch('/api/generate', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                sources,
-                target: document.getElementById('target').value,
-                name: document.getElementById('name').value.trim(),
-                subApiIds,
-                subConfigIds,
-                shortLinkId: short?.value || ''
-            })
-        });
-        const data = await response.json();
-        if (!response.ok || !data.ok) throw new Error(data.error || '生成失败');
-
-        document.getElementById('short').textContent = data.short_url || data.subscription_url;
-        document.getElementById('direct').textContent = data.subscription_url;
-        document.getElementById('result').hidden = false;
-        document.getElementById('result').scrollIntoView({ behavior: 'smooth', block: 'start' });
-    } catch (error) {
-        alert(error.message || '生成失败');
-    } finally {
-        button.disabled = false;
-        button.textContent = '生成订阅链接';
-    }
-}
+$('copyDirect').addEventListener('click',()=>copyText($('direct').textContent.trim()));
+$('generate').addEventListener('click', async ()=>{
+    const button=$('generate');
+    const sources=$('sources').value.trim();
+    const subApiIds=selectedIds('apiChecks');
+    const subConfigIds=selectedIds('configChecks');
+    if(!sources) return alert('请输入订阅链接');
+    if(!subApiIds.length && ${apis.length ? 'true' : 'false'}) return alert('请至少选择一个 SUBAPI');
+    if(!subConfigIds.length && ${configs.length ? 'true' : 'false'}) return alert('请至少选择一个 SUBCONFIG');
+    button.disabled=true; button.textContent='生成中…';
+    try{
+        const response=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+            sources,
+            target:$('target').value,
+            name:$('name').value.trim(),
+            subApiIds,
+            subConfigIds
+        })});
+        const data=await response.json();
+        if(!response.ok||!data.ok) throw new Error(data.error||'生成失败');
+        $('direct').textContent=data.subscription_url;
+        $('openDirect').href=data.subscription_url;
+        $('result').hidden=false;
+        $('result').scrollIntoView({behavior:'smooth',block:'start'});
+    }catch(e){ alert(e.message||'生成失败'); }
+    finally{ button.disabled=false; button.textContent='生成订阅链接'; }
+});
 </script>
 </body>
 </html>`;
 }
 
 function getSubUIStyles(){return getToolStyles()+`
-.wrap{width:100%;max-width:760px;margin:0 auto;padding:18px 14px 28px}
-.page-header{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;margin-bottom:14px}
-.page-header h1{margin:0;font-size:28px;font-weight:700;line-height:1.2;color:#1a1a1a}
-.page-header p{margin:8px 0 0;color:#666;font-size:13px}
-.admin{min-height:36px;padding:8px 14px;border:1px solid #c8c8c0;border-radius:10px;background:#fff;color:#222;font-weight:600;display:inline-flex;align-items:center}
-.card{background:rgba(255,255,255,.85);border:1px solid rgba(229,229,223,.8);border-radius:20px;padding:16px;margin-top:12px;box-shadow:0 4px 20px rgba(0,0,0,.05)}
-.card h2{margin:0 0 10px;font-size:15px;font-weight:700}
-.section-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap}
-.row{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px}
-.checks{display:grid;gap:8px}
-.check{display:grid;grid-template-columns:18px minmax(0,1fr);align-items:center;gap:8px;margin:0;padding:10px;border:1px solid rgba(229,229,223,.6);border-radius:10px;background:rgba(255,255,255,.5);cursor:pointer}
-.check input{width:18px;height:18px;margin:0}
-.check span{font-weight:600}
-.check small{grid-column:2;color:#888;font-size:12px;word-break:break-all;overflow-wrap:anywhere}
-.check.single{grid-template-columns:18px minmax(0,1fr)}
-.primary{width:100%;min-height:42px;margin-top:12px}
-.result-card[hidden]{display:none}
-.result-label{margin-top:12px;margin-bottom:6px;font-size:12px;font-weight:600;color:#666}
-.result-url{padding:10px;border:1px solid rgba(229,229,223,.8);border-radius:8px;background:rgba(250,250,250,.7);color:#1f4b99;word-break:break-all;overflow-wrap:anywhere}
-.result-url a{color:inherit}
-.result-url.secondary{margin-top:8px}
-.btn{min-height:36px;padding:8px 16px;border:1px solid #343a40;border-radius:10px;background:#2f3338;color:#fff;font-size:14px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;justify-content:center}
-.secondary-btn{background:#fff!important;color:#222!important;border-color:#c8c8c0!important}
-@media(max-width:600px){.row{grid-template-columns:1fr}.page-header{flex-direction:column}.admin{width:100%;justify-content:center}}
-@media(prefers-color-scheme:dark){
- .page-header h1{color:#f5f5f5}.page-header p{color:#aaa}.admin{background:#3a414a;color:#fff;border-color:#69717c}
- .card{background:rgba(30,30,30,.75);border-color:rgba(255,255,255,.1);box-shadow:0 4px 20px rgba(0,0,0,.3)}
- .check{background:rgba(40,40,40,.5);border-color:rgba(255,255,255,.1)}.check small{color:#aaa}
- .result-label{color:#aaa}.result-url{background:rgba(0,0,0,.3);color:#64b5f6;border-color:rgba(255,255,255,.1)}
- .secondary-btn{background:#3a414a!important;color:#fff!important;border-color:#69717c!important}
-}
+.page{width:100%;max-width:760px;margin:0 auto;padding:18px 14px 28px}
+.header{margin-bottom:14px}.title{margin:0;font-size:28px;font-weight:700;line-height:1.2}.subtitle{margin-top:8px}
+.panel{margin-top:12px}.row{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px}
+.checks{display:grid;gap:8px}.check{display:grid;grid-template-columns:18px minmax(0,1fr);align-items:center;gap:8px;margin:0;padding:10px;border:1px solid rgba(229,229,223,.6);border-radius:10px;background:rgba(255,255,255,.5);cursor:pointer}
+.check input{width:18px;height:18px;margin:0}.check span{font-weight:600}.check small{grid-column:2;color:#888;font-size:12px;word-break:break-all;overflow-wrap:anywhere}
+.primary{width:100%;min-height:42px;margin-top:12px}.result-panel[hidden]{display:none}.result-label{margin-top:12px;margin-bottom:6px;font-size:12px;font-weight:600;color:#666}.result-url{padding:10px;border:1px solid rgba(229,229,223,.8);border-radius:8px;background:rgba(250,250,250,.7);color:#1f4b99;word-break:break-all;overflow-wrap:anywhere}
+@media(max-width:600px){.row{grid-template-columns:1fr}}
+@media(prefers-color-scheme:dark){.check{background:rgba(40,40,40,.5);border-color:rgba(255,255,255,.1)}.check small{color:#aaa}.result-label{color:#aaa}.result-url{background:rgba(0,0,0,.3);color:#64b5f6;border-color:rgba(255,255,255,.1)}}
 `;}
 
 
-
-function renderAdminPage(url, env, subs, tokens, settings, status) {
-    const origin = url.origin;
+function renderAdminPage(url, env, settings, status) {
     const apis = normalizeProviderList(settings.subApis);
     const configs = normalizeProviderList(settings.subConfigs);
-    const shorts = normalizeProviderList(settings.shortLinks);
     const esc = x => escapeHTML(String(x ?? ''));
+    const apiStatusText = status?.adminApiHtml || 'SUBAPI 状态未知';
+    const configStatusText = status?.adminConfigHtml || 'SUBCONFIG 状态未知';
+    const apiStatusClass = status?.adminApiCss || 'status-warn';
+    const configStatusClass = status?.adminConfigCss || 'status-warn';
 
     const providerRows = (arr, type, emptyText) => arr.length ? arr.map(x => `
 <div class="link-item provider-item">
     <div class="sub-head">
-        <div>
+        <div class="provider-main">
             <div class="link-label">${esc(x.name)}</div>
-            <div class="section-note" style="margin-bottom:0;">${esc(x.url)}</div>
-            <div class="chips">
-                <span class="chip ${x.enabled !== false ? 'chip-on' : 'chip-off'}">${x.enabled !== false ? '启用' : '禁用'}</span>
-                ${type === 'shortlink' && x.providerType ? `<span class="chip">${esc(x.providerType)}</span>` : ''}
-            </div>
+            <div class="section-note provider-url">${esc(x.url)}</div>
+            <div class="chips"><span class="chip ${x.enabled !== false ? 'chip-on' : 'chip-off'}">${x.enabled !== false ? '启用' : '禁用'}</span></div>
         </div>
         <div class="actions" style="margin-top:0;">
-            <button type="button" class="secondary" onclick="editItem('${type}','${esc(x.id)}')">编辑</button>
-            <button type="button" class="danger" onclick="deleteItem('${type}','${esc(x.id)}')">删除</button>
+            <button type="button" class="secondary" data-action="edit" data-type="${type}" data-id="${esc(x.id)}">编辑</button>
+            <button type="button" class="danger" data-action="delete" data-type="${type}" data-id="${esc(x.id)}">删除</button>
         </div>
     </div>
 </div>`).join('') : `<div class="empty">${emptyText}</div>`;
 
-    const subRows = subs.length ? subs.map(s => `
-<div class="sub-row">
-    <div class="sub-head">
-        <div style="min-width:0;">
-            <div class="sub-name">${esc(s.name)}</div>
-            <div class="sub-count">${(s.sources || []).length} 个来源 · ${s.enabled === false ? '已禁用' : '已启用'}</div>
-        </div>
-        <div class="actions" style="margin-top:0;">
-            <button type="button" class="secondary" onclick="editSub('${esc(s.id)}')">编辑</button>
-            <button type="button" class="danger" onclick="deleteSub('${esc(s.id)}')">删除</button>
-        </div>
-    </div>
-    <div class="source-box">${esc((s.sources || []).join('\n'))}</div>
-</div>`).join('') : `<div class="empty">暂无 SUB。</div>`;
-
-    const tokenRows = tokens.length ? tokens.map(t => {
-        const tokenUrl = `${origin}/${encodeURIComponent(t.url)}`;
-        const subNames = (t.subs || []).map(id => {
-            const s = subs.find(x => x.id === id);
-            return s ? s.name : '已删除';
-        });
-        return `
-<div class="sub-row">
-    <div class="sub-head">
-        <div style="min-width:0;">
-            <div class="sub-name">${esc(t.name)}</div>
-            <div class="sub-count">URL：${esc(t.url)}</div>
-        </div>
-        <div class="actions" style="margin-top:0;">
-            <button type="button" class="secondary" onclick="copyValue('${esc(tokenUrl)}')">复制</button>
-            <button type="button" class="secondary" onclick="editUrl('${esc(t.url)}')">编辑</button>
-            <button type="button" class="danger" onclick="deleteUrl('${esc(t.url)}')">删除</button>
-        </div>
-    </div>
-    <a class="link-url token-url" href="${esc(tokenUrl)}" target="_blank">${esc(tokenUrl)}</a>
-    <div style="margin-top:8px;">${subNames.length ? subNames.map(x => `<span class="chip">${esc(x)}</span>`).join('') : '<span class="small-note">未绑定 SUB</span>'}</div>
-</div>`;
-    }).join('') : `<div class="empty">暂无订阅链接。</div>`;
-
     return `<!doctype html>
 <html lang="zh-CN">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${esc(settings.subName || 'CF-SUBS')}管理面板</title>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${esc(settings.subName || 'CF-SUBS')} 管理后台</title>
 <style>
 ${getToolStyles()}
-.sub-grid{display:grid;gap:10px}
-.sub-row{border:1px solid rgba(229,229,223,.6);border-radius:12px;padding:12px;background:rgba(255,255,255,.5)}
-.sub-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap}
-.sub-name{font-weight:700;font-size:15px}
-.sub-count{color:#888;font-size:12px;margin-top:3px}
-.source-box{margin-top:9px;padding:9px;border-radius:9px;background:rgba(250,250,250,.75);font-size:12px;word-break:break-all;white-space:pre-wrap;max-height:120px;overflow:auto}
-.token-url{color:#1f4b99;word-break:break-all}
-.chip{display:inline-block;padding:3px 8px;margin:2px 3px 2px 0;border-radius:8px;background:rgba(31,75,153,.08);color:#1f4b99;font-size:12px}
-.chip-on{background:rgba(76,175,80,.1);color:#2e7d32}
-.chip-off{background:rgba(120,120,120,.1);color:#777}
-.provider-item{padding:12px}
-.small-note,.empty{font-size:12px;color:#888}
-@media(prefers-color-scheme:dark){
- .sub-row{background:rgba(40,40,40,.5);border-color:rgba(255,255,255,.1)}
- .source-box{background:rgba(0,0,0,.3);border-color:rgba(255,255,255,.1)}
- .token-url{color:#64b5f6}.chip{background:rgba(100,181,246,.1);color:#90caf9}
- .chip-on{background:rgba(129,199,132,.1);color:#81c784}.chip-off{background:rgba(255,255,255,.08);color:#aaa}
- .small-note,.empty{color:#aaa}
-}
+.sub-grid{display:grid;gap:10px}.sub-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap}
+.provider-main{min-width:0}.provider-url{margin-bottom:0;word-break:break-all;overflow-wrap:anywhere}.provider-item{padding:12px}.chip{display:inline-block;padding:3px 8px;margin:2px 3px 2px 0;border-radius:8px;background:rgba(31,75,153,.08);color:#1f4b99;font-size:12px}.chip-on{background:rgba(76,175,80,.1);color:#2e7d32}.chip-off{background:rgba(120,120,120,.1);color:#777}.empty{font-size:12px;color:#888}.security-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.field>label input[type=checkbox]{width:18px!important;height:18px!important;margin-right:7px;vertical-align:-4px}.save-note{margin-top:8px;color:#888;font-size:12px}
+@media(max-width:600px){.security-grid{grid-template-columns:1fr}}
+@media(prefers-color-scheme:dark){.chip{background:rgba(100,181,246,.1);color:#90caf9}.chip-on{background:rgba(129,199,132,.1);color:#81c784}.chip-off{background:rgba(255,255,255,.08);color:#aaa}.empty,.save-note{color:#aaa}}
 </style>
 </head>
 <body>
@@ -2188,174 +2109,103 @@ ${getToolStyles()}
 <main class="page">
 <header class="header">
     <h1 class="title">管理后台</h1>
-    <div class="subtitle">配置 SUBAPI、SUBCONFIG、短链服务，以及原有 SUB / 订阅链接。</div>
-    <div class="actions" style="margin-top:0;">
-        <a class="button secondary" href="/">返回首页</a>
+    <div class="subtitle">管理 SUBAPI、SUBCONFIG 和管理员安全设置。</div>
+    <div class="status-indicator ${apiStatusClass}">${apiStatusText}</div>
+    <div class="status-indicator ${configStatusClass}">${configStatusText}</div>
+    <div class="actions" style="margin-top:0;justify-content:flex-end;">
         <a class="button danger" href="/${esc(settings.adminPath || 'admin')}/logout">退出</a>
     </div>
 </header>
 
 <section class="panel">
-<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;">
-    <div>
-        <h2 class="section-title">订阅转换后端 SUBAPI</h2>
-        <div class="section-note">可用的订阅转换后端，首页可选择多个后端。</div>
-    </div>
-    <button type="button" onclick="addItem('subapi')">＋ 添加 SUBAPI</button>
+<div class="sub-head">
+    <div><h2 class="section-title">订阅转换后端 SUBAPI</h2><div class="section-note">首页生成订阅时可选择一个或多个后端。</div></div>
+    <button type="button" data-action="add" data-type="subapi">＋ 添加 SUBAPI</button>
 </div>
 <div class="sub-grid" style="margin-top:12px;">${providerRows(apis,'subapi','暂无 SUBAPI，请先添加一个。')}</div>
 </section>
 
 <section class="panel">
-<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;">
-    <div>
-        <h2 class="section-title">订阅转换规则 SUBCONFIG</h2>
-        <div class="section-note">可用的订阅转换规则，首页可选择多个配置。</div>
-    </div>
-    <button type="button" onclick="addItem('subconfig')">＋ 添加 SUBCONFIG</button>
+<div class="sub-head">
+    <div><h2 class="section-title">订阅转换规则 SUBCONFIG</h2><div class="section-note">首页生成订阅时可选择一个或多个配置。</div></div>
+    <button type="button" data-action="add" data-type="subconfig">＋ 添加 SUBCONFIG</button>
 </div>
 <div class="sub-grid" style="margin-top:12px;">${providerRows(configs,'subconfig','暂无 SUBCONFIG，请先添加一个。')}</div>
 </section>
 
 <section class="panel">
-<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;">
-    <div>
-        <h2 class="section-title">短链服务</h2>
-        <div class="section-note">配置生成订阅链接后使用的短链服务。</div>
-    </div>
-    <button type="button" onclick="addItem('shortlink')">＋ 添加短链</button>
+<h2 class="section-title">管理员设置</h2>
+<div class="security-grid">
+    <div class="field"><label for="adminPath">管理员路径</label><input id="adminPath" value="${esc(settings.adminPath || 'admin')}" placeholder="admin"></div>
+    <div class="field"><label for="adminUser">管理员账号</label><input id="adminUser" value="${esc(settings.user || '')}" placeholder="管理员账号"></div>
 </div>
-<div class="sub-grid" style="margin-top:12px;">${providerRows(shorts,'shortlink','暂无短链服务，请先添加一个。')}</div>
-</section>
-
-<section class="panel">
-<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;">
-    <div>
-        <h2 class="section-title">聚合节点 (SUB)</h2>
-        <div class="section-note">SUB 是聚合节点配置，不是订阅链接。默认为空，可创建多个。</div>
-    </div>
-    <button type="button" onclick="addSub()">＋ 创建聚合节点</button>
+<div class="security-grid">
+    <div class="field"><label for="adminPass">管理员密码</label><input id="adminPass" type="password" value="" placeholder="留空保持原密码"></div>
+    <div class="field"><label for="subName">站点名称</label><input id="subName" value="${esc(settings.subName || 'CF-SUBS')}" placeholder="CF-SUBS"></div>
 </div>
-<div class="sub-grid" style="margin-top:12px;">${subRows}</div>
-</section>
-
-<section class="panel">
-<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;">
-    <div>
-        <h2 class="section-title">订阅链接 (URL)</h2>
-        <div class="section-note">创建链接才会生成公开订阅入口。URL 可以绑定一个或多个 SUB。</div>
-    </div>
-    <button type="button" onclick="addUrl()">＋ 创建订阅链接</button>
-</div>
-<div class="sub-grid" style="margin-top:12px;">${tokenRows}</div>
-</section>
-
-<section class="panel">
-<h2 class="section-title">基础设置</h2>
-<div class="field">
-<label>SUBNAME</label>
-<input id="subName" value="${esc(settings.subName)}" placeholder="例如：CF-SUBS">
-</div>
-<div class="field">
-<label>管理员路径</label>
-<input id="adminPath" value="${esc(settings.adminPath || 'admin')}" placeholder="例如：admin">
-</div>
-<div class="actions" style="justify-content:flex-end;">
-<button type="button" onclick="saveBase()">保存基础设置</button>
-</div>
+<div class="field"><label for="noAds">节点屏蔽（NOADS）</label><input id="noAds" value="${esc(settings.noAds || '')}" placeholder="每行一个关键词，例如：t.me"></div>
+<div class="actions" style="justify-content:flex-end;"><button type="button" id="saveSettings">保存设置</button></div>
+<div class="save-note">修改管理员路径或账号密码后，保存完成会自动进入新的管理员地址；密码留空则保持原密码。</div>
 </section>
 </main>
 
-<script>
-const DATA = ${JSON.stringify({apis, configs, shorts, subs, tokens})};
+<div id="providerModal" class="modal-overlay">
+<div class="modal-content">
+<h2 class="section-title" id="modalTitle">添加 SUBAPI</h2>
+<div class="field"><label for="modalName">备注</label><input id="modalName"></div>
+<div class="field"><label for="modalUrl">URL</label><input id="modalUrl" placeholder="https://..."></div>
+<div class="field"><label><input id="modalEnabled" type="checkbox" checked style="width:18px;height:18px;margin-right:7px;vertical-align:-4px;">启用</label></div>
+<div class="actions" style="justify-content:flex-end;"><button type="button" class="secondary" id="modalCancel">取消</button><button type="button" id="modalSave">保存</button></div>
+</div></div>
 
-function showToast(message){
-    const el=document.getElementById('copyNotice');
-    el.textContent=message; el.style.display='block';
-    clearTimeout(window.__toast); window.__toast=setTimeout(()=>el.style.display='none',1500);
+<script>
+const DATA=${JSON.stringify({apis,configs}).replace(/</g,'\\u003c')};
+const $=id=>document.getElementById(id);
+let modalState=null;
+function showModal(type,id){
+    const list=type==='subapi'?DATA.apis:DATA.configs;
+    const old=id?list.find(x=>x.id===id):null;
+    modalState={type,id:id||'',old};
+    $('modalTitle').textContent=(id?'编辑 ':'添加 ')+(type==='subapi'?'SUBAPI':'SUBCONFIG');
+    $('modalName').value=old?.name||'';$('modalUrl').value=old?.url||'';$('modalEnabled').checked=old?.enabled!==false;$('providerModal').style.display='flex';
+    setTimeout(()=>$('modalName').focus(),0);
 }
+function hideModal(){$('providerModal').style.display='none';modalState=null;}
 async function post(o){
     const r=await fetch(location.pathname,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(o)});
-    const t=await r.text();
-    if(!r.ok) throw new Error(t);
-    return t ? JSON.parse(t) : {};
+    const text=await r.text();
+    let data={};try{data=text?JSON.parse(text):{};}catch(e){throw new Error(text||'服务器返回无效数据');}
+    if(!r.ok||data.ok===false)throw new Error(data.error||text||'操作失败');
+    return data;
 }
-function copyValue(v){ navigator.clipboard.writeText(v).then(()=>showToast('已复制')).catch(()=>showToast('复制失败，请手动复制')); }
-
-async function addItem(type){
-    const name=prompt('备注'); if(name===null||!name.trim()) return;
-    const url=prompt('URL'); if(url===null||!url.trim()) return;
-    const enabled=confirm('是否启用？');
-    const o={type:type+'_create',name:name.trim(),url:url.trim(),enabled};
-    if(type==='shortlink') o.providerType=prompt('类型：json-root 或 v1mk','json-root')||'json-root';
-    try{await post(o);location.reload();}catch(e){alert(e.message);}
-}
-async function editItem(type,id){
-    const key=type==='subapi'?'apis':type==='subconfig'?'configs':'shorts';
-    const old=DATA[key].find(x=>x.id===id); if(!old) return;
-    const name=prompt('备注',old.name||''); if(name===null) return;
-    const url=prompt('URL',old.url||''); if(url===null) return;
-    const enabled=confirm('确定启用此项目？');
-    const o={type:type+'_update',id,name:name.trim(),url:url.trim(),enabled};
-    if(type==='shortlink') o.providerType=prompt('类型：json-root 或 v1mk',old.providerType||'json-root')||'json-root';
-    try{await post(o);location.reload();}catch(e){alert(e.message);}
-}
-async function deleteItem(type,id){
-    if(!confirm('确定删除这个项目？')) return;
-    try{await post({type:type+'_delete',id});location.reload();}catch(e){alert(e.message);}
-}
-
-function subById(id){return DATA.subs.find(x=>x.id===id);}
-async function addSub(){
-    const name=prompt('聚合节点名称'); if(name===null||!name.trim()) return;
-    const sources=prompt('订阅地址 / 自建节点（每行一个）'); if(sources===null||!sources.trim()) return;
-    const enabled=confirm('是否启用此聚合节点？');
-    try{await post({type:'sub_create',name:name.trim(),sources,enabled});location.reload();}catch(e){alert(e.message);}
-}
-async function editSub(id){
-    const old=subById(id); if(!old) return;
-    const name=prompt('聚合节点名称',old.name||''); if(name===null) return;
-    const sources=prompt('订阅地址 / 自建节点（每行一个）',(old.sources||[]).join('\n')); if(sources===null) return;
-    const enabled=confirm('确定启用此聚合节点？');
-    try{await post({type:'sub_update',id,name:name.trim(),sources,enabled});location.reload();}catch(e){alert(e.message);}
-}
-async function deleteSub(id){
-    if(!confirm('确定删除这个聚合节点？')) return;
-    try{await post({type:'sub_delete',id});location.reload();}catch(e){alert(e.message);}
-}
-
-async function addUrl(){
-    const name=prompt('订阅链接名称'); if(name===null||!name.trim()) return;
-    const token=prompt('自定义 URL（留空自动生成）',''); 
-    const selected=DATA.subs.filter(x=>x.enabled!==false);
-    if(!selected.length) return alert('请先创建并启用至少一个 SUB。');
-    const subs=selected.map(x=>x.id);
-    const mode=token&&token.trim()?'custom':'random';
-    const url=token&&token.trim()?token.trim():'';
-    try{await post({type:'url_create',name:name.trim(),mode,url,subs});location.reload();}catch(e){alert(e.message);}
-}
-async function editUrl(token){
-    const old=DATA.tokens.find(x=>x.url===token); if(!old) return;
-    const name=prompt('订阅链接名称',old.name||''); if(name===null) return;
-    const newToken=prompt('URL',old.url||''); if(newToken===null) return;
-    const selected=DATA.subs.filter(x=>x.enabled!==false);
-    if(!selected.length) return alert('请先创建并启用至少一个 SUB。');
-    try{await post({type:'url_update',oldUrl:old.url,newUrl:newToken.trim(),name:name.trim(),subs:selected.map(x=>x.id)});location.reload();}catch(e){alert(e.message);}
-}
-async function deleteUrl(token){
-    if(!confirm('确定删除这个订阅链接？')) return;
-    try{await post({type:'url_delete',url:token});location.reload();}catch(e){alert(e.message);}
-}
-async function saveBase(){
+$('modalCancel').addEventListener('click',hideModal);
+$('providerModal').addEventListener('click',e=>{if(e.target===$('providerModal'))hideModal();});
+$('modalSave').addEventListener('click',async()=>{
+    if(!modalState)return;
+    const name=$('modalName').value.trim(), url=$('modalUrl').value.trim();
+    if(!name)return alert('请输入备注'); if(!/^https?:\\/\\//i.test(url))return alert('URL 必须以 http:// 或 https:// 开头');
+    $('modalSave').disabled=true;
+    try{await post({type:modalState.type+'_'+(modalState.id?'update':'create'),id:modalState.id,name,url,enabled:$('modalEnabled').checked});location.reload();}
+    catch(e){alert(e.message);}finally{$('modalSave').disabled=false;}
+});
+document.querySelectorAll('[data-action="add"]').forEach(b=>b.addEventListener('click',()=>showModal(b.dataset.type,'')));
+document.querySelectorAll('[data-action="edit"]').forEach(b=>b.addEventListener('click',()=>showModal(b.dataset.type,b.dataset.id)));
+document.querySelectorAll('[data-action="delete"]').forEach(b=>b.addEventListener('click',async()=>{
+    if(!confirm('确定删除这个项目？'))return;
+    try{await post({type:b.dataset.type+'_delete',id:b.dataset.id});location.reload();}catch(e){alert(e.message);}
+}));
+$('saveSettings').addEventListener('click',async()=>{
+    const path=$('adminPath').value.trim(), user=$('adminUser').value.trim(), pass=$('adminPass').value;
+    if(!path)return alert('管理员路径不能为空');
+    if(!/^[A-Za-z0-9_-]{1,80}$/.test(path))return alert('管理员路径只能使用字母、数字、下划线和短横线');
+    if(!user)return alert('管理员账号不能为空');
+    const button=$('saveSettings');button.disabled=true;
     try{
-        await post({type:'config',settings:{
-            subName:document.getElementById('subName').value.trim(),
-            adminPath:document.getElementById('adminPath').value.trim(),
-            subApis:DATA.apis,subConfigs:DATA.configs,shortLinks:DATA.shorts
-        }});
-        location.reload();
-    }catch(e){alert(e.message);}
-}
+        const data=await post({type:'config',settings:{subName:$('subName').value.trim()||'CF-SUBS',adminPath:path,user,pass,keepPass:!pass,noAds:$('noAds').value.trim(),subApis:DATA.apis,subConfigs:DATA.configs}});
+        alert('保存成功');
+        location.href='/'+data.adminPath;
+    }catch(e){alert(e.message);}finally{button.disabled=false;}
+});
 </script>
 </body>
 </html>`;
