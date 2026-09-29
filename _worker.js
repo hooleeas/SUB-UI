@@ -1619,64 +1619,68 @@ async function handleAdminLogin(request, url, token, user, pass) {
 function getToolStyles() {
     return `
         * { box-sizing: border-box; }
-        :root {
-            color-scheme: light dark;
-            --bg:#f5f7fa; --surface:rgba(255,255,255,.9); --surface-soft:rgba(248,249,250,.82);
-            --surface-strong:#fff; --border:#e2e5e9; --border-soft:rgba(220,224,229,.82);
-            --text:#202124; --text-strong:#17191c; --muted:#737980;
-            --input-bg:#fff; --input-border:#d6d9de; --primary:#2f3338; --primary-hover:#1f2327;
-            --primary-text:#fff; --secondary-bg:#fff; --secondary-hover:#f2f4f6; --secondary-text:#30343a;
-            --danger:#c93445; --danger-hover:#ad2938; --link:#315f9f;
-            --shadow:0 4px 20px rgba(0,0,0,.055); --focus:rgba(49,95,159,.13);
+        body { margin: 0; background: #f5f7fa; color: #202124; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 14px; line-height: 1.5; min-height: 100vh; transition: background 0.3s, color 0.3s; }
+        .page { width: 100%; max-width: 760px; margin: 0 auto; padding: 18px 14px 28px; }
+        .header { margin-bottom: 14px; }
+        .title { margin: 0; font-size: 28px; font-weight: 700; line-height: 1.2; color: #1a1a1a; transition: color 0.3s; }
+        .subtitle { margin-top: 8px; color: #666; font-size: 13px; }
+        .panel { background: rgba(255, 255, 255, 0.85); border: 1px solid rgba(229, 229, 223, 0.8); border-radius: 20px; padding: 16px; margin-top: 12px; box-shadow: 0 4px 20px rgba(0, 0, 0, 0.05); transition: background 0.3s, border-color 0.3s; }
+        .section-title { margin: 0 0 10px; font-size: 15px; font-weight: 700; }
+        .section-note { margin: 4px 0 10px; color: #888; font-size: 12px; }
+        .link-list { display: grid; gap: 10px; }
+        .link-item { border: 1px solid rgba(229, 229, 223, 0.6); border-radius: 12px; padding: 12px; background: rgba(255, 255, 255, 0.5); transition: background 0.3s, border-color 0.3s; }
+        .link-label { font-weight: 600; margin-bottom: 8px; color: #1a1a1a; transition: color 0.3s; }
+        .link-url { display: block; width: 100%; word-wrap: break-word; overflow-wrap: break-word; word-break: break-all; white-space: normal; padding: 10px; border: 1px solid rgba(229, 229, 223, 0.8); border-radius: 8px; background: rgba(250, 250, 250, 0.7); color: #1f4b99; text-decoration: none; transition: all 0.3s ease; }
+        .link-url:hover { background: rgba(31, 75, 153, 0.05); border-color: #1f4b99; }
+        .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+        button, .button { min-height: 36px; padding: 8px 16px; border: 1px solid #343a40; border-radius: 10px; background: #2f3338; color: #fff; font-size: 14px; cursor: pointer; font-weight: 600; transition: all 0.3s ease; text-decoration: none; display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; }
+        button:hover, .button:hover { background: #1f2327; box-shadow: 0 4px 12px rgba(34, 34, 34, 0.15); }
+        button.secondary { background: #fff; color: #222; border-color: #c8c8c0; }
+        button.secondary:hover { background: #f1f3f5; }
+        button.danger, .button.danger { background: #dc3545; border-color: #dc3545; }
+        button.danger:hover, .button.danger:hover { background: #c82333; box-shadow: 0 4px 12px rgba(220, 53, 69, 0.2); }
+        button:disabled { opacity: 0.65; cursor: default; }
+        .field { margin-top: 12px; }
+        label { display: block; margin-bottom: 6px; font-weight: 600; color: #1a1a1a; transition: color 0.3s; }
+        input, textarea, select { width: 100%; border: 1px solid rgba(207, 207, 200, 0.6); border-radius: 10px; background: rgba(255, 255, 255, 0.8); color: #202124; font-size: 14px; padding: 10px; transition: all 0.3s ease; word-wrap: break-word; word-break: break-all; white-space: pre-wrap; }
+        input:focus, textarea:focus, select:focus { outline: none; border-color: #3b82f6; background: #fff; box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1); }
+        input, select { height: 42px; white-space: normal; }
+        textarea { min-height: 200px; line-height: 1.5; resize: vertical; }
+        .error { color: #b00020; margin-top: 10px; }
+        .muted { color: #666; font-size: 13px; margin-left: 8px; transition: color 0.3s; }
+        .toast { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); display: none; min-width: 190px; max-width: calc(100vw - 40px); padding: 12px 18px; text-align: center; color: #fff; background: rgba(0, 0, 0, 0.82); border-radius: 12px; z-index: 9999; }
+        .status-indicator { display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; border-radius: 8px; font-size: 13px; margin-bottom: 8px; font-weight: 600; width: 100%; word-break: break-all; transition: background 0.3s, color 0.3s, border-color 0.3s; }
+        .status-ok { background: rgba(76, 175, 80, 0.1); color: #2e7d32; border: 1px solid rgba(76, 175, 80, 0.2); }
+        .status-warn { background: rgba(255, 152, 0, 0.1); color: #f57c00; border: 1px solid rgba(255, 152, 0, 0.2); }
+        .status-error { background: rgba(244, 67, 54, 0.1); color: #c62828; border: 1px solid rgba(244, 67, 54, 0.2); }
+        #current-qrcode { display: none; margin-top: 12px; padding: 12px; border: 1px solid rgba(229, 229, 223, 0.6); border-radius: 12px; background: rgba(255, 255, 255, 0.7); backdrop-filter: blur(10px); width: fit-content; max-width: 100%; }
+        .hidden { display: none !important; }
+        .modal-overlay { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0, 0, 0, 0.4); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); display: none; justify-content: center; align-items: center; z-index: 1000; overflow-y: auto; }
+        .modal-content { background: rgba(255, 255, 255, 0.95); border-radius: 20px; padding: 24px; width: 90%; max-width: 480px; box-shadow: 0 10px 40px rgba(0,0,0,0.2); border: 1px solid rgba(255, 255, 255, 0.5); transition: background 0.3s, border-color 0.3s; margin: 20px auto; }
+        @media (prefers-color-scheme: dark) {
+            body { background: #121212; color: #e0e0e0; }
+            .title { color: #f5f5f5; }
+            .subtitle, .section-note, .muted { color: #aaa; }
+            .panel { background: rgba(30, 30, 30, 0.75); border-color: rgba(255, 255, 255, 0.1); box-shadow: 0 4px 20px rgba(0,0,0,0.3); }
+            .link-item { background: rgba(40, 40, 40, 0.5); border-color: rgba(255, 255, 255, 0.1); }
+            .link-label, label { color: #ddd; }
+            .link-url { background: rgba(0, 0, 0, 0.3); color: #64b5f6; border-color: rgba(255,255,255,0.1); }
+            .link-url:hover { background: rgba(100, 181, 246, 0.1); border-color: #64b5f6; }
+            input, textarea, select { background: rgba(20, 20, 20, 0.8); color: #fff; border-color: rgba(255,255,255,0.2); }
+            input:focus, textarea:focus, select:focus { background: #000; border-color: #3b82f6; }
+            button, .button { background: #3f4650; color: #fff; border-color: #69717c; box-shadow: 0 2px 8px rgba(0,0,0,0.28); }
+            button:hover, .button:hover { background: #525b67; border-color: #858f9b; box-shadow: 0 4px 14px rgba(0,0,0,0.4); }
+            button.secondary { background: #3a414a; color: #fff; border-color: #69717c; }
+            button.secondary:hover { background: #4b5561; border-color: #858f9b; }
+            button.danger { background: #b8323f; color: #fff; border-color: #d24b58; }
+            button.danger:hover { background: #d13e4d; border-color: #e16a75; }
+            .status-ok { background: rgba(129, 199, 132, 0.1); color: #81c784; border-color: rgba(129, 199, 132, 0.2); }
+            .status-warn { background: rgba(255, 183, 77, 0.1); color: #ffb74d; border-color: rgba(255, 183, 77, 0.2); }
+            .status-error { background: rgba(229, 115, 115, 0.1); color: #e57373; border-color: rgba(229, 115, 115, 0.2); }
+            .modal-content { background: rgba(30, 30, 30, 0.95); border-color: rgba(255, 255, 255, 0.1); }
+            #current-qrcode { background: rgba(255, 255, 255, 0.9); }
         }
-        html{min-height:100%;background:var(--bg)}
-        body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;font-size:14px;line-height:1.5;min-height:100vh;transition:background .2s ease,color .2s ease}
-        .page{width:100%;max-width:860px;margin:0 auto;padding:24px 14px 36px}
-        .header{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;margin-bottom:18px}
-        .title{margin:0;font-size:28px;line-height:1.25;font-weight:700;color:var(--text-strong);letter-spacing:-.015em}
-        .subtitle{margin-top:7px;color:var(--muted);font-size:13px}
-        .panel{background:var(--surface);border:1px solid var(--border-soft);border-radius:20px;padding:20px;margin-bottom:14px;box-shadow:var(--shadow);transition:background .2s,border-color .2s,box-shadow .2s}
-        .section-title{margin:0;font-size:16px;line-height:1.35;font-weight:700;color:var(--text-strong)}
-        .section-note{margin:5px 0 0;color:var(--muted);font-size:12px;line-height:1.5}
-        .panel-head{display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:12px}
-        .link-list{display:grid;gap:10px}
-        .link-item{border:1px solid var(--border-soft);border-radius:12px;padding:12px;background:var(--surface-soft);transition:background .2s,border-color .2s}
-        .link-label{margin-bottom:8px;font-weight:600;color:var(--text-strong)}
-        .link-url{display:block;width:100%;padding:10px 11px;border:1px solid var(--border-soft);border-radius:10px;background:rgba(248,249,250,.85);color:var(--link);text-decoration:none;word-break:break-all;overflow-wrap:anywhere;transition:background .2s,border-color .2s,color .2s}
-        .link-url:hover{background:rgba(49,95,159,.06);border-color:rgba(49,95,159,.35)}
-        .actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap;margin-top:10px}
-        button,.button{min-height:36px;padding:8px 15px;border:1px solid var(--primary);border-radius:10px;background:var(--primary);color:var(--primary-text);font:600 14px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;justify-content:center;gap:6px;white-space:nowrap;transition:background .18s,border-color .18s,box-shadow .18s,transform .18s}
-        button:hover,.button:hover{background:var(--primary-hover);border-color:var(--primary-hover);box-shadow:0 3px 10px rgba(0,0,0,.12)}
-        button:active,.button:active{transform:translateY(1px)}
-        button.secondary,.button.secondary{background:var(--secondary-bg);color:var(--secondary-text);border-color:var(--input-border)}
-        button.secondary:hover,.button.secondary:hover{background:var(--secondary-hover);border-color:#c5c9cf}
-        button.danger,.button.danger{background:var(--danger);border-color:var(--danger);color:#fff}
-        button.danger:hover,.button.danger:hover{background:var(--danger-hover);border-color:var(--danger-hover);box-shadow:0 3px 10px rgba(201,52,69,.18)}
-        button:disabled,.button:disabled{opacity:.6;cursor:default;box-shadow:none}
-        .field{margin-top:12px}
-        label{display:block;margin-bottom:7px;font-weight:600;color:var(--text-strong)}
-        input,textarea,select{width:100%;border:1px solid var(--input-border);border-radius:10px;background:var(--input-bg);color:var(--text);font:inherit;padding:10px 12px;transition:border-color .18s,box-shadow .18s,background .18s;word-wrap:break-word;word-break:break-all}
-        input,select{height:42px;white-space:normal}
-        textarea{min-height:200px;line-height:1.5;resize:vertical}
-        input:focus,textarea:focus,select:focus{outline:none;border-color:#6b7480;box-shadow:0 0 0 3px var(--focus)}
-        .error{color:#b42332;margin-top:10px}
-        .muted{color:var(--muted);font-size:13px}
-        .toast{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);display:none;min-width:190px;max-width:calc(100vw - 40px);padding:12px 18px;text-align:center;color:#fff;background:rgba(20,22,25,.92);border:1px solid rgba(255,255,255,.08);border-radius:12px;z-index:9999;box-shadow:0 10px 30px rgba(0,0,0,.22)}
-        .status-indicator{display:inline-flex;align-items:center;gap:6px;width:100%;padding:8px 11px;border-radius:9px;font-size:13px;font-weight:600;word-break:break-all}
-        .status-ok{background:rgba(48,141,76,.09);color:#28753f;border:1px solid rgba(48,141,76,.18)}
-        .status-warn{background:rgba(185,116,20,.09);color:#a0600c;border:1px solid rgba(185,116,20,.18)}
-        .status-error{background:rgba(193,55,68,.09);color:#ad2e3c;border:1px solid rgba(193,55,68,.18)}
-        #current-qrcode{display:none;margin-top:12px;padding:12px;border:1px solid var(--border-soft);border-radius:12px;background:#fff;width:fit-content;max-width:100%}
-        .hidden{display:none!important}
-        .modal-overlay{position:fixed;inset:0;width:100vw;height:100vh;background:rgba(18,20,23,.42);backdrop-filter:blur(7px);-webkit-backdrop-filter:blur(7px);display:none;justify-content:center;align-items:center;z-index:1000;overflow-y:auto;padding:20px}
-        .modal-content{width:min(480px,100%);margin:auto;padding:22px;background:var(--surface-strong);border:1px solid var(--border);border-radius:18px;box-shadow:0 18px 50px rgba(0,0,0,.18)}
-        @media(max-width:640px){.page{padding:18px 12px 28px}.panel{padding:16px;border-radius:17px}.title{font-size:25px}.panel-head{align-items:flex-start}.panel-head>button{width:100%}.actions{justify-content:stretch}.actions>button,.actions>.button{flex:1 1 auto}}
-        @media(prefers-color-scheme:dark){
-            :root{--bg:#101216;--surface:#171a20;--surface-soft:#1c2027;--surface-strong:#1a1d23;--border:#2a2f38;--border-soft:#292e36;--text:#e6e8eb;--text-strong:#f3f4f6;--muted:#969da7;--input-bg:#12151a;--input-border:#343a44;--primary:#f1f3f5;--primary-hover:#fff;--primary-text:#15171a;--secondary-bg:#1c2027;--secondary-hover:#252a32;--secondary-text:#e7e9ec;--danger:#d95363;--danger-hover:#e96675;--link:#8db6ee;--shadow:0 4px 22px rgba(0,0,0,.22);--focus:rgba(141,182,238,.16)}
-            .link-url{background:#12151a;border-color:#2b3038}.link-url:hover{background:rgba(141,182,238,.08);border-color:rgba(141,182,238,.4)}
-            .status-ok{background:rgba(84,177,111,.11);color:#8bd39d;border-color:rgba(84,177,111,.2)}.status-warn{background:rgba(220,157,61,.11);color:#e9b66e;border-color:rgba(220,157,61,.2)}.status-error{background:rgba(220,83,99,.11);color:#ef8b98;border-color:rgba(220,83,99,.2)}
-            .modal-overlay{background:rgba(0,0,0,.58)}.toast{background:rgba(245,246,248,.96);color:#15171a;border-color:rgba(255,255,255,.08)}#current-qrcode{background:#fff}
-        }
+    `;
     `;
 }
 
@@ -2051,76 +2055,41 @@ async function generate() {
 </html>`;
 }
 
-function getSubUIStyles(){return `
-*{box-sizing:border-box}
-:root{
- --admin-bg:#f5f7fa;--admin-surface:rgba(255,255,255,.9);--admin-surface-soft:rgba(248,249,250,.82);
- --admin-border:#e2e5e9;--admin-border-soft:rgba(220,224,229,.82);--admin-text:#202124;--admin-strong:#17191c;
- --admin-muted:#737980;--admin-primary:#2f3338;--admin-primary-hover:#1f2327;--admin-secondary:#fff;
- --admin-secondary-hover:#f2f4f6;--admin-danger:#c93445;--admin-danger-hover:#ad2938;--admin-shadow:0 4px 20px rgba(0,0,0,.055)
-}
-html{min-height:100%;background:var(--admin-bg)}
-body{margin:0;background:var(--admin-bg);color:var(--admin-text);font:14px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;line-height:1.5;min-height:100vh}
-a{text-decoration:none;color:inherit}
-.wrap{width:100%;max-width:860px;margin:0 auto;padding:24px 14px 36px}
-.page-header{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:18px}
-.page-header>div{min-width:0}
-.page-header h1{margin:0;font-size:28px;line-height:1.25;font-weight:700;color:var(--admin-strong);letter-spacing:-.015em}
-.page-header p{margin:7px 0 0;color:var(--admin-muted);font-size:13px}
-.admin-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap}
-.card{background:var(--admin-surface);border:1px solid var(--admin-border-soft);border-radius:20px;padding:20px;margin-bottom:14px;box-shadow:var(--admin-shadow)}
-.card-head{display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:12px}
-.card-title{min-width:0}.card-title h2{margin:0;font-size:16px;line-height:1.35;font-weight:700;color:var(--admin-strong)}
-.card-title p{margin:5px 0 0;color:var(--admin-muted);font-size:12px}
-.card-action{flex:0 0 auto}
-.provider-list,.sub-list{display:grid;gap:9px}
-.provider-row,.sub-row{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start;gap:14px;padding:13px;border:1px solid var(--admin-border-soft);border-radius:12px;background:var(--admin-surface-soft)}
-.provider-main,.sub-main{min-width:0}
-.provider-name,.sub-name{font-weight:650;color:var(--admin-strong);overflow-wrap:anywhere}
-.provider-url,.sub-info{margin-top:3px;color:var(--admin-muted);font-size:12px;word-break:break-all;overflow-wrap:anywhere}
-.provider-meta{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-top:6px}
-.provider-actions{display:flex;align-items:center;justify-content:flex-end;gap:7px;flex-wrap:wrap}
-.status-pill{display:inline-flex;align-items:center;justify-content:center;min-height:26px;padding:4px 9px;border-radius:999px;font-size:12px;font-weight:600;white-space:nowrap}
-.status-pill.on{background:rgba(48,141,76,.09);border:1px solid rgba(48,141,76,.18);color:#28753f}
-.status-pill.off{background:rgba(110,116,124,.09);border:1px solid rgba(110,116,124,.18);color:#686f77}
-.provider-empty{padding:14px;border:1px dashed var(--admin-border);border-radius:12px;color:var(--admin-muted);text-align:center}
-.sub-sources{margin-top:8px;padding:9px 10px;border-radius:9px;background:rgba(127,133,142,.07);border:1px solid var(--admin-border-soft);font-size:12px;word-break:break-all;white-space:pre-wrap;max-height:120px;overflow:auto}
-.url-value{margin-top:8px;padding:10px 11px;border-radius:10px;background:rgba(248,249,250,.82);border:1px solid var(--admin-border-soft);color:#315f9f;word-break:break-all;overflow-wrap:anywhere}
-.url-value a{color:inherit}
-.chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
-.chip{display:inline-flex;align-items:center;min-height:26px;padding:4px 9px;border-radius:999px;background:rgba(49,95,159,.08);border:1px solid rgba(49,95,159,.12);color:#315f9f;font-size:12px}
-.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
-.form-field{min-width:0}
-label{display:block;font-weight:600;margin:0 0 7px;color:var(--admin-strong)}
-textarea,input,select{width:100%;border:1px solid #d6d9de;border-radius:10px;background:#fff;color:var(--admin-text);padding:10px 12px;font:inherit;transition:border-color .18s,box-shadow .18s,background .18s}
-textarea{min-height:155px;resize:vertical;line-height:1.5}input,select{height:42px}
-textarea:focus,input:focus,select:focus{outline:none;border-color:#6b7480;background:#fff;box-shadow:0 0 0 3px rgba(49,95,159,.12)}
-.btn{min-height:36px;padding:8px 14px;border:1px solid var(--admin-primary);border-radius:10px;background:var(--admin-primary);color:#fff;font:600 14px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:6px;white-space:nowrap;transition:background .18s,border-color .18s,box-shadow .18s,transform .18s}
-.btn:hover{background:var(--admin-primary-hover);border-color:var(--admin-primary-hover);box-shadow:0 3px 10px rgba(0,0,0,.12)}
-.btn:active{transform:translateY(1px)}
-.btn.secondary{background:var(--admin-secondary);color:var(--admin-text);border-color:#d1d5da}
-.btn.secondary:hover{background:var(--admin-secondary-hover);border-color:#c2c7cd}
-.btn.danger{background:var(--admin-danger);border-color:var(--admin-danger);color:#fff}
-.btn.danger:hover{background:var(--admin-danger-hover);border-color:var(--admin-danger-hover);box-shadow:0 3px 10px rgba(201,52,69,.18)}
-.actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap;margin-top:14px}
-.muted,.empty{color:var(--admin-muted);font-size:13px}
-@media(max-width:640px){
- .wrap{padding:18px 12px 28px}.page-header{flex-direction:column}.page-header .admin-actions{width:100%;justify-content:stretch}
- .page-header .admin-actions .btn{flex:1 1 auto}.card{padding:16px;border-radius:17px}.card-head{align-items:flex-start}.card-action{width:100%}
- .card-action .btn{width:100%}.provider-row,.sub-row{grid-template-columns:1fr}.provider-actions{justify-content:stretch}.provider-actions .btn{flex:1 1 auto}.form-grid{grid-template-columns:1fr}
-}
+function getSubUIStyles(){return getToolStyles()+`
+.wrap{width:100%;max-width:760px;margin:0 auto;padding:18px 14px 28px}
+.page-header{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;margin-bottom:14px}
+.page-header h1{margin:0;font-size:28px;font-weight:700;line-height:1.2;color:#1a1a1a}
+.page-header p{margin:8px 0 0;color:#666;font-size:13px}
+.admin{min-height:36px;padding:8px 14px;border:1px solid #c8c8c0;border-radius:10px;background:#fff;color:#222;font-weight:600;display:inline-flex;align-items:center}
+.card{background:rgba(255,255,255,.85);border:1px solid rgba(229,229,223,.8);border-radius:20px;padding:16px;margin-top:12px;box-shadow:0 4px 20px rgba(0,0,0,.05)}
+.card h2{margin:0 0 10px;font-size:15px;font-weight:700}
+.section-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px}
+.checks{display:grid;gap:8px}
+.check{display:grid;grid-template-columns:18px minmax(0,1fr);align-items:center;gap:8px;margin:0;padding:10px;border:1px solid rgba(229,229,223,.6);border-radius:10px;background:rgba(255,255,255,.5);cursor:pointer}
+.check input{width:18px;height:18px;margin:0}
+.check span{font-weight:600}
+.check small{grid-column:2;color:#888;font-size:12px;word-break:break-all;overflow-wrap:anywhere}
+.check.single{grid-template-columns:18px minmax(0,1fr)}
+.primary{width:100%;min-height:42px;margin-top:12px}
+.result-card[hidden]{display:none}
+.result-label{margin-top:12px;margin-bottom:6px;font-size:12px;font-weight:600;color:#666}
+.result-url{padding:10px;border:1px solid rgba(229,229,223,.8);border-radius:8px;background:rgba(250,250,250,.7);color:#1f4b99;word-break:break-all;overflow-wrap:anywhere}
+.result-url a{color:inherit}
+.result-url.secondary{margin-top:8px}
+.btn{min-height:36px;padding:8px 16px;border:1px solid #343a40;border-radius:10px;background:#2f3338;color:#fff;font-size:14px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;justify-content:center}
+.secondary-btn{background:#fff!important;color:#222!important;border-color:#c8c8c0!important}
+@media(max-width:600px){.row{grid-template-columns:1fr}.page-header{flex-direction:column}.admin{width:100%;justify-content:center}}
 @media(prefers-color-scheme:dark){
- :root{--admin-bg:#101216;--admin-surface:#171a20;--admin-surface-soft:#1c2027;--admin-border:#2a2f38;--admin-border-soft:#292e36;--admin-text:#e6e8eb;--admin-strong:#f3f4f6;--admin-muted:#969da7;--admin-primary:#f1f3f5;--admin-primary-hover:#fff;--admin-secondary:#1c2027;--admin-secondary-hover:#252a32;--admin-danger:#d95363;--admin-danger-hover:#e96675;--admin-shadow:0 4px 22px rgba(0,0,0,.22)}
- body{background:var(--admin-bg);color:var(--admin-text)}.provider-row,.sub-row{background:var(--admin-surface-soft);border-color:var(--admin-border-soft)}
- .sub-sources{background:rgba(0,0,0,.16);border-color:var(--admin-border-soft)}.url-value{background:#12151a;border-color:var(--admin-border-soft);color:#8db6ee}
- .chip{background:rgba(141,182,238,.09);border-color:rgba(141,182,238,.15);color:#8db6ee}
- input,textarea,select{background:#12151a;border-color:#343a44;color:#e6e8eb}
- input:focus,textarea:focus,select:focus{background:#15181e;border-color:#697480;box-shadow:0 0 0 3px rgba(141,182,238,.12)}
- .btn{color:#15171a}.btn.secondary{background:#1c2027;color:#e7e9ec;border-color:#343a44}.btn.secondary:hover{background:#252a32;border-color:#454c57}
- .btn.danger{color:#fff}.status-pill.on{background:rgba(84,177,111,.11);border-color:rgba(84,177,111,.2);color:#8bd39d}
- .status-pill.off{background:rgba(150,157,167,.1);border-color:rgba(150,157,167,.16);color:#aeb4bc}
+ .page-header h1{color:#f5f5f5}.page-header p{color:#aaa}.admin{background:#3a414a;color:#fff;border-color:#69717c}
+ .card{background:rgba(30,30,30,.75);border-color:rgba(255,255,255,.1);box-shadow:0 4px 20px rgba(0,0,0,.3)}
+ .check{background:rgba(40,40,40,.5);border-color:rgba(255,255,255,.1)}.check small{color:#aaa}
+ .result-label{color:#aaa}.result-url{background:rgba(0,0,0,.3);color:#64b5f6;border-color:rgba(255,255,255,.1)}
+ .secondary-btn{background:#3a414a!important;color:#fff!important;border-color:#69717c!important}
 }
 `;}
+
+
 
 function renderAdminPage(url, env, subs, tokens, settings, status) {
     const origin = url.origin;
@@ -2130,35 +2099,37 @@ function renderAdminPage(url, env, subs, tokens, settings, status) {
     const esc = x => escapeHTML(String(x ?? ''));
 
     const providerRows = (arr, type, emptyText) => arr.length ? arr.map(x => `
-        <div class="provider-row">
-            <div class="provider-main">
-                <div class="provider-name">${esc(x.name)}</div>
-                <div class="provider-url">${esc(x.url)}</div>
-                <div class="provider-meta">
-                    <span class="status-pill ${x.enabled !== false ? 'on' : 'off'}">${x.enabled !== false ? '启用' : '禁用'}</span>
-                    ${type === 'shortlink' && x.providerType ? `<span class="status-pill off">${esc(x.providerType)}</span>` : ''}
-                </div>
-            </div>
-            <div class="provider-actions">
-                <button type="button" class="btn secondary" onclick="editItem('${type}','${esc(x.id)}')">编辑</button>
-                <button type="button" class="btn danger" onclick="deleteItem('${type}','${esc(x.id)}')">删除</button>
+<div class="link-item provider-item">
+    <div class="sub-head">
+        <div>
+            <div class="link-label">${esc(x.name)}</div>
+            <div class="section-note" style="margin-bottom:0;">${esc(x.url)}</div>
+            <div class="chips">
+                <span class="chip ${x.enabled !== false ? 'chip-on' : 'chip-off'}">${x.enabled !== false ? '启用' : '禁用'}</span>
+                ${type === 'shortlink' && x.providerType ? `<span class="chip">${esc(x.providerType)}</span>` : ''}
             </div>
         </div>
-    `).join('') : `<div class="provider-empty">${emptyText}</div>`;
+        <div class="actions" style="margin-top:0;">
+            <button type="button" class="secondary" onclick="editItem('${type}','${esc(x.id)}')">编辑</button>
+            <button type="button" class="danger" onclick="deleteItem('${type}','${esc(x.id)}')">删除</button>
+        </div>
+    </div>
+</div>`).join('') : `<div class="empty">${emptyText}</div>`;
 
     const subRows = subs.length ? subs.map(s => `
-        <div class="sub-row">
-            <div class="sub-main">
-                <div class="sub-name">${esc(s.name)}</div>
-                <div class="sub-info">${(s.sources || []).length} 个来源 · ${s.enabled === false ? '已禁用' : '已启用'}</div>
-                <div class="sub-sources">${esc((s.sources || []).join('\n'))}</div>
-            </div>
-            <div class="provider-actions">
-                <button type="button" class="btn secondary" onclick="editSub('${esc(s.id)}')">编辑</button>
-                <button type="button" class="btn danger" onclick="deleteSub('${esc(s.id)}')">删除</button>
-            </div>
+<div class="sub-row">
+    <div class="sub-head">
+        <div style="min-width:0;">
+            <div class="sub-name">${esc(s.name)}</div>
+            <div class="sub-count">${(s.sources || []).length} 个来源 · ${s.enabled === false ? '已禁用' : '已启用'}</div>
         </div>
-    `).join('') : `<div class="provider-empty">暂无 SUB。</div>`;
+        <div class="actions" style="margin-top:0;">
+            <button type="button" class="secondary" onclick="editSub('${esc(s.id)}')">编辑</button>
+            <button type="button" class="danger" onclick="deleteSub('${esc(s.id)}')">删除</button>
+        </div>
+    </div>
+    <div class="source-box">${esc((s.sources || []).join('\n'))}</div>
+</div>`).join('') : `<div class="empty">暂无 SUB。</div>`;
 
     const tokenRows = tokens.length ? tokens.map(t => {
         const tokenUrl = `${origin}/${encodeURIComponent(t.url)}`;
@@ -2166,143 +2137,228 @@ function renderAdminPage(url, env, subs, tokens, settings, status) {
             const s = subs.find(x => x.id === id);
             return s ? s.name : '已删除';
         });
-
         return `
-            <div class="sub-row">
-                <div class="sub-main">
-                    <div class="sub-name">${esc(t.name)}</div>
-                    <div class="sub-info">URL：${esc(t.url)}</div>
-                    <div class="url-value"><a href="${esc(tokenUrl)}" target="_blank">${esc(tokenUrl)}</a></div>
-                    <div class="chips">
-                        ${subNames.length ? subNames.map(x => `<span class="chip">${esc(x)}</span>`).join('') : '<span class="muted">未绑定聚合节点</span>'}
-                    </div>
-                </div>
-                <div class="provider-actions">
-                    <button type="button" class="btn secondary" onclick="copyValue('${esc(tokenUrl)}')">复制</button>
-                    <button type="button" class="btn secondary" onclick="editUrl('${esc(t.url)}')">编辑</button>
-                    <button type="button" class="btn danger" onclick="deleteUrl('${esc(t.url)}')">删除</button>
-                </div>
-            </div>
-        `;
-    }).join('') : `<div class="provider-empty">暂无订阅链接。</div>`;
+<div class="sub-row">
+    <div class="sub-head">
+        <div style="min-width:0;">
+            <div class="sub-name">${esc(t.name)}</div>
+            <div class="sub-count">URL：${esc(t.url)}</div>
+        </div>
+        <div class="actions" style="margin-top:0;">
+            <button type="button" class="secondary" onclick="copyValue('${esc(tokenUrl)}')">复制</button>
+            <button type="button" class="secondary" onclick="editUrl('${esc(t.url)}')">编辑</button>
+            <button type="button" class="danger" onclick="deleteUrl('${esc(t.url)}')">删除</button>
+        </div>
+    </div>
+    <a class="link-url token-url" href="${esc(tokenUrl)}" target="_blank">${esc(tokenUrl)}</a>
+    <div style="margin-top:8px;">${subNames.length ? subNames.map(x => `<span class="chip">${esc(x)}</span>`).join('') : '<span class="small-note">未绑定 SUB</span>'}</div>
+</div>`;
+    }).join('') : `<div class="empty">暂无订阅链接。</div>`;
 
     return `<!doctype html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${esc(settings.subName || 'CF-SUBS')} 管理后台</title>
-<style>${getSubUIStyles()}</style>
+<title>${esc(settings.subName || 'CF-SUBS')}管理面板</title>
+<style>
+${getToolStyles()}
+.sub-grid{display:grid;gap:10px}
+.sub-row{border:1px solid rgba(229,229,223,.6);border-radius:12px;padding:12px;background:rgba(255,255,255,.5)}
+.sub-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap}
+.sub-name{font-weight:700;font-size:15px}
+.sub-count{color:#888;font-size:12px;margin-top:3px}
+.source-box{margin-top:9px;padding:9px;border-radius:9px;background:rgba(250,250,250,.75);font-size:12px;word-break:break-all;white-space:pre-wrap;max-height:120px;overflow:auto}
+.token-url{color:#1f4b99;word-break:break-all}
+.chip{display:inline-block;padding:3px 8px;margin:2px 3px 2px 0;border-radius:8px;background:rgba(31,75,153,.08);color:#1f4b99;font-size:12px}
+.chip-on{background:rgba(76,175,80,.1);color:#2e7d32}
+.chip-off{background:rgba(120,120,120,.1);color:#777}
+.provider-item{padding:12px}
+.small-note,.empty{font-size:12px;color:#888}
+@media(prefers-color-scheme:dark){
+ .sub-row{background:rgba(40,40,40,.5);border-color:rgba(255,255,255,.1)}
+ .source-box{background:rgba(0,0,0,.3);border-color:rgba(255,255,255,.1)}
+ .token-url{color:#64b5f6}.chip{background:rgba(100,181,246,.1);color:#90caf9}
+ .chip-on{background:rgba(129,199,132,.1);color:#81c784}.chip-off{background:rgba(255,255,255,.08);color:#aaa}
+ .small-note,.empty{color:#aaa}
+}
+</style>
 </head>
 <body>
-<main class="wrap">
-    <header class="page-header">
-        <div>
-            <h1>管理后台</h1>
-            <p>配置 SUBAPI、SUBCONFIG、短链服务，以及原有 SUB / 订阅链接。</p>
-        </div>
-        <div class="admin-actions">
-            <a class="btn secondary" href="/">返回首页</a>
-            <a class="btn danger" href="/${esc(settings.adminPath || 'admin')}/logout">退出</a>
-        </div>
-    </header>
+<div id="copyNotice" class="toast"></div>
+<main class="page">
+<header class="header">
+    <h1 class="title">管理后台</h1>
+    <div class="subtitle">配置 SUBAPI、SUBCONFIG、短链服务，以及原有 SUB / 订阅链接。</div>
+    <div class="actions" style="margin-top:0;">
+        <a class="button secondary" href="/">返回首页</a>
+        <a class="button danger" href="/${esc(settings.adminPath || 'admin')}/logout">退出</a>
+    </div>
+</header>
 
-    <section class="card">
-        <div class="card-head">
-            <div class="card-title"><h2>SUBAPI</h2><p>可用的订阅转换后端，首页可选择多个后端。</p></div>
-            <div class="card-action"><button type="button" class="btn" onclick="addItem('subapi')">＋ 添加 SUBAPI</button></div>
-        </div>
-        <div class="provider-list">${providerRows(apis, 'subapi', '暂无 SUBAPI，请先添加一个。')}</div>
-    </section>
+<section class="panel">
+<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;">
+    <div>
+        <h2 class="section-title">订阅转换后端 SUBAPI</h2>
+        <div class="section-note">可用的订阅转换后端，首页可选择多个后端。</div>
+    </div>
+    <button type="button" onclick="addItem('subapi')">＋ 添加 SUBAPI</button>
+</div>
+<div class="sub-grid" style="margin-top:12px;">${providerRows(apis,'subapi','暂无 SUBAPI，请先添加一个。')}</div>
+</section>
 
-    <section class="card">
-        <div class="card-head">
-            <div class="card-title"><h2>SUBCONFIG</h2><p>可用的订阅转换规则，首页可选择多个配置。</p></div>
-            <div class="card-action"><button type="button" class="btn" onclick="addItem('subconfig')">＋ 添加 SUBCONFIG</button></div>
-        </div>
-        <div class="provider-list">${providerRows(configs, 'subconfig', '暂无 SUBCONFIG，请先添加一个。')}</div>
-    </section>
+<section class="panel">
+<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;">
+    <div>
+        <h2 class="section-title">订阅转换规则 SUBCONFIG</h2>
+        <div class="section-note">可用的订阅转换规则，首页可选择多个配置。</div>
+    </div>
+    <button type="button" onclick="addItem('subconfig')">＋ 添加 SUBCONFIG</button>
+</div>
+<div class="sub-grid" style="margin-top:12px;">${providerRows(configs,'subconfig','暂无 SUBCONFIG，请先添加一个。')}</div>
+</section>
 
-    <section class="card">
-        <div class="card-head">
-            <div class="card-title"><h2>短链服务</h2><p>配置生成订阅链接后使用的短链服务。</p></div>
-            <div class="card-action"><button type="button" class="btn" onclick="addItem('shortlink')">＋ 添加短链</button></div>
-        </div>
-        <div class="provider-list">${providerRows(shorts, 'shortlink', '暂无短链服务，请先添加一个。')}</div>
-    </section>
+<section class="panel">
+<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;">
+    <div>
+        <h2 class="section-title">短链服务</h2>
+        <div class="section-note">配置生成订阅链接后使用的短链服务。</div>
+    </div>
+    <button type="button" onclick="addItem('shortlink')">＋ 添加短链</button>
+</div>
+<div class="sub-grid" style="margin-top:12px;">${providerRows(shorts,'shortlink','暂无短链服务，请先添加一个。')}</div>
+</section>
 
-    <section class="card">
-        <div class="card-head">
-            <div class="card-title"><h2>聚合节点 SUB</h2><p>原有 SUB 聚合节点管理，数据与订阅链接保持兼容。</p></div>
-            <div class="card-action"><button type="button" class="btn" onclick="addSub()">＋ 添加 SUB</button></div>
-        </div>
-        <div class="sub-list">${subRows}</div>
-    </section>
+<section class="panel">
+<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;">
+    <div>
+        <h2 class="section-title">聚合节点 (SUB)</h2>
+        <div class="section-note">SUB 是聚合节点配置，不是订阅链接。默认为空，可创建多个。</div>
+    </div>
+    <button type="button" onclick="addSub()">＋ 创建聚合节点</button>
+</div>
+<div class="sub-grid" style="margin-top:12px;">${subRows}</div>
+</section>
 
-    <section class="card">
-        <div class="card-head">
-            <div class="card-title"><h2>已有订阅链接</h2><p>已经创建的公开订阅入口。</p></div>
-        </div>
-        <div class="sub-list">${tokenRows}</div>
-    </section>
+<section class="panel">
+<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;">
+    <div>
+        <h2 class="section-title">订阅链接 (URL)</h2>
+        <div class="section-note">创建链接才会生成公开订阅入口。URL 可以绑定一个或多个 SUB。</div>
+    </div>
+    <button type="button" onclick="addUrl()">＋ 创建订阅链接</button>
+</div>
+<div class="sub-grid" style="margin-top:12px;">${tokenRows}</div>
+</section>
 
-    <section class="card">
-        <div class="card-head">
-            <div class="card-title"><h2>基础设置</h2><p>修改项目名称与管理员路径。</p></div>
-        </div>
-        <div class="form-grid">
-            <div class="form-field"><label for="subName">SUBNAME</label><input id="subName" value="${esc(settings.subName)}" placeholder="例如：CF-SUBS"></div>
-            <div class="form-field"><label for="adminPath">管理员路径</label><input id="adminPath" value="${esc(settings.adminPath || 'admin')}" placeholder="例如：admin"></div>
-        </div>
-        <div class="actions"><button type="button" class="btn" onclick="saveBase()">保存基础设置</button></div>
-    </section>
+<section class="panel">
+<h2 class="section-title">基础设置</h2>
+<div class="field">
+<label>SUBNAME</label>
+<input id="subName" value="${esc(settings.subName)}" placeholder="例如：CF-SUBS">
+</div>
+<div class="field">
+<label>管理员路径</label>
+<input id="adminPath" value="${esc(settings.adminPath || 'admin')}" placeholder="例如：admin">
+</div>
+<div class="actions" style="justify-content:flex-end;">
+<button type="button" onclick="saveBase()">保存基础设置</button>
+</div>
+</section>
 </main>
 
 <script>
-const DATA = ${JSON.stringify({apis, configs, shorts})};
+const DATA = ${JSON.stringify({apis, configs, shorts, subs, tokens})};
 
-async function post(o){
-    const r = await fetch(location.pathname,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(o)});
-    const t = await r.text();
-    if(!r.ok) throw new Error(t);
-    return JSON.parse(t);
+function showToast(message){
+    const el=document.getElementById('copyNotice');
+    el.textContent=message; el.style.display='block';
+    clearTimeout(window.__toast); window.__toast=setTimeout(()=>el.style.display='none',1500);
 }
+async function post(o){
+    const r=await fetch(location.pathname,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(o)});
+    const t=await r.text();
+    if(!r.ok) throw new Error(t);
+    return t ? JSON.parse(t) : {};
+}
+function copyValue(v){ navigator.clipboard.writeText(v).then(()=>showToast('已复制')).catch(()=>showToast('复制失败，请手动复制')); }
+
 async function addItem(type){
-    const name = prompt('备注'); if(!name) return;
-    const url = prompt('URL'); if(!url) return;
-    let o = {type:type+'_create',name,url,enabled:true};
-    if(type === 'shortlink') o.providerType = prompt('类型：json-root 或 v1mk','json-root') || 'json-root';
+    const name=prompt('备注'); if(name===null||!name.trim()) return;
+    const url=prompt('URL'); if(url===null||!url.trim()) return;
+    const enabled=confirm('是否启用？');
+    const o={type:type+'_create',name:name.trim(),url:url.trim(),enabled};
+    if(type==='shortlink') o.providerType=prompt('类型：json-root 或 v1mk','json-root')||'json-root';
     try{await post(o);location.reload();}catch(e){alert(e.message);}
 }
 async function editItem(type,id){
-    const key = type === 'subapi' ? 'apis' : type === 'subconfig' ? 'configs' : 'shorts';
-    const old = DATA[key].find(x => x.id === id);
-    const name = prompt('备注',old?.name || ''); if(name === null) return;
-    const url = prompt('URL',old?.url || ''); if(url === null) return;
-    let o = {type:type+'_update',id,name,url,enabled:confirm('启用该项目？')};
-    if(type === 'shortlink') o.providerType = prompt('类型：json-root 或 v1mk',old?.providerType || 'json-root') || 'json-root';
+    const key=type==='subapi'?'apis':type==='subconfig'?'configs':'shorts';
+    const old=DATA[key].find(x=>x.id===id); if(!old) return;
+    const name=prompt('备注',old.name||''); if(name===null) return;
+    const url=prompt('URL',old.url||''); if(url===null) return;
+    const enabled=confirm('确定启用此项目？');
+    const o={type:type+'_update',id,name:name.trim(),url:url.trim(),enabled};
+    if(type==='shortlink') o.providerType=prompt('类型：json-root 或 v1mk',old.providerType||'json-root')||'json-root';
     try{await post(o);location.reload();}catch(e){alert(e.message);}
 }
 async function deleteItem(type,id){
-    if(!confirm('确定删除？')) return;
+    if(!confirm('确定删除这个项目？')) return;
     try{await post({type:type+'_delete',id});location.reload();}catch(e){alert(e.message);}
+}
+
+function subById(id){return DATA.subs.find(x=>x.id===id);}
+async function addSub(){
+    const name=prompt('聚合节点名称'); if(name===null||!name.trim()) return;
+    const sources=prompt('订阅地址 / 自建节点（每行一个）'); if(sources===null||!sources.trim()) return;
+    const enabled=confirm('是否启用此聚合节点？');
+    try{await post({type:'sub_create',name:name.trim(),sources,enabled});location.reload();}catch(e){alert(e.message);}
+}
+async function editSub(id){
+    const old=subById(id); if(!old) return;
+    const name=prompt('聚合节点名称',old.name||''); if(name===null) return;
+    const sources=prompt('订阅地址 / 自建节点（每行一个）',(old.sources||[]).join('\n')); if(sources===null) return;
+    const enabled=confirm('确定启用此聚合节点？');
+    try{await post({type:'sub_update',id,name:name.trim(),sources,enabled});location.reload();}catch(e){alert(e.message);}
+}
+async function deleteSub(id){
+    if(!confirm('确定删除这个聚合节点？')) return;
+    try{await post({type:'sub_delete',id});location.reload();}catch(e){alert(e.message);}
+}
+
+async function addUrl(){
+    const name=prompt('订阅链接名称'); if(name===null||!name.trim()) return;
+    const token=prompt('自定义 URL（留空自动生成）',''); 
+    const selected=DATA.subs.filter(x=>x.enabled!==false);
+    if(!selected.length) return alert('请先创建并启用至少一个 SUB。');
+    const subs=selected.map(x=>x.id);
+    const mode=token&&token.trim()?'custom':'random';
+    const url=token&&token.trim()?token.trim():'';
+    try{await post({type:'url_create',name:name.trim(),mode,url,subs});location.reload();}catch(e){alert(e.message);}
+}
+async function editUrl(token){
+    const old=DATA.tokens.find(x=>x.url===token); if(!old) return;
+    const name=prompt('订阅链接名称',old.name||''); if(name===null) return;
+    const newToken=prompt('URL',old.url||''); if(newToken===null) return;
+    const selected=DATA.subs.filter(x=>x.enabled!==false);
+    if(!selected.length) return alert('请先创建并启用至少一个 SUB。');
+    try{await post({type:'url_update',oldUrl:old.url,newUrl:newToken.trim(),name:name.trim(),subs:selected.map(x=>x.id)});location.reload();}catch(e){alert(e.message);}
+}
+async function deleteUrl(token){
+    if(!confirm('确定删除这个订阅链接？')) return;
+    try{await post({type:'url_delete',url:token});location.reload();}catch(e){alert(e.message);}
 }
 async function saveBase(){
     try{
         await post({type:'config',settings:{
-            subName:document.getElementById('subName').value,
-            adminPath:document.getElementById('adminPath').value,
+            subName:document.getElementById('subName').value.trim(),
+            adminPath:document.getElementById('adminPath').value.trim(),
             subApis:DATA.apis,subConfigs:DATA.configs,shortLinks:DATA.shorts
         }});
         location.reload();
     }catch(e){alert(e.message);}
 }
-async function addSub(){
-    const name = prompt('SUB 名称'); if(!name) return;
-    const sources = prompt('来源地址，每行一个'); if(!sources) return;
-    try{await post({type:'sub_create',name,sources,enabled:true});location.reload();}catch(e){alert(e.message);}
-}
 </script>
 </body>
 </html>`;
 }
+
