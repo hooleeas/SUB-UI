@@ -173,7 +173,7 @@ async function handleRequest(request, env) {
         if (url.pathname === '/api/status' && request.method === 'GET') {
             const api = String(url.searchParams.get('api') || '').trim();
             const config = String(url.searchParams.get('config') || '').trim();
-            if (!api || !config) return jsonResponse({ ok:false, error:'缺少 SUBAPI 或 SUBCONFIG' }, 400);
+            if (!api && !config) return jsonResponse({ ok:false, error:'缺少 SUBAPI 或 SUBCONFIG' }, 400);
             return jsonResponse({ ok:true, ...(await probeBackend(api, config)) });
         }
         if (url.pathname === '/api/generate' && request.method === 'POST') {
@@ -315,7 +315,7 @@ async function probeBackend(apiUrl, configUrl) {
     return {
         api:{ok:apiOk,url:api,version:apiVersion},
         config:{ok:configOk,url:config},
-        available:apiOk&&configOk
+        available:(api ? apiOk : true) && (config ? configOk : true)
     };
 }
 /* =========================================================
@@ -1729,12 +1729,14 @@ function selected(kind){
 function renderCurrent(kind){
  const api=kind==='api',s=selected(kind);
  const box=$(api?'apiCurrent':'configCurrent');
- box.value=s.custom?s.customUrl:(s.item?.url||'');
+ const value=s.custom?s.customUrl:(s.all[0]||'');
+ box.value=value;
  if(!api){
    box.style.height='auto';
    box.style.height=Math.max(54,Math.min(260,box.scrollHeight))+'px';
  }
- $(api?'editApiCustom':'editConfigCustom').style.display=s.custom?'inline-flex':'none';
+ const edit=$(api?'editApiCustom':'editConfigCustom');
+ if(edit)edit.style.display=s.custom?'inline-flex':'none';
 }
 function savePrefs(){
  const a=selected('api'),c=selected('config');
@@ -1744,63 +1746,66 @@ function savePrefs(){
 }
 function escText(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
 function setStatus(id,html){$(id).innerHTML=html}
-async function checkAvailability(){
- renderCurrent('api');renderCurrent('config');
- const a=selected('api'),c=selected('config');
+async function checkOneStatus(kind){
+ const api=kind==='api',s=selected(kind);
+ const statusId=api?'apiStatus':'configStatus';
+ const value=s.all[0]||'';
 
- if(!a.all.length){
-   setStatus('apiStatus','<div class="status-item wait">⏳ 未配置订阅转换后端</div>');
- }else{
-   setStatus('apiStatus','<div class="status-item wait">⏳ 状态检测中</div>');
- }
- if(!c.all.length){
-   setStatus('configStatus','<div class="status-item wait">⏳ 未配置订阅转换规则</div>');
- }else{
-   setStatus('configStatus','<div class="status-item wait">⏳ 状态检测中</div>');
- }
- if(!a.all.length||!c.all.length)return;
+ renderCurrent(kind);
 
- const api=a.all[0],config=c.all[0];
+ if(!value){
+   setStatus(statusId,'<div class="status-item wait">⏳ 未配置'+(api?'订阅转换后端':'订阅转换规则')+'</div>');
+   return;
+ }
+
+ setStatus(statusId,'<div class="status-item wait">⏳ 状态检测中</div>');
+
  try{
+   const qs=api
+     ? 'api='+encodeURIComponent(value)
+     : 'config='+encodeURIComponent(value);
    const controller=new AbortController();
    const timer=setTimeout(()=>controller.abort(),7000);
    let r;
    try{
-     r=await fetch('/api/status?api='+encodeURIComponent(api)+'&config='+encodeURIComponent(config),{
-       cache:'no-store',
-       signal:controller.signal
-     });
+     r=await fetch('/api/status?'+qs,{cache:'no-store',signal:controller.signal});
    }finally{
      clearTimeout(timer);
    }
 
    let d={};
    try{d=await r.json()}catch(e){d={ok:false}}
-   const apiOk=Boolean(r.ok&&d.api?.ok);
-   const configOk=Boolean(r.ok&&d.config?.ok);
-   const version=d.api?.version||'';
+   const result=api?d.api:d.config;
+   const ok=Boolean(r.ok&&result?.ok);
+   const version=api?(result?.version||''):'';
 
-   setStatus('apiStatus',
-     '<div class="status-item '+(apiOk?'ok':'bad')+'">'+
-     (apiOk?'✅ ':'❌ ')+escText(api)+(version?' ('+escText(version)+')':'')+
-     '</div>'
-   );
-   setStatus('configStatus',
-     '<div class="status-item '+(configOk?'ok':'bad')+'">'+
-     (configOk?'✅ ':'❌ ')+escText(config)+
+   setStatus(
+     statusId,
+     '<div class="status-item '+(ok?'ok':'bad')+'">'+
+     (ok?'✅ ':'❌ ')+escText(value)+(version?' ('+escText(version)+')':'')+
      '</div>'
    );
  }catch(e){
    const msg=e?.name==='AbortError'?'检测超时':'检测失败';
-   setStatus('apiStatus','<div class="status-item bad">❌ '+escText(msg)+' · '+escText(api)+'</div>');
-   setStatus('configStatus','<div class="status-item bad">❌ '+escText(msg)+' · '+escText(config)+'</div>');
+   setStatus(statusId,'<div class="status-item bad">❌ '+escText(msg)+' · '+escText(value)+'</div>');
  }
+}
+
+function checkAvailability(){
+ checkOneStatus('api');
+ checkOneStatus('config');
 }
 function choiceChanged(kind){
  const api=kind==='api',s=selected(kind);
  if(s.custom){
-   if(api){state.apiCustom=true;state.apiId=''}
-   else{state.configCustom=true;state.configId=''}
+   if(api){
+     if(!state.apiCustom)state.prevApiId=state.apiId;
+     state.apiCustom=true;state.apiId='';
+   }else{
+     if(!state.configCustom)state.prevConfigId=state.configId;
+     state.configCustom=true;state.configId='';
+   }
+   renderCurrent(kind);
    savePrefs();
    openCustomModal(kind);
    return;
@@ -1824,11 +1829,24 @@ function closeCustomModal(kind){
  overlay.style.display='none';
  const picker=$(api?'apiPicker':'configPicker');
  if(api){
-   picker.value=state.apiCustom?(state.apiUrl?'__custom':state.apiId):state.apiId;
+   if(!state.apiUrl){
+     state.apiCustom=false;
+     state.apiId=state.prevApiId||API_LIST[0]?.id||'';
+     picker.value=state.apiId;
+   }else{
+     picker.value='__custom';
+   }
  }else{
-   picker.value=state.configCustom?(state.configUrl?'__custom':state.configId):state.configId;
+   if(!state.configUrl){
+     state.configCustom=false;
+     state.configId=state.prevConfigId||CONFIG_LIST[0]?.id||'';
+     picker.value=state.configId;
+   }else{
+     picker.value='__custom';
+   }
  }
  renderCurrent(kind);
+ savePrefs();
  checkAvailability();
 }
 function saveCustom(kind){
