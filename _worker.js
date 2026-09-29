@@ -1669,8 +1669,8 @@ ${getSubUIStyles()}
 <section class="panel">
 <h2 class="section-title">订阅转换后端(SUBAPI)</h2>
 <div class="section-note">点击选择订阅转换后端。</div>
-<select class="native-picker" id="apiPicker" aria-label="选择订阅转换后端">
-${apis.map(x=>`<option value="${esc(x.id)}" data-url="${esc(x.url)}" ${!apiCustom&&apiId===x.id?'selected':''}>${esc(x.name)}</option>`).join('')}
+<select class="native-picker" id="apiPicker" aria-label="选择订阅转换后端" onchange="publicPickerChanged('api',this)">
+${apis.map(x=>`<option value="${esc(x.url)}" data-id="${esc(x.id)}" ${!apiCustom&&apiId===x.id?'selected':''}>${esc(x.name)}</option>`).join('')}
 <option value="__custom" ${apiCustom?'selected':''}>自定义</option>
 </select>
 <div class="current-box"><div class="current-title">当前配置</div><div class="current-row">
@@ -1683,8 +1683,8 @@ ${apis.map(x=>`<option value="${esc(x.id)}" data-url="${esc(x.url)}" ${!apiCusto
 <section class="panel">
 <h2 class="section-title">订阅转换规则(SUBCONFIG)</h2>
 <div class="section-note">点击选择订阅转换规则。</div>
-<select class="native-picker" id="configPicker" aria-label="选择订阅转换规则">
-${configs.map(x=>`<option value="${esc(x.id)}" data-url="${esc(x.url)}" ${!configCustom&&configId===x.id?'selected':''}>${esc(x.name)}</option>`).join('')}
+<select class="native-picker" id="configPicker" aria-label="选择订阅转换规则" onchange="publicPickerChanged('config',this)">
+${configs.map(x=>`<option value="${esc(x.url)}" data-id="${esc(x.id)}" ${!configCustom&&configId===x.id?'selected':''}>${esc(x.name)}</option>`).join('')}
 <option value="__custom" ${configCustom?'selected':''}>自定义</option>
 </select>
 <div class="current-box"><div class="current-title">当前配置</div><div class="current-row">
@@ -1716,15 +1716,15 @@ const state={apiId:${json(apiId)},configId:${json(configId)},apiCustom:${apiCust
 function selected(kind){
  const api=kind==='api';
  const picker=$(api?'apiPicker':'configPicker');
- const option=picker?.selectedOptions?.[0];
- const value=picker?.value||'';
+ const option=picker&&picker.options.length?picker.options[picker.selectedIndex]:null;
+ const value=option?String(option.value||''):'';
  const custom=value==='__custom';
+ const id=custom?'':String(option?.dataset?.id||'');
  const list=api?API_LIST:CONFIG_LIST;
- const id=custom?'':value;
- const item=list.find(x=>x.id===id)||null;
- const customUrl=api?state.apiUrl:state.configUrl;
- const optionUrl=option?.dataset?.url||item?.url||'';
- return {id,custom,item,customUrl,all:custom?(customUrl?[customUrl]:[]):(optionUrl?[optionUrl]:[])};
+ const item=id?(list.find(x=>String(x.id)===id)||null):null;
+ const customUrl=api?String(state.apiUrl||''):String(state.configUrl||'');
+ const url=custom?customUrl:value;
+ return {id,custom,item,customUrl,all:url?[url]:[],url};
 }
 function renderCurrent(kind){
  const api=kind==='api',s=selected(kind);
@@ -1736,7 +1736,10 @@ function renderCurrent(kind){
    box.style.height=Math.max(54,Math.min(260,box.scrollHeight))+'px';
  }
  const edit=$(api?'editApiCustom':'editConfigCustom');
- if(edit)edit.style.display=s.custom?'inline-flex':'none';
+ if(edit){
+   edit.hidden=!s.custom;
+   edit.style.display=s.custom?'inline-flex':'none';
+ }
 }
 function savePrefs(){
  const a=selected('api'),c=selected('config');
@@ -1749,7 +1752,7 @@ function setStatus(id,html){$(id).innerHTML=html}
 async function checkOneStatus(kind){
  const api=kind==='api',s=selected(kind);
  const statusId=api?'apiStatus':'configStatus';
- const value=s.all[0]||'';
+ const value=s.url||'';
 
  renderCurrent(kind);
 
@@ -1760,61 +1763,87 @@ async function checkOneStatus(kind){
 
  setStatus(statusId,'<div class="status-item wait">⏳ 状态检测中</div>');
 
+ const query=api
+   ? '/api/status?api='+encodeURIComponent(value)
+   : '/api/status?config='+encodeURIComponent(value);
+
  try{
-   const qs=api
-     ? 'api='+encodeURIComponent(value)
-     : 'config='+encodeURIComponent(value);
-   const controller=new AbortController();
-   const timer=setTimeout(()=>controller.abort(),7000);
-   let r;
-   try{
-     r=await fetch('/api/status?'+qs,{cache:'no-store',signal:controller.signal});
-   }finally{
-     clearTimeout(timer);
+   const timeout=new Promise(resolve=>setTimeout(()=>resolve({timeout:true}),6000));
+   const request=fetch(query,{method:'GET',cache:'no-store',headers:{'Accept':'application/json'}})
+     .then(async r=>{
+       let d={};
+       try{d=await r.json()}catch(e){}
+       return {response:r,data:d};
+     })
+     .catch(error=>({error}));
+
+   const result=await Promise.race([request,timeout]);
+
+   if(result.timeout){
+     setStatus(statusId,'<div class="status-item bad">❌ 检测超时 · '+escText(value)+'</div>');
+     return;
    }
 
-   let d={};
-   try{d=await r.json()}catch(e){d={ok:false}}
-   const result=api?d.api:d.config;
-   const ok=Boolean(r.ok&&result?.ok);
-   const version=api?(result?.version||''):'';
+   if(result.error){
+     setStatus(statusId,'<div class="status-item bad">❌ 检测失败 · '+escText(value)+'</div>');
+     return;
+   }
+
+   const r=result.response,d=result.data||{};
+   const info=api?d.api:d.config;
+   const ok=Boolean(r?.ok&&r.status>=200&&r.status<300&&info?.ok);
+   const version=api?(info?.version||''):'';
 
    setStatus(
      statusId,
      '<div class="status-item '+(ok?'ok':'bad')+'">'+
-     (ok?'✅ ':'❌ ')+escText(value)+(version?' ('+escText(version)+')':'')+
+     (ok?'✅ ':'❌ ')+(ok?'可用':'不可用')+' · '+escText(value)+
+     (version?' ('+escText(version)+')':'')+
      '</div>'
    );
  }catch(e){
-   const msg=e?.name==='AbortError'?'检测超时':'检测失败';
-   setStatus(statusId,'<div class="status-item bad">❌ '+escText(msg)+' · '+escText(value)+'</div>');
+   setStatus(statusId,'<div class="status-item bad">❌ 检测失败 · '+escText(value)+'</div>');
  }
 }
-
 function checkAvailability(){
  checkOneStatus('api');
  checkOneStatus('config');
 }
-function choiceChanged(kind){
- const api=kind==='api',s=selected(kind);
- if(s.custom){
+function publicPickerChanged(kind,picker){
+ const api=kind==='api';
+ const value=String(picker?.value||'');
+ const option=picker&&picker.options.length?picker.options[picker.selectedIndex]:null;
+ const id=String(option?.dataset?.id||'');
+ if(value==='__custom'){
    if(api){
      if(!state.apiCustom)state.prevApiId=state.apiId;
-     state.apiCustom=true;state.apiId='';
+     state.apiCustom=true;
+     state.apiId='';
    }else{
      if(!state.configCustom)state.prevConfigId=state.configId;
-     state.configCustom=true;state.configId='';
+     state.configCustom=true;
+     state.configId='';
    }
    renderCurrent(kind);
    savePrefs();
    openCustomModal(kind);
    return;
  }
- if(api){state.apiId=s.id;state.apiCustom=false}
- else{state.configId=s.id;state.configCustom=false}
+ if(api){
+   state.apiId=id;
+   state.apiCustom=false;
+ }else{
+   state.configId=id;
+   state.configCustom=false;
+ }
  renderCurrent(kind);
  savePrefs();
- checkAvailability();
+ checkOneStatus(kind);
+}
+
+function choiceChanged(kind){
+ const picker=$(kind==='api'?'apiPicker':'configPicker');
+ publicPickerChanged(kind,picker);
 }
 function openCustomModal(kind){
  const api=kind==='api';
@@ -1868,10 +1897,7 @@ function updatePickerLabel(kind){
  const api=kind==='api',picker=$(api?'apiPicker':'configPicker');
  if(!picker)return;
 }
-['change','input'].forEach(eventName=>{
-  $('#apiPicker').addEventListener(eventName,()=>choiceChanged('api'));
-  $('#configPicker').addEventListener(eventName,()=>choiceChanged('config'));
-});
+
 $('#editApiCustom').addEventListener('click',()=>openCustomModal('api'));
 $('#editConfigCustom').addEventListener('click',()=>openCustomModal('config'));
 $('#cancelApiCustom').addEventListener('click',()=>closeCustomModal('api'));
