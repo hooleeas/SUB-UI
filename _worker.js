@@ -267,35 +267,57 @@ async function handleRequest(request, env) {
  * 配置 / 后台状态
  * ======================================================= */
 
+async function fetchWithTimeout(resource, options = {}, timeoutMs = 3000) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+        return await fetch(resource, { ...options, signal: controller.signal });
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
 async function probeBackend(apiUrl, configUrl) {
     const rawApi = String(apiUrl || '').trim();
     const protocol = /^http:\/\//i.test(rawApi) ? 'http' : 'https';
     const host = rawApi.replace(/^https?:\/\//i,'').replace(/\/+$/,'');
     const api = host ? `${protocol}://${host}` : '';
     let apiOk = false, apiVersion = '';
+
     if (api) {
         try {
-            const controller = new AbortController();
-            const timeout = setTimeout(() => controller.abort(), 1800);
-            const res = await fetch(`${api}/version`, {signal:controller.signal,headers:{'User-Agent':'CF-SUBS/Status'}});
-            clearTimeout(timeout);
-            if (res.ok) { apiOk=true; apiVersion=(await res.text()).trim().slice(0,50); }
+            const res = await fetchWithTimeout(
+                `${api}/version`,
+                { headers:{'User-Agent':'CF-SUBS/Status'} },
+                3000
+            );
+            if (res.ok) {
+                apiOk = true;
+                apiVersion = (await res.text()).trim().slice(0, 80);
+            }
         } catch(e) {}
     }
-    let configOk=false;
-    const config=String(configUrl||'').trim();
+
+    let configOk = false;
+    const config = String(configUrl || '').trim();
+
     if (config) {
         try {
-            const controller=new AbortController();
-            const timeout=setTimeout(()=>controller.abort(),1800);
-            const res=await fetch(config,{signal:controller.signal,headers:{'User-Agent':'CF-SUBS/Status'}});
-            clearTimeout(timeout);
-            configOk=res.ok;
+            const res = await fetchWithTimeout(
+                config,
+                { headers:{'User-Agent':'CF-SUBS/Status'} },
+                3000
+            );
+            configOk = res.ok;
         } catch(e) {}
     }
-    return {api:{ok:apiOk,url:api,version:apiVersion},config:{ok:configOk,url:config},available:apiOk&&configOk};
-}
 
+    return {
+        api:{ok:apiOk,url:api,version:apiVersion},
+        config:{ok:configOk,url:config},
+        available:apiOk&&configOk
+    };
+}
 /* =========================================================
  * SUB / URL 数据
  * ======================================================= */
@@ -1648,7 +1670,7 @@ ${getSubUIStyles()}
 <h2 class="section-title">订阅转换后端(SUBAPI)</h2>
 <div class="section-note">点击选择订阅转换后端。</div>
 <select class="native-picker" id="apiPicker" aria-label="选择订阅转换后端">
-${apis.map(x=>`<option value="${esc(x.id)}" ${!apiCustom&&apiId===x.id?'selected':''}>${esc(x.name)}</option>`).join('')}
+${apis.map(x=>`<option value="${esc(x.id)}" data-url="${esc(x.url)}" ${!apiCustom&&apiId===x.id?'selected':''}>${esc(x.name)}</option>`).join('')}
 <option value="__custom" ${apiCustom?'selected':''}>自定义</option>
 </select>
 <div class="current-box"><div class="current-title">当前配置</div><div class="current-row">
@@ -1662,7 +1684,7 @@ ${apis.map(x=>`<option value="${esc(x.id)}" ${!apiCustom&&apiId===x.id?'selected
 <h2 class="section-title">订阅转换规则(SUBCONFIG)</h2>
 <div class="section-note">点击选择订阅转换规则。</div>
 <select class="native-picker" id="configPicker" aria-label="选择订阅转换规则">
-${configs.map(x=>`<option value="${esc(x.id)}" ${!configCustom&&configId===x.id?'selected':''}>${esc(x.name)}</option>`).join('')}
+${configs.map(x=>`<option value="${esc(x.id)}" data-url="${esc(x.url)}" ${!configCustom&&configId===x.id?'selected':''}>${esc(x.name)}</option>`).join('')}
 <option value="__custom" ${configCustom?'selected':''}>自定义</option>
 </select>
 <div class="current-box"><div class="current-title">当前配置</div><div class="current-row">
@@ -1694,13 +1716,15 @@ const state={apiId:${json(apiId)},configId:${json(configId)},apiCustom:${apiCust
 function selected(kind){
  const api=kind==='api';
  const picker=$(api?'apiPicker':'configPicker');
+ const option=picker?.selectedOptions?.[0];
  const value=picker?.value||'';
  const custom=value==='__custom';
  const list=api?API_LIST:CONFIG_LIST;
  const id=custom?'':value;
  const item=list.find(x=>x.id===id)||null;
  const customUrl=api?state.apiUrl:state.configUrl;
- return {id,custom,item,customUrl,all:custom?(customUrl?[customUrl]:[]):(item?[item.url]:[])};
+ const optionUrl=option?.dataset?.url||item?.url||'';
+ return {id,custom,item,customUrl,all:custom?(customUrl?[customUrl]:[]):(optionUrl?[optionUrl]:[])};
 }
 function renderCurrent(kind){
  const api=kind==='api',s=selected(kind);
@@ -1723,23 +1747,53 @@ function setStatus(id,html){$(id).innerHTML=html}
 async function checkAvailability(){
  renderCurrent('api');renderCurrent('config');
  const a=selected('api'),c=selected('config');
- if(!a.all.length)setStatus('apiStatus','<div class="status-item wait">⏳ 未配置订阅转换后端</div>');
- else setStatus('apiStatus','<div class="status-item wait">⏳ 状态检测中</div>');
- if(!c.all.length)setStatus('configStatus','<div class="status-item wait">⏳ 未配置订阅转换规则</div>');
- else setStatus('configStatus','<div class="status-item wait">⏳ 状态检测中</div>');
+
+ if(!a.all.length){
+   setStatus('apiStatus','<div class="status-item wait">⏳ 未配置订阅转换后端</div>');
+ }else{
+   setStatus('apiStatus','<div class="status-item wait">⏳ 状态检测中</div>');
+ }
+ if(!c.all.length){
+   setStatus('configStatus','<div class="status-item wait">⏳ 未配置订阅转换规则</div>');
+ }else{
+   setStatus('configStatus','<div class="status-item wait">⏳ 状态检测中</div>');
+ }
  if(!a.all.length||!c.all.length)return;
- setStatus('apiStatus','<div class="status-item wait">⏳ 状态检测中</div>');
- setStatus('configStatus','<div class="status-item wait">⏳ 状态检测中</div>');
+
  const api=a.all[0],config=c.all[0];
  try{
-   const r=await fetch('/api/status?api='+encodeURIComponent(api)+'&config='+encodeURIComponent(config),{cache:'no-store'});
-   const d=await r.json();
-   const apiOk=Boolean(r.ok&&d.api?.ok),configOk=Boolean(r.ok&&d.config?.ok),version=d.api?.version||'';
-   setStatus('apiStatus','<div class="status-item '+(apiOk?'ok':'bad')+'">'+(apiOk?'✅ ':'❌ ')+escText(api)+(version?' ('+escText(version)+')':'')+'</div>');
-   setStatus('configStatus','<div class="status-item '+(configOk?'ok':'bad')+'">'+(configOk?'✅ ':'❌ ')+escText(config)+'</div>');
+   const controller=new AbortController();
+   const timer=setTimeout(()=>controller.abort(),7000);
+   let r;
+   try{
+     r=await fetch('/api/status?api='+encodeURIComponent(api)+'&config='+encodeURIComponent(config),{
+       cache:'no-store',
+       signal:controller.signal
+     });
+   }finally{
+     clearTimeout(timer);
+   }
+
+   let d={};
+   try{d=await r.json()}catch(e){d={ok:false}}
+   const apiOk=Boolean(r.ok&&d.api?.ok);
+   const configOk=Boolean(r.ok&&d.config?.ok);
+   const version=d.api?.version||'';
+
+   setStatus('apiStatus',
+     '<div class="status-item '+(apiOk?'ok':'bad')+'">'+
+     (apiOk?'✅ ':'❌ ')+escText(api)+(version?' ('+escText(version)+')':'')+
+     '</div>'
+   );
+   setStatus('configStatus',
+     '<div class="status-item '+(configOk?'ok':'bad')+'">'+
+     (configOk?'✅ ':'❌ ')+escText(config)+
+     '</div>'
+   );
  }catch(e){
-   setStatus('apiStatus','<div class="status-item bad">❌ '+escText(api)+'</div>');
-   setStatus('configStatus','<div class="status-item bad">❌ '+escText(config)+'</div>');
+   const msg=e?.name==='AbortError'?'检测超时':'检测失败';
+   setStatus('apiStatus','<div class="status-item bad">❌ '+escText(msg)+' · '+escText(api)+'</div>');
+   setStatus('configStatus','<div class="status-item bad">❌ '+escText(msg)+' · '+escText(config)+'</div>');
  }
 }
 function choiceChanged(kind){
@@ -1796,8 +1850,10 @@ function updatePickerLabel(kind){
  const api=kind==='api',picker=$(api?'apiPicker':'configPicker');
  if(!picker)return;
 }
-$('#apiPicker').addEventListener('change',()=>choiceChanged('api'));
-$('#configPicker').addEventListener('change',()=>choiceChanged('config'));
+['change','input'].forEach(eventName=>{
+  $('#apiPicker').addEventListener(eventName,()=>choiceChanged('api'));
+  $('#configPicker').addEventListener(eventName,()=>choiceChanged('config'));
+});
 $('#editApiCustom').addEventListener('click',()=>openCustomModal('api'));
 $('#editConfigCustom').addEventListener('click',()=>openCustomModal('config'));
 $('#cancelApiCustom').addEventListener('click',()=>closeCustomModal('api'));
