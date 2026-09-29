@@ -1612,6 +1612,27 @@ ${getSubUIStyles()}
 .status-item.wait{background:rgba(255,152,0,.1);border:1px solid rgba(255,152,0,.2);color:#f57c00}
 .status-item.ok{background:rgba(76,175,80,.12);border:1px solid rgba(76,175,80,.25);color:#2e7d32}
 .status-item.bad{background:rgba(244,67,54,.1);border:1px solid rgba(244,67,54,.22);color:#c62828}
+ .native-picker{position:relative;margin-top:12px}
+.native-picker-trigger{width:100%;min-height:42px;padding:9px 12px;border:1px solid rgba(229,229,223,.8);border-radius:10px;background:rgba(250,250,250,.7);color:inherit;font:inherit;display:flex;align-items:center;justify-content:space-between;text-align:left;cursor:pointer}
+.native-picker-trigger:hover{border-color:#777}
+.native-picker-arrow{font-size:18px;line-height:1;opacity:.7;transition:transform .15s}
+.native-picker.open .native-picker-arrow{transform:rotate(180deg)}
+.native-picker-menu{display:none;margin-top:6px;padding:6px;border:1px solid rgba(229,229,223,.8);border-radius:10px;background:rgba(255,255,255,.98);box-shadow:0 8px 24px rgba(0,0,0,.12)}
+.native-picker.open .native-picker-menu{display:block}
+.native-option{display:grid;grid-template-columns:20px minmax(0,1fr);column-gap:9px;align-items:start;padding:9px 8px;border-radius:8px;cursor:pointer}
+.native-option:hover{background:rgba(127,127,127,.08)}
+.native-option input{width:16px;height:16px;margin:2px 0 0}
+.native-option span{font-weight:600;line-height:1.35}
+.native-option small{grid-column:2;margin-top:2px;color:#888;font-size:12px;line-height:1.4;word-break:break-all;overflow-wrap:anywhere}
+.current-row{display:flex;align-items:center;gap:8px}
+.current-api-input{min-width:0;flex:1;height:42px}
+.current-config-input{min-width:0;flex:1;min-height:54px;resize:none;line-height:1.5}
+@media(prefers-color-scheme:dark){
+ .native-picker-trigger{background:#111;color:#f1f1f1;border-color:rgba(255,255,255,.14)}
+ .native-picker-menu{background:#1b1b1b;border-color:rgba(255,255,255,.12);box-shadow:0 10px 28px rgba(0,0,0,.35)}
+ .native-option:hover{background:rgba(255,255,255,.07)}
+ .native-option small{color:#aaa}
+}
 .custom-modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.42);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);display:none;align-items:center;justify-content:center;z-index:1200;padding:20px}
 .custom-modal{width:min(480px,100%);background:rgba(255,255,255,.96);border:1px solid rgba(229,229,223,.9);border-radius:18px;padding:20px;box-shadow:0 18px 50px rgba(0,0,0,.22)}
 .custom-modal h3{margin:0;font-size:17px}.custom-modal p{margin:6px 0 14px;color:#888;font-size:12px}.custom-modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}
@@ -1637,14 +1658,20 @@ ${getSubUIStyles()}
 
 <section class="panel">
 <h2 class="section-title">订阅转换后端(SUBAPI)</h2>
-<div class="section-note">选择一个订阅转换后端。</div>
-<div class="choice-list">
-${apis.map(x=>`<label class="choice"><input type="radio" name="apiChoice" value="${esc(x.id)}" ${!apiCustom&&apiId===x.id?'checked':''}><span class="choice-name">${esc(x.name)}</span><span class="choice-url">${esc(x.url)}</span></label>`).join('')}
-<label class="choice ${apiCustom?'custom-selected':''}"><input type="radio" name="apiChoice" value="__custom" ${apiCustom?'checked':''}><span class="choice-name">自定义</span><span class="choice-url">使用你自己的订阅转换后端</span></label>
+<div class="section-note">点击选择订阅转换后端。</div>
+<div class="native-picker" id="apiPicker">
+    <button type="button" class="native-picker-trigger" id="apiPickerTrigger">
+        <span id="apiPickerLabel">请选择订阅转换后端</span>
+        <span class="native-picker-arrow">⌄</span>
+    </button>
+    <div class="native-picker-menu" id="apiPickerMenu">
+        ${apis.map(x=>`<label class="native-option"><input type="radio" name="apiChoice" value="${esc(x.id)}" ${!apiCustom&&apiId===x.id?'checked':''}><span>${esc(x.name)}</span><small>${esc(x.url)}</small></label>`).join('')}
+        <label class="native-option"><input type="radio" name="apiChoice" value="__custom" ${apiCustom?'checked':''}><span>自定义</span><small>使用你自己的订阅转换后端</small></label>
+    </div>
 </div>
 <div class="current-box">
 <div class="current-title">当前配置</div>
-<div class="current-row custom-panel">
+<div class="current-row">
 <input id="apiCurrent" class="current-api-input" readonly value="${esc(apiCurrentValue)}" placeholder="请选择订阅转换后端">
 <button type="button" class="button secondary edit-custom" id="editApiCustom">编辑</button>
 </div>
@@ -1657,14 +1684,20 @@ ${apis.map(x=>`<label class="choice"><input type="radio" name="apiChoice" value=
 
 <section class="panel">
 <h2 class="section-title">订阅转换规则(SUBCONFIG)</h2>
-<div class="section-note">选择一个订阅转换规则。</div>
-<div class="choice-list">
-${configs.map(x=>`<label class="choice"><input type="radio" name="configChoice" value="${esc(x.id)}" ${!configCustom&&configId===x.id?'checked':''}><span class="choice-name">${esc(x.name)}</span><span class="choice-url">${esc(x.url)}</span></label>`).join('')}
-<label class="choice ${configCustom?'custom-selected':''}"><input type="radio" name="configChoice" value="__custom" ${configCustom?'checked':''}><span class="choice-name">自定义</span><span class="choice-url">使用你自己的订阅转换规则</span></label>
+<div class="section-note">点击选择订阅转换规则。</div>
+<div class="native-picker" id="configPicker">
+    <button type="button" class="native-picker-trigger" id="configPickerTrigger">
+        <span id="configPickerLabel">请选择订阅转换规则</span>
+        <span class="native-picker-arrow">⌄</span>
+    </button>
+    <div class="native-picker-menu" id="configPickerMenu">
+        ${configs.map(x=>`<label class="native-option"><input type="radio" name="configChoice" value="${esc(x.id)}" ${!configCustom&&configId===x.id?'checked':''}><span>${esc(x.name)}</span><small>${esc(x.url)}</small></label>`).join('')}
+        <label class="native-option"><input type="radio" name="configChoice" value="__custom" ${configCustom?'checked':''}><span>自定义</span><small>使用你自己的订阅转换规则</small></label>
+    </div>
 </div>
 <div class="current-box">
 <div class="current-title">当前配置</div>
-<div class="current-row custom-panel">
+<div class="current-row">
 <textarea id="configCurrent" class="current-config-input" readonly placeholder="请选择订阅转换规则">${esc(configCurrentValue)}</textarea>
 <button type="button" class="button secondary edit-custom" id="editConfigCustom">编辑</button>
 </div>
@@ -1764,8 +1797,27 @@ function saveCustom(kind){
  if(api)state.apiUrl=value;else state.configUrl=value;
  closeCustomModal(kind);renderCurrent(kind);savePrefs();checkAvailability();
 }
-document.querySelectorAll('input[name="apiChoice"]').forEach(x=>x.addEventListener('change',()=>choiceChanged('api')));
-document.querySelectorAll('input[name="configChoice"]').forEach(x=>x.addEventListener('change',()=>choiceChanged('config')));
+function updatePickerLabel(kind){
+ const api=kind==='api', picker=$(api?'apiPicker':'configPicker'), label=$(api?'apiPickerLabel':'configPickerLabel');
+ const s=selected(kind);
+ label.textContent=s.custom?'自定义':(s.item?.name||'请选择'+(api?'订阅转换后端':'订阅转换规则'));
+ picker.classList.remove('open');
+}
+function bindPicker(kind){
+ const api=kind==='api',picker=$(api?'apiPicker':'configPicker'),trigger=$(api?'apiPickerTrigger':'configPickerTrigger');
+ trigger.addEventListener('click',e=>{
+   e.stopPropagation();
+   document.querySelectorAll('.native-picker.open').forEach(x=>{if(x!==picker)x.classList.remove('open')});
+   picker.classList.toggle('open');
+ });
+ picker.querySelectorAll('input[type="radio"]').forEach(x=>x.addEventListener('change',()=>{
+   choiceChanged(kind);
+   updatePickerLabel(kind);
+ }));
+}
+bindPicker('api');
+bindPicker('config');
+document.addEventListener('click',()=>document.querySelectorAll('.native-picker.open').forEach(x=>x.classList.remove('open')));
 $('#editApiCustom').addEventListener('click',()=>openCustomModal('api'));
 $('#editConfigCustom').addEventListener('click',()=>openCustomModal('config'));
 $('#cancelApiCustom').addEventListener('click',()=>closeCustomModal('api'));
@@ -1792,7 +1844,7 @@ $('#generate').addEventListener('click',async()=>{
    $('#direct').textContent=d.subscription_url;$('#openDirect').href=d.subscription_url;$('#result').hidden=false;$('#result').scrollIntoView({behavior:'smooth',block:'start'});
  }catch(e){alert(e.message||'生成失败')}finally{button.disabled=false;button.textContent='生成聚合订阅'}
 });
-renderCurrent('api');renderCurrent('config');checkAvailability();
+updatePickerLabel('api');updatePickerLabel('config');renderCurrent('api');renderCurrent('config');checkAvailability();
 </script>
 </body>
 </html>`;
