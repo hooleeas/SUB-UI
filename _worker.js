@@ -603,7 +603,10 @@ async function handleAdmin(request, env, runtime) {
 
             return new Response('不支持的数据类型', { status: 400 });
         } catch (e) {
-            return new Response(`服务器错误: ${e.message}`, { status: 500 });
+            return jsonResponse({
+                ok: false,
+                error: e?.message || String(e) || '服务器内部错误'
+            }, 500);
         }
     }
 
@@ -1197,6 +1200,17 @@ function getCookie(request, name) {
     return '';
 }
 
+function jsonResponse(data, status = 200, headers = {}) {
+    return new Response(JSON.stringify(data), {
+        status,
+        headers: {
+            'Content-Type': 'application/json; charset=utf-8',
+            'Cache-Control': 'no-store',
+            ...headers
+        }
+    });
+}
+
 function escapeHTML(text = '') {
     return String(text).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
 }
@@ -1622,8 +1636,166 @@ function openModal(id){const e=$(id);if(e)e.style.display='flex'}function closeM
 async function post(o){const r=await fetch(location.pathname,{method:'POST',headers:{'Content-Type':'application/json'},cache:'no-store',body:JSON.stringify(o)});const t=await r.text();let d={};try{d=t?JSON.parse(t):{}}catch(e){throw new Error(t||'服务器返回无效数据')}if(!r.ok||d.ok===false)throw new Error(d.error||t||'操作失败');return d}
 function showProvider(type,id){const list=type==='subapi'?DATA.apis:DATA.configs,old=id?list.find(x=>x.id===id):null,def=type==='subapi'?DATA.defaultApiId:DATA.defaultConfigId;modalState={type,id:id||''};$('modalTitle').textContent=(id?'编辑 ':'添加 ')+(type==='subapi'?'订阅转换后端':'订阅转换规则');$('modalName').value=old?.name||'';$('modalUrl').value=old?.url||'';$('modalEnabled').checked=old?.enabled!==false;$('modalDefault').checked=old?old.id===def:false;openModal('providerModal')}
 function hideProvider(){closeModal('providerModal');modalState=null}
-document.addEventListener('click',async e=>{const btn=e.target.closest('button,[data-action]');if(!btn)return;if(btn.id==='securityButton'){openModal('securityModal');return}if(btn.id==='pathButton'){openModal('pathModal');return}if(btn.dataset.close){closeModal(btn.dataset.close);return}if(btn.id==='modalCancel'){hideProvider();return}if(btn.dataset.action==='add'){showProvider(btn.dataset.type,'');return}if(btn.dataset.action==='edit'){showProvider(btn.dataset.type,btn.dataset.id);return}if(btn.dataset.action==='delete'){if(!confirm('确定删除这个项目？'))return;try{await post({type:btn.dataset.type+'_delete',id:btn.dataset.id});location.reload()}catch(err){alert(err.message)}return}if(btn.id==='modalSave'){if(!modalState)return;const name=$('modalName').value.trim(),url=$('modalUrl').value.trim();if(!name)return alert('请输入备注');if(!/^https?:\\/\\//i.test(url))return alert('URL 必须以 http:// 或 https:// 开头');try{await post({type:modalState.type+'_'+(modalState.id?'update':'create'),id:modalState.id,name,url,enabled:$('modalEnabled').checked,isDefault:$('modalDefault').checked});location.reload()}catch(err){alert(err.message)}return}if(btn.id==='saveSecurity'){const user=$('securityUser').value.trim(),pass=$('securityPass').value;if(!user)return alert('管理员账号不能为空');try{await post({type:'security',user,pass});alert('安全设置已保存');location.reload()}catch(err){alert(err.message)}return}if(btn.id==='savePath'){const path=$('pathValue').value.trim();if(!/^[A-Za-z0-9_-]{2,60}$/.test(path))return alert('管理员路径只能使用 2-60 个字母、数字、下划线或短横线');try{const d=await post({type:'admin_path',adminPath:path});location.href='/'+d.adminPath}catch(err){alert(err.message)}return}});
+document.addEventListener('click',async e=>{
+    const btn=e.target.closest('button,[data-action]');
+    if(!btn)return;
+
+    if(btn.id==='securityButton'){
+        openModal('securityModal');
+        return;
+    }
+
+    if(btn.id==='pathButton'){
+        openModal('pathModal');
+        return;
+    }
+
+    if(btn.dataset.close){
+        closeModal(btn.dataset.close);
+        return;
+    }
+
+    if(btn.id==='modalCancel'){
+        hideProvider();
+        return;
+    }
+
+    if(btn.dataset.action==='add'){
+        showProvider(btn.dataset.type,'');
+        return;
+    }
+
+    if(btn.dataset.action==='edit'){
+        showProvider(btn.dataset.type,btn.dataset.id);
+        return;
+    }
+
+    if(btn.dataset.action==='delete'){
+        if(!confirm('确定删除这个项目？'))return;
+        btn.disabled=true;
+        try{
+            await post({
+                type:btn.dataset.type+'_delete',
+                id:btn.dataset.id
+            });
+            showToast('已删除');
+            setTimeout(()=>location.reload(),500);
+        }catch(err){
+            btn.disabled=false;
+            alert(err.message);
+        }
+        return;
+    }
+
+    if(btn.id==='modalSave'){
+        if(!modalState)return;
+
+        const name=$('modalName').value.trim();
+        const url=$('modalUrl').value.trim();
+
+        if(!name){
+            alert('请输入备注');
+            return;
+        }
+
+        if(!/^https?:\/\//i.test(url)){
+            alert('URL 必须以 http:// 或 https:// 开头');
+            return;
+        }
+
+        const editing=!!modalState.id;
+        btn.disabled=true;
+        btn.textContent='保存中...';
+
+        try{
+            await post({
+                type:modalState.type+'_'+(editing?'update':'create'),
+                id:modalState.id,
+                name,
+                url,
+                enabled:$('modalEnabled').checked,
+                isDefault:$('modalDefault').checked
+            });
+
+            hideProvider();
+            showToast(editing?'已保存':'已添加');
+            setTimeout(()=>location.reload(),700);
+        }catch(err){
+            alert(err.message);
+        }finally{
+            btn.disabled=false;
+            btn.textContent='保存';
+        }
+        return;
+    }
+
+    if(btn.id==='saveSecurity'){
+        const user=$('securityUser').value.trim();
+        const pass=$('securityPass').value;
+
+        if(!user){
+            alert('管理员账号不能为空');
+            return;
+        }
+
+        btn.disabled=true;
+        btn.textContent='保存中...';
+
+        try{
+            await post({type:'security',user,pass});
+            closeModal('securityModal');
+            showToast('安全设置已保存');
+            setTimeout(()=>location.reload(),700);
+        }catch(err){
+            alert(err.message);
+        }finally{
+            btn.disabled=false;
+            btn.textContent='保存';
+        }
+        return;
+    }
+
+    if(btn.id==='savePath'){
+        const path=$('pathValue').value.trim();
+
+        if(!/^[A-Za-z0-9_-]{2,60}$/.test(path)){
+            alert('管理员路径只能使用 2-60 个字母、数字、下划线或短横线');
+            return;
+        }
+
+        btn.disabled=true;
+        btn.textContent='保存中...';
+
+        try{
+            const data=await post({
+                type:'admin_path',
+                adminPath:path
+            });
+
+            closeModal('pathModal');
+            showToast('管理员路径已保存');
+            setTimeout(()=>{
+                location.href='/'+data.adminPath;
+            },700);
+        }catch(err){
+            alert(err.message);
+        }finally{
+            btn.disabled=false;
+            btn.textContent='保存';
+        }
+        return;
+    }
+});
+
 document.querySelectorAll('.modal-overlay').forEach(m=>m.addEventListener('click',e=>{if(e.target===m)m.style.display='none'}));
-$('siteName').addEventListener('change',async()=>{const name=$('siteName').value.trim()||'CF-SUBS';try{await post({type:'site_name',subName:name})}catch(e){alert(e.message)}});
+$('siteName').addEventListener('change',async()=>{
+    const name=$('siteName').value.trim()||'CF-SUBS';
+    try{
+        await post({type:'site_name',subName:name});
+        showToast('站点标题已保存');
+    }catch(e){
+        alert(e.message);
+    }
+});
 </script></body></html>`;
 }
