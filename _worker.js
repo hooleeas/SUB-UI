@@ -223,8 +223,15 @@ async function handleRequest(request, env) {
 
         // ==================== 公开首页 ====================
         if (!tokenData && url.pathname === '/') {
-            return new Response(await renderSubUIHome(request, url, env), {
-                headers: { 'Content-Type': 'text/html; charset=UTF-8', 'Cache-Control': 'no-store' }
+            const page = await renderSubUIHome(request, url, env);
+            const nonce = crypto.randomUUID().replace(/-/g, '');
+            const html = page.replace('<script id=\"cf-subs-public-script\">', `<script id=\"cf-subs-public-script\" nonce=\"${nonce}\" data-cfasync=\"false\">`);
+            return new Response(html, {
+                headers: {
+                    'Content-Type': 'text/html; charset=UTF-8',
+                    'Cache-Control': 'no-store',
+                    'Content-Security-Policy': `default-src 'self'; script-src 'self' 'nonce-${nonce}'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'self'; base-uri 'self'; form-action 'self'`
+                }
             });
         }
 
@@ -1669,13 +1676,13 @@ ${getSubUIStyles()}
 <section class="panel">
 <h2 class="section-title">订阅转换后端(SUBAPI)</h2>
 <div class="section-note">点击选择订阅转换后端。</div>
-<select class="native-picker" id="apiPicker" aria-label="选择订阅转换后端" onchange="window.__cfPickerFallback && window.__cfPickerFallback('api',this); window.publicPickerChanged && window.publicPickerChanged('api',this)">
+<select class="native-picker" id="apiPicker" aria-label="选择订阅转换后端">
 ${apis.map(x=>`<option value="${esc(x.url)}" data-id="${esc(x.id)}" ${!apiCustom&&apiId===x.id?'selected':''}>${esc(x.name)}</option>`).join('')}
 <option value="__custom" ${apiCustom?'selected':''}>自定义</option>
 </select>
 <div class="current-box"><div class="current-title">当前配置</div><div class="current-row">
 <input id="apiCurrent" class="current-api-input" readonly value="${esc(apiCurrentValue)}" placeholder="请选择订阅转换后端">
-<button type="button" class="button secondary edit-custom" id="editApiCustom" onclick="window.openCustomModal && window.openCustomModal('api')">编辑</button>
+<button type="button" class="button secondary edit-custom" id="editApiCustom">编辑</button>
 </div></div>
 <div class="status-box"><div class="status-title">可用状态</div><div id="apiStatus" class="status-list"><div class="status-item wait">⏳ 状态检测中</div></div></div>
 </section>
@@ -1683,13 +1690,13 @@ ${apis.map(x=>`<option value="${esc(x.url)}" data-id="${esc(x.id)}" ${!apiCustom
 <section class="panel">
 <h2 class="section-title">订阅转换规则(SUBCONFIG)</h2>
 <div class="section-note">点击选择订阅转换规则。</div>
-<select class="native-picker" id="configPicker" aria-label="选择订阅转换规则" onchange="window.__cfPickerFallback && window.__cfPickerFallback('config',this); window.publicPickerChanged && window.publicPickerChanged('config',this)">
+<select class="native-picker" id="configPicker" aria-label="选择订阅转换规则">
 ${configs.map(x=>`<option value="${esc(x.url)}" data-id="${esc(x.id)}" ${!configCustom&&configId===x.id?'selected':''}>${esc(x.name)}</option>`).join('')}
 <option value="__custom" ${configCustom?'selected':''}>自定义</option>
 </select>
 <div class="current-box"><div class="current-title">当前配置</div><div class="current-row">
 <textarea id="configCurrent" class="current-config-input" readonly placeholder="请选择订阅转换规则">${esc(configCurrentValue)}</textarea>
-<button type="button" class="button secondary edit-custom" id="editConfigCustom" onclick="window.openCustomModal && window.openCustomModal('config')">编辑</button>
+<button type="button" class="button secondary edit-custom" id="editConfigCustom">编辑</button>
 </div></div>
 <div class="status-box"><div class="status-title">可用状态</div><div id="configStatus" class="status-list"><div class="status-item wait">⏳ 状态检测中</div></div></div>
 </section>
@@ -1707,7 +1714,7 @@ ${configs.map(x=>`<option value="${esc(x.url)}" data-id="${esc(x.id)}" ${!config
 <div id="customApiModal" class="custom-modal-overlay"><div class="custom-modal"><h3>自定义订阅转换后端</h3><p>输入你自己的 SUBAPI 地址。</p><input id="customApiInput" placeholder="https://subapi.example.com"><div class="custom-modal-actions"><button type="button" class="button secondary" id="cancelApiCustom">取消</button><button type="button" class="button" id="saveApiCustom">保存</button></div></div></div>
 <div id="customConfigModal" class="custom-modal-overlay"><div class="custom-modal"><h3>自定义订阅转换规则</h3><p>输入你自己的 SUBCONFIG 地址。</p><input id="customConfigInput" placeholder="https://example.com/config.ini"><div class="custom-modal-actions"><button type="button" class="button secondary" id="cancelConfigCustom">取消</button><button type="button" class="button" id="saveConfigCustom">保存</button></div></div></div>
 
-<script>
+<script id="cf-subs-public-script">
 const API_LIST=${json(apis)};
 const CONFIG_LIST=${json(configs)};
 const $=id=>document.getElementById(id);
@@ -1917,6 +1924,8 @@ function updatePickerLabel(kind){
 }
 
 try{
+ $('#apiPicker').addEventListener('change',e=>publicPickerChanged('api',e.currentTarget));
+ $('#configPicker').addEventListener('change',e=>publicPickerChanged('config',e.currentTarget));
  $('#editApiCustom').onclick=()=>openCustomModal('api');
  $('#editConfigCustom').onclick=()=>openCustomModal('config');
  $('#cancelApiCustom').onclick=()=>closeCustomModal('api');
