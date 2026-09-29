@@ -73,6 +73,125 @@ export default {
     }
 };
 
+const CF_SUBS_CLIENT_SCRIPT = String.raw`
+(function(){
+'use strict';
+function $(id){return document.getElementById(id)}
+function esc(v){return String(v==null?'':v).replace(/[&<>"']/g,function(ch){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]})}
+function toast(message){
+ var el=$('adminToast');
+ if(!el){el=document.createElement('div');el.id='adminToast';el.style.cssText='position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:9999;padding:12px 18px;border-radius:12px;background:rgba(20,22,25,.92);color:#fff;font-weight:600;box-shadow:0 10px 30px rgba(0,0,0,.25);pointer-events:none;';document.body.appendChild(el)}
+ el.textContent=message;el.style.display='block';clearTimeout(window.__cfToastTimer);window.__cfToastTimer=setTimeout(function(){el.style.display='none'},1400)
+}
+
+/* ---------- public homepage ---------- */
+var PUBLIC_STATE={apiId:'',configId:'',apiCustom:false,configCustom:false,apiUrl:'',configUrl:''};
+function currentValue(kind){
+ var api=kind==='api',picker=$(api?'apiPicker':'configPicker');
+ if(!picker)return '';
+ if(picker.value==='__custom')return api?PUBLIC_STATE.apiUrl:PUBLIC_STATE.configUrl;
+ return String(picker.value||'');
+}
+function currentId(kind){
+ var api=kind==='api',picker=$(api?'apiPicker':'configPicker');
+ if(!picker)return '';
+ var o=picker.options[picker.selectedIndex];return o&&o.dataset?String(o.dataset.id||''):'';
+}
+function updateCurrent(kind){
+ var api=kind==='api',picker=$(api?'apiPicker':'configPicker'),current=$(api?'apiCurrent':'configCurrent'),edit=$(api?'editApiCustom':'editConfigCustom');
+ if(!picker||!current)return;
+ var custom=picker.value==='__custom',value=currentValue(kind);current.value=value;
+ if(edit){edit.style.display=custom?'inline-flex':'none';edit.hidden=!custom}
+ if(!api){current.style.height='auto';current.style.height=Math.max(70,Math.min(260,current.scrollHeight))+'px'}
+}
+function setStatus(id,html){var el=$(id);if(el)el.innerHTML=html}
+function statusText(kind,info,ok){
+ if(ok){if(kind==='api'){var version=String((info&&info.version)||'').trim();return '✅ SUBAPI状态正常'+(version?' ('+esc(version)+')':'')}return '✅ SUBCONFIG状态正常'}
+ return kind==='api'?'❌ SUBAPI状态异常':'❌ SUBCONFIG状态异常'
+}
+function checkStatus(kind){
+ var api=kind==='api',value=currentValue(kind),id=api?'apiStatus':'configStatus';
+ if(!value){setStatus(id,'<div class="status-item bad">'+statusText(kind,null,false)+'</div>');return}
+ setStatus(id,'<div class="status-item wait">⏳ 状态检测中</div>');
+ var query=api?'/api/status?api='+encodeURIComponent(value):'/api/status?config='+encodeURIComponent(value),timer=null;
+ fetch(query,{cache:'no-store',headers:{Accept:'application/json'}}).then(function(r){return r.json().then(function(d){return {r:r,d:d}})}).then(function(x){var info=api?x.d.api:x.d.config,ok=Boolean(x.r.ok&&x.d.ok&&info&&info.ok);setStatus(id,'<div class="status-item '+(ok?'ok':'bad')+'">'+statusText(kind,info,ok)+'</div>')}).catch(function(){setStatus(id,'<div class="status-item bad">'+(api?'❌ SUBAPI检测失败':'❌ SUBCONFIG检测失败')+'</div>')});
+}
+function onPickerChange(kind){
+ var api=kind==='api',picker=$(api?'apiPicker':'configPicker');if(!picker)return;
+ if(picker.value==='__custom'){var input=$(api?'customApiInput':'customConfigInput');if(input)input.value=api?PUBLIC_STATE.apiUrl:PUBLIC_STATE.configUrl;var modal=$(api?'customApiModal':'customConfigModal');if(modal)modal.style.display='flex';if(input)setTimeout(function(){input.focus()},0);updateCurrent(kind);return}
+ if(api){PUBLIC_STATE.apiId=currentId('api');PUBLIC_STATE.apiCustom=false;PUBLIC_STATE.apiUrl=''}else{PUBLIC_STATE.configId=currentId('config');PUBLIC_STATE.configCustom=false;PUBLIC_STATE.configUrl=''}
+ updateCurrent(kind);checkStatus(kind)
+}
+function openCustom(kind){var api=kind==='api',input=$(api?'customApiInput':'customConfigInput'),modal=$(api?'customApiModal':'customConfigModal');if(input)input.value=api?PUBLIC_STATE.apiUrl:PUBLIC_STATE.configUrl;if(modal)modal.style.display='flex';if(input)setTimeout(function(){input.focus()},0)}
+function cancelCustom(kind){
+ var api=kind==='api',picker=$(api?'apiPicker':'configPicker');
+ if(api){PUBLIC_STATE.apiCustom=false;PUBLIC_STATE.apiUrl=''}else{PUBLIC_STATE.configCustom=false;PUBLIC_STATE.configUrl=''}
+ var defaultId=picker&&picker.dataset?picker.dataset.defaultId:'';var option=null;if(picker){for(var i=0;i<picker.options.length;i++){if(String(picker.options[i].dataset.id||'')===String(defaultId)){option=picker.options[i];break}}if(!option&&picker.options.length)option=picker.options[0];}
+ if(option){picker.value=option.value;if(api)PUBLIC_STATE.apiId=String(option.dataset.id||'');else PUBLIC_STATE.configId=String(option.dataset.id||'')}
+ var modal=$(api?'customApiModal':'customConfigModal');if(modal)modal.style.display='none';updateCurrent(kind);checkStatus(kind)
+}
+function saveCustom(kind){
+ var api=kind==='api',input=$(api?'customApiInput':'customConfigInput'),value=input?input.value.trim():'';if(!/^https?:\/\//i.test(value)){alert('URL 必须以 http:// 或 https:// 开头');return}
+ if(api){PUBLIC_STATE.apiUrl=value;PUBLIC_STATE.apiCustom=true;PUBLIC_STATE.apiId='';$('apiPicker').value='__custom'}else{PUBLIC_STATE.configUrl=value;PUBLIC_STATE.configCustom=true;PUBLIC_STATE.configId='';$('configPicker').value='__custom'}
+ var modal=$(api?'customApiModal':'customConfigModal');if(modal)modal.style.display='none';updateCurrent(kind);checkStatus(kind)
+}
+function initPublic(){
+ if(window.__CF_SUBS_PUBLIC_READY)return;window.__CF_SUBS_PUBLIC_READY=true;
+ var ap=$('apiPicker'),cp=$('configPicker');
+ if(ap){PUBLIC_STATE.apiId=currentId('api');ap.addEventListener('change',function(){onPickerChange('api')})}
+ if(cp){PUBLIC_STATE.configId=currentId('config');cp.addEventListener('change',function(){onPickerChange('config')})}
+ var e=$('editApiCustom');if(e)e.addEventListener('click',function(){openCustom('api')});e=$('editConfigCustom');if(e)e.addEventListener('click',function(){openCustom('config')});
+ e=$('cancelApiCustom');if(e)e.addEventListener('click',function(){cancelCustom('api')});e=$('cancelConfigCustom');if(e)e.addEventListener('click',function(){cancelCustom('config')});
+ e=$('saveApiCustom');if(e)e.addEventListener('click',function(){saveCustom('api')});e=$('saveConfigCustom');if(e)e.addEventListener('click',function(){saveCustom('config')});
+ updateCurrent('api');updateCurrent('config');checkStatus('api');checkStatus('config');
+ e=$('copyDirect');if(e)e.addEventListener('click',function(){var v=$('direct')?$('direct').textContent.trim():'';navigator.clipboard.writeText(v).then(function(){alert('已复制')}).catch(function(){alert('复制失败，请手动复制')})});
+ e=$('generate');if(e)e.addEventListener('click',function(){
+  var sources=$('sources')?$('sources').value.trim():'',a=$('apiPicker'),c=$('configPicker');if(!a||!c)return;
+  var apiCustom=a.value==='__custom',configCustom=c.value==='__custom',apiValue=currentValue('api'),configValue=currentValue('config');
+  if(!sources)return alert('请输入订阅链接');if(!apiValue)return alert('请选择订阅转换后端');if(!configValue)return alert('请选择订阅转换规则');
+  var body={sources:sources,apiIds:apiCustom?[]:[currentId('api')],apiCustom:apiCustom,apiUrl:apiCustom?apiValue:'',configIds:configCustom?[]:[currentId('config')],configCustom:configCustom,configUrl:configCustom?configValue:'',noAds:($('noAds')?$('noAds').value:'').trim()};
+  var button=$('generate');button.disabled=true;button.textContent='生成中…';
+  fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},cache:'no-store',body:JSON.stringify(body)}).then(function(r){return r.json().then(function(d){return {r:r,d:d}})}).then(function(x){if(!x.r.ok||!x.d.ok)throw new Error(x.d.error||'生成失败');$('direct').textContent=x.d.subscription_url;$('openDirect').href=x.d.subscription_url;$('result').hidden=false;$('result').scrollIntoView({behavior:'smooth',block:'start'})}).catch(function(err){alert(err.message||'生成失败')}).finally(function(){button.disabled=false;button.textContent='生成聚合订阅'})
+ })
+}
+
+/* ---------- admin ---------- */
+var modalState=null;
+function openModal(id){var el=$(id);if(el)el.style.display='flex'}
+function closeModal(id){var el=$(id);if(el)el.style.display='none'}
+function showProvider(type,id,name,url){modalState={type:type,id:id||''};var t=$('modalTitle');if(t)t.textContent=(id?'编辑 ':'添加 ')+(type==='subapi'?'订阅转换后端':'订阅转换规则');if($('modalName'))$('modalName').value=name||'';if($('modalUrl'))$('modalUrl').value=url||'';openModal('providerModal')}
+function hideProvider(){closeModal('providerModal');modalState=null}
+function post(data){return fetch(location.pathname,{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},cache:'no-store',body:JSON.stringify(data)}).then(function(r){return r.text().then(function(t){var d=null;try{d=t?JSON.parse(t):null}catch(e){}if(!d)throw new Error('服务器返回无效数据（HTTP '+r.status+'）');if(!r.ok||d.ok===false)throw new Error(d.error||('操作失败（HTTP '+r.status+'）'));return d})})}
+function setDefaultProvider(type,id){post({type:type+'_default',id:id}).then(function(){toast('默认配置已更新')}).catch(function(e){alert(e.message||'设置默认配置失败');setTimeout(function(){location.reload()},100)})}
+function deleteProvider(type,id){if(!confirm('确定删除这个项目？'))return;post({type:type+'_delete',id:id}).then(function(){toast('已删除');setTimeout(function(){location.reload()},500)}).catch(function(e){alert(e.message||'删除失败')})}
+function saveProvider(){if(!modalState)return;var name=$('modalName')?$('modalName').value.trim():'',url=$('modalUrl')?$('modalUrl').value.trim():'';if(!name)return alert('请输入备注');if(!/^https?:\/\//i.test(url))return alert('URL 必须以 http:// 或 https:// 开头');var b=$('modalSave'),editing=Boolean(modalState.id);if(b){b.disabled=true;b.textContent='保存中...'}post({type:modalState.type+'_'+(editing?'update':'create'),id:modalState.id,name:name,url:url}).then(function(){hideProvider();toast(editing?'已保存':'已添加');setTimeout(function(){location.reload()},700)}).catch(function(e){alert(e.message||'保存失败')}).finally(function(){if(b){b.disabled=false;b.textContent='保存'}})}
+function saveSecurity(){var user=$('securityUser')?$('securityUser').value.trim():'',pass=$('securityPass')?$('securityPass').value:'',pass2=$('securityPass2')?$('securityPass2').value:'';if(!user)return alert('管理员账号不能为空');if(pass!==pass2)return alert('两次输入的密码不一致');var b=$('saveSecurity');if(b){b.disabled=true;b.textContent='保存中...'}post({type:'security',user:user,pass:pass}).then(function(){closeModal('securityModal');toast('安全设置已保存');setTimeout(function(){location.reload()},700)}).catch(function(e){alert(e.message||'保存失败')}).finally(function(){if(b){b.disabled=false;b.textContent='保存'}})}
+function saveSiteSettings(){var name=$('siteName')?$('siteName').value.trim()||'SUB':'SUB',path=$('sitePath')?$('sitePath').value.trim():'',logo=$('siteLogo')?$('siteLogo').value.trim():'';if(!/^[A-Za-z0-9_-]{2,60}$/.test(path))return alert('管理员路径只能使用 2-60 个字母、数字、下划线或短横线');if(logo&&!/^https?:\/\//i.test(logo))return alert('站点标签栏 Logo 必须是 http:// 或 https:// URL');var b=$('saveSite');if(b){b.disabled=true;b.textContent='保存中...'}post({type:'site_settings',subName:name,adminPath:path,siteLogo:logo}).then(function(d){closeModal('siteModal');toast('站点设置已保存');setTimeout(function(){location.href='/'+d.adminPath},700)}).catch(function(e){alert(e.message||'保存失败')}).finally(function(){if(b){b.disabled=false;b.textContent='保存'}})}
+function initAdmin(){
+ if(window.__CF_SUBS_ADMIN_READY)return;window.__CF_SUBS_ADMIN_READY=true;
+ document.querySelectorAll('[data-open-modal]').forEach(function(b){b.addEventListener('click',function(){openModal(b.dataset.openModal)})});
+ document.querySelectorAll('[data-close-modal]').forEach(function(b){b.addEventListener('click',function(){closeModal(b.dataset.closeModal)})});
+ document.querySelectorAll('[data-provider-action]').forEach(function(b){b.addEventListener('click',function(){var action=b.dataset.providerAction,type=b.dataset.providerType||'',id=b.dataset.providerId||'';if(action==='add')showProvider(type,'','','');else if(action==='edit')showProvider(type,id,b.dataset.providerName||'',b.dataset.providerUrl||'');else if(action==='delete')deleteProvider(type,id)})});
+ var e=$('providerCancel');if(e)e.addEventListener('click',hideProvider);e=$('modalSave');if(e)e.addEventListener('click',saveProvider);e=$('saveSecurity');if(e)e.addEventListener('click',saveSecurity);e=$('saveSite');if(e)e.addEventListener('click',saveSiteSettings);
+ document.querySelectorAll('.default-provider-select').forEach(function(select){select.addEventListener('change',function(){setDefaultProvider(select.dataset.type,select.value)})});
+ document.querySelectorAll('.modal-overlay').forEach(function(m){m.addEventListener('click',function(e){if(e.target===m)m.style.display='none'})});
+}
+
+/* ---------- guest subscription page ---------- */
+function showQrcode(button){var q=document.getElementById('current-qrcode');if(!q||typeof QRCode==='undefined')return;button.closest('.link-item').appendChild(q);q.innerHTML='';q.style.display='block';new QRCode(q,{text:button.dataset.url,width:220,height:220,colorDark:'#000000',colorLight:'#ffffff',correctLevel:QRCode.CorrectLevel.Q})}
+function hideQrcode(button){var q=document.getElementById('current-qrcode');if(q){q.style.display='none';q.innerHTML=''}button.classList.add('hidden');var c=button.closest('.actions').querySelector('.copy-btn');if(c)c.classList.remove('hidden')}
+function copySubscription(button){navigator.clipboard.writeText(button.dataset.url).then(function(){toast('已复制到剪贴板');showQrcode(button);button.classList.add('hidden');var h=button.closest('.actions').querySelector('.hide-btn');if(h)h.classList.remove('hidden')}).catch(function(){toast('复制失败，请手动复制')})}
+function initGuest(){document.querySelectorAll('.copy-btn').forEach(function(b){b.addEventListener('click',function(){copySubscription(b)})});document.querySelectorAll('.hide-btn').forEach(function(b){b.addEventListener('click',function(){hideQrcode(b)})})}
+
+function boot(){
+ if($('apiPicker')||$('generate'))initPublic();
+ if(document.querySelector('[data-provider-action]')||$('saveSecurity')||$('saveSite'))initAdmin();
+ if(document.querySelector('.copy-btn'))initGuest();
+}
+if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',boot);else boot();
+})();
+`;
+
 async function handleRequest(request, env) {
         const userAgentHeader = request.headers.get('User-Agent') || '';
         const userAgent = userAgentHeader.toLowerCase();
@@ -162,6 +281,16 @@ async function handleRequest(request, env) {
             });
         }
 
+        // 公共同源客户端脚本：避免内联脚本受 CSP / 模板字符串影响。
+        if (url.pathname === '/__cfsubs.js' && request.method === 'GET') {
+            return new Response(CF_SUBS_CLIENT_SCRIPT, {
+                headers: {
+                    'Content-Type': 'application/javascript; charset=UTF-8',
+                    'Cache-Control': 'no-store, no-cache, must-revalidate'
+                }
+            });
+        }
+
         // ==================== SUB-UI 公共 API ====================
         if (url.pathname === '/api/ui-config' && request.method === 'GET') {
             const cfg = await getConfig(env);
@@ -238,8 +367,7 @@ async function handleRequest(request, env) {
         // ==================== 公开首页 ====================
         if (!tokenData && !isFakeTokenRequest && url.pathname === '/') {
             const page = await renderSubUIHome(request, url, env);
-            const nonce = crypto.randomUUID().replace(/-/g, '');
-            const html = page.replace('<script id=\"cf-subs-public-script\">', `<script id=\"cf-subs-public-script\" nonce=\"${nonce}\" data-cfasync=\"false\">`);
+            const html = page;
             return new Response(html, {
                 headers: {
                     'Content-Type': 'text/html; charset=UTF-8',
@@ -1827,118 +1955,7 @@ ${configs.map(x=>`<option value="${esc(x.url)}" data-id="${esc(x.id)}" ${x.id===
 <div id="customApiModal" class="custom-modal-overlay"><div class="custom-modal"><h3>自定义订阅转换后端</h3><p>输入你自己的 SUBAPI 地址。</p><input id="customApiInput" placeholder="https://subapi.example.com"><div class="custom-modal-actions"><button type="button" class="button secondary" id="cancelApiCustom">取消</button><button type="button" class="button" id="saveApiCustom">保存</button></div></div></div>
 <div id="customConfigModal" class="custom-modal-overlay"><div class="custom-modal"><h3>自定义订阅转换规则</h3><p>输入你自己的 SUBCONFIG 地址。</p><input id="customConfigInput" placeholder="https://example.com/config.ini"><div class="custom-modal-actions"><button type="button" class="button secondary" id="cancelConfigCustom">取消</button><button type="button" class="button" id="saveConfigCustom">保存</button></div></div></div>
 
-<script id="cf-subs-public-script">
-const PUBLIC_STATE={apiId:'',configId:'',apiCustom:false,configCustom:false,apiUrl:'',configUrl:''};
-const $=id=>document.getElementById(id);
-
-function currentValue(kind){
- const api=kind==='api',picker=$(api?'apiPicker':'configPicker');
- if(!picker)return '';
- if(picker.value==='__custom') return api?PUBLIC_STATE.apiUrl:PUBLIC_STATE.configUrl;
- return String(picker.value||'');
-}
-function currentId(kind){
- const api=kind==='api',picker=$(api?'apiPicker':'configPicker'),o=picker?.options[picker.selectedIndex];
- return String(o?.dataset?.id||'');
-}
-function updateCurrent(kind){
- const api=kind==='api',picker=$(api?'apiPicker':'configPicker'),current=$(api?'apiCurrent':'configCurrent'),edit=$(api?'editApiCustom':'editConfigCustom');
- const custom=picker.value==='__custom';
- const value=currentValue(kind);
- current.value=value;
- if(api){edit.style.display=custom?'inline-flex':'none';edit.hidden=!custom;}
- else{edit.style.display=custom?'inline-flex':'none';edit.hidden=!custom;current.style.height='auto';current.style.height=Math.max(70,Math.min(260,current.scrollHeight))+'px';}
-}
-function setStatus(id,html){const el=$(id);if(el)el.innerHTML=html;}
-function statusText(kind,info,ok){
- const api=kind==='api';
- if(ok){
-  if(api){
-   const version=String(info?.version||'').trim();
-   return '✅ SUBAPI状态正常'+(version?' ('+escapeHTML(version)+')':'');
-  }
-  return '✅ SUBCONFIG状态正常';
- }
- return api?'❌ SUBAPI状态异常':'❌ SUBCONFIG状态异常';
-}
-function escapeHTML(value=''){
- return String(value).replace(/[&<>\"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'}[ch]));
-}
-async function checkStatus(kind){
- const api=kind==='api',value=currentValue(kind),id=api?'apiStatus':'configStatus';
- if(!value){setStatus(id,'<div class="status-item bad">'+statusText(kind,null,false)+'</div>');return;}
- setStatus(id,'<div class="status-item wait">⏳ 状态检测中</div>');
- const query=api?'/api/status?api='+encodeURIComponent(value):'/api/status?config='+encodeURIComponent(value);
- let timer;
- try{
-  const controller=new AbortController();
-  timer=setTimeout(()=>controller.abort(),5000);
-  const r=await fetch(query,{cache:'no-store',headers:{Accept:'application/json'},signal:controller.signal});
-  const d=await r.json().catch(()=>({}));
-  const info=api?d.api:d.config;
-  const ok=Boolean(r.ok&&d.ok&&info?.ok);
-  setStatus(id,'<div class="status-item '+(ok?'ok':'bad')+'">'+statusText(kind,info,ok)+'</div>');
- }catch(e){
-  setStatus(id,'<div class="status-item bad">'+(api?'❌ SUBAPI检测失败':'❌ SUBCONFIG检测失败')+'</div>');
- }finally{
-  if(timer)clearTimeout(timer);
- }
-}
-function onPickerChange(kind){
- const api=kind==='api',picker=$(api?'apiPicker':'configPicker');
- if(!picker)return;
- if(picker.value==='__custom'){
-   const old=api?PUBLIC_STATE.apiUrl:PUBLIC_STATE.configUrl;
-   $(api?'customApiInput':'customConfigInput').value=old||'';
-   $(api?'customApiModal':'customConfigModal').style.display='flex';
-   setTimeout(()=>$(api?'customApiInput':'customConfigInput').focus(),0);
-   updateCurrent(kind);
-   return;
- }
- if(api){PUBLIC_STATE.apiId=currentId('api');PUBLIC_STATE.apiCustom=false;}else{PUBLIC_STATE.configId=currentId('config');PUBLIC_STATE.configCustom=false;}
- updateCurrent(kind);
- checkStatus(kind);
-}
-function openCustom(kind){const api=kind==='api';$(api?'customApiInput':'customConfigInput').value=api?PUBLIC_STATE.apiUrl:PUBLIC_STATE.configUrl;$(api?'customApiModal':'customConfigModal').style.display='flex';}
-function cancelCustom(kind){
- const api=kind==='api',picker=$(api?'apiPicker':'configPicker');
- PUBLIC_STATE[api?'apiCustom':'configCustom']=false;
- PUBLIC_STATE[api?'apiUrl':'configUrl']='';
- const defaultId=picker?.dataset?.defaultId||'';
- const option=Array.from(picker?.options||[]).find(o=>String(o.dataset.id||'')===defaultId)||picker?.options?.[0];
- if(option)picker.value=option.value;
- PUBLIC_STATE[api?'apiId':'configId']=String(option?.dataset?.id||'');
- $(api?'customApiModal':'customConfigModal').style.display='none';updateCurrent(kind);checkStatus(kind);
-}
-function saveCustom(kind){
- const api=kind==='api',input=$(api?'customApiInput':'customConfigInput'),value=input.value.trim();
- if(!/^https?:\/\//i.test(value)){alert('URL 必须以 http:// 或 https:// 开头');return;}
- if(api){PUBLIC_STATE.apiUrl=value;PUBLIC_STATE.apiCustom=true;PUBLIC_STATE.apiId='';$('apiPicker').value='__custom';}
- else{PUBLIC_STATE.configUrl=value;PUBLIC_STATE.configCustom=true;PUBLIC_STATE.configId='';$('configPicker').value='__custom';}
- $(api?'customApiModal':'customConfigModal').style.display='none';updateCurrent(kind);checkStatus(kind);
-}
-function initPublicHome(){
- if(window.__CF_SUBS_PUBLIC_READY)return;
- window.__CF_SUBS_PUBLIC_READY=true;
- const ap=$('apiPicker'),cp=$('configPicker');
- if(ap){PUBLIC_STATE.apiId=currentId('api');ap.addEventListener('change',()=>onPickerChange('api'));}
- if(cp){PUBLIC_STATE.configId=currentId('config');cp.addEventListener('change',()=>onPickerChange('config'));}
-
- $('editApiCustom')?.addEventListener('click',()=>openCustom('api'));$('editConfigCustom')?.addEventListener('click',()=>openCustom('config'));
- $('cancelApiCustom')?.addEventListener('click',()=>cancelCustom('api'));$('cancelConfigCustom')?.addEventListener('click',()=>cancelCustom('config'));
- $('saveApiCustom')?.addEventListener('click',()=>saveCustom('api'));$('saveConfigCustom')?.addEventListener('click',()=>saveCustom('config'));
- updateCurrent('api');updateCurrent('config');checkStatus('api');checkStatus('config');
- $('copyDirect')?.addEventListener('click',async()=>{const v=$('direct').textContent.trim();try{await navigator.clipboard.writeText(v);alert('已复制')}catch(e){alert('复制失败，请手动复制')}});
- $('generate')?.addEventListener('click',async()=>{
-  const sources=$('sources').value.trim(),a=$('apiPicker'),c=$('configPicker'),apiCustom=a.value==='__custom',configCustom=c.value==='__custom',apiValue=currentValue('api'),configValue=currentValue('config');
-  if(!sources)return alert('请输入订阅链接');if(!apiValue)return alert('请选择订阅转换后端');if(!configValue)return alert('请选择订阅转换规则');
-  const body={sources,apiIds:apiCustom?[]:[currentId('api')],apiCustom,apiUrl:apiCustom?apiValue:'',configIds:configCustom?[]:[currentId('config')],configCustom,configUrl:configCustom?configValue:'',noAds:($('noAds').value||'').trim()};
-  const button=$('generate');button.disabled=true;button.textContent='生成中…';
-  try{const r=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},cache:'no-store',body:JSON.stringify(body)});const d=await r.json();if(!r.ok||!d.ok)throw new Error(d.error||'生成失败');$('direct').textContent=d.subscription_url;$('openDirect').href=d.subscription_url;$('result').hidden=false;$('result').scrollIntoView({behavior:'smooth',block:'start'});}catch(e){alert(e.message||'生成失败')}finally{button.disabled=false;button.textContent='生成聚合订阅';}
- });
-}
-if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',initPublicHome);else initPublicHome();
-</script>
+<script src="/__cfsubs.js" defer></script>
 </body></html>`;
 }
 function getSubUIStyles(){return getToolStyles()+`
@@ -1988,101 +2005,5 @@ function renderAdminPage(url,env,settings){
 <div id="providerModal" class="modal-overlay"><div class="modal-content"><h2 class="section-title" id="modalTitle">添加</h2><div class="field"><label for="modalName">备注</label><input id="modalName"></div><div class="field"><label for="modalUrl">URL</label><input id="modalUrl" placeholder="https://..."></div><div class="modal-actions"><button type="button" class="secondary" id="providerCancel">取消</button><button type="button" id="modalSave">保存</button></div></div></div>
 <div id="securityModal" class="modal-overlay"><div class="modal-content"><h2 class="section-title">安全</h2><div class="section-note">修改管理员账号和密码。修改密码时必须输入两次；两次留空表示保持原密码。</div><div class="field"><label for="securityUser">管理员账号</label><input id="securityUser" value="${esc(settings.user||'')}" autocomplete="username"></div><div class="field"><label for="securityPass">管理员密码</label><input id="securityPass" type="password" placeholder="留空保持原密码" autocomplete="new-password"></div><div class="field"><label for="securityPass2">确认管理员密码</label><input id="securityPass2" type="password" placeholder="再次输入新密码" autocomplete="new-password"></div><div class="modal-actions"><button type="button" class="secondary" data-close-modal="securityModal">取消</button><button type="button" id="saveSecurity">保存</button></div></div></div>
 <div id="siteModal" class="modal-overlay"><div class="modal-content"><h2 class="section-title">站点</h2><div class="field"><label for="siteName">站点标题</label><input id="siteName" value="${esc(settings.subName||'SUB')}" placeholder="SUB"></div><div class="field"><label for="sitePath">管理员路径</label><input id="sitePath" value="${esc(settings.adminPath||'admin')}" placeholder="admin"></div><div class="field"><label for="siteLogo">站点标签栏 Logo 地址</label><input id="siteLogo" value="${esc(settings.siteLogo||'')}" placeholder="https://example.com/favicon.png" type="url"><div class="section-note">支持 http:// 或 https:// 直链；留空则不设置。</div></div><div class="modal-actions"><button type="button" class="secondary" data-close-modal="siteModal">取消</button><button type="button" id="saveSite">保存</button></div></div></div>
-<script>
-let toastTimer;
-function showToast(message){
-    let toast=document.getElementById('adminToast');
-    if(!toast){
-        toast=document.createElement('div');
-        toast.id='adminToast';
-        toast.style.cssText='position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:9999;padding:12px 18px;border-radius:12px;background:rgba(20,22,25,.92);color:#fff;font-weight:600;box-shadow:0 10px 30px rgba(0,0,0,.25);pointer-events:none;';
-        document.body.appendChild(toast);
-    }
-    toast.textContent=message;
-    toast.style.display='block';
-    clearTimeout(toastTimer);
-    toastTimer=setTimeout(()=>{toast.style.display='none'},1400);
-}
-let modalState=null;
-const $=id=>document.getElementById(id);
-function openModal(id){const el=$(id);if(el)el.style.display='flex'}
-function closeModal(id){const el=$(id);if(el)el.style.display='none'}
-function showProvider(type,id,name,url){
- modalState={type,id:id||''};
- $('modalTitle').textContent=(id?'编辑 ':'添加 ')+(type==='subapi'?'订阅转换后端':'订阅转换规则');
- $('modalName').value=name||'';$('modalUrl').value=url||'';
- openModal('providerModal');
-}
-function hideProvider(){closeModal('providerModal');modalState=null}
-async function post(data){
- const r=await fetch(location.pathname,{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},cache:'no-store',body:JSON.stringify(data)});
- const t=await r.text();let d=null;try{d=t?JSON.parse(t):null}catch(e){}
- if(!d)throw new Error('服务器返回无效数据（HTTP '+r.status+'）');
- if(!r.ok||d.ok===false)throw new Error(d.error||('操作失败（HTTP '+r.status+'）'));
- return d;
-}
-async function setDefaultProvider(type,id){
- try{
-  await post({type:type+'_default',id});
-  showToast('默认配置已更新');
- }catch(e){
-  alert(e.message||'设置默认配置失败');
-  setTimeout(()=>location.reload(),100);
- }
-}
-async function deleteProvider(type,id){
- if(!confirm('确定删除这个项目？'))return;
- try{await post({type:type+'_delete',id});showToast('已删除');setTimeout(()=>location.reload(),500)}
- catch(e){alert(e.message||'删除失败')}
-}
-async function saveProvider(){
- if(!modalState)return;
- const name=$('modalName').value.trim(),url=$('modalUrl').value.trim();
- if(!name)return alert('请输入备注');
- if(!/^https?:\/\//i.test(url))return alert('URL 必须以 http:// 或 https:// 开头');
- const b=$('modalSave'),editing=Boolean(modalState.id);b.disabled=true;b.textContent='保存中...';
- try{
-  await post({type:modalState.type+'_'+(editing?'update':'create'),id:modalState.id,name,url});
-  hideProvider();showToast(editing?'已保存':'已添加');setTimeout(()=>location.reload(),700);
- }catch(e){alert(e.message||'保存失败')}finally{b.disabled=false;b.textContent='保存'}
-}
-async function saveSecurity(){
- const user=$('securityUser').value.trim(),pass=$('securityPass').value,pass2=$('securityPass2').value;
- if(!user)return alert('管理员账号不能为空');
- if(pass!==pass2)return alert('两次输入的密码不一致');
- const b=$('saveSecurity');b.disabled=true;b.textContent='保存中...';
- try{await post({type:'security',user,pass});closeModal('securityModal');showToast('安全设置已保存');setTimeout(()=>location.reload(),700)}
- catch(e){alert(e.message||'保存失败')}finally{b.disabled=false;b.textContent='保存'}
-}
-async function saveSiteSettings(){
- const name=$('siteName').value.trim()||'SUB';
- const path=$('sitePath').value.trim();
- const logo=$('siteLogo').value.trim();
- if(!/^[A-Za-z0-9_-]{2,60}$/.test(path))return alert('管理员路径只能使用 2-60 个字母、数字、下划线或短横线');
- if(logo && !/^https?:\/\//i.test(logo))return alert('站点标签栏 Logo 必须是 http:// 或 https:// URL');
- const b=$('saveSite');b.disabled=true;b.textContent='保存中...';
- try{const d=await post({type:'site_settings',subName:name,adminPath:path,siteLogo:logo});closeModal('siteModal');showToast('站点设置已保存');setTimeout(()=>{location.href='/'+d.adminPath},700)}
- catch(e){alert(e.message||'保存失败')}finally{b.disabled=false;b.textContent='保存'}
-}
-
-function initAdmin(){
- if(window.__CF_SUBS_ADMIN_READY)return;
- window.__CF_SUBS_ADMIN_READY=true;
- document.querySelectorAll('[data-open-modal]').forEach(b=>b.addEventListener('click',()=>openModal(b.dataset.openModal)));
- document.querySelectorAll('[data-close-modal]').forEach(b=>b.addEventListener('click',()=>closeModal(b.dataset.closeModal)));
- document.querySelectorAll('[data-provider-action]').forEach(b=>b.addEventListener('click',()=>{
-  const action=b.dataset.providerAction,type=b.dataset.providerType||'',id=b.dataset.providerId||'';
-  if(action==='add')showProvider(type,'','','');
-  else if(action==='edit')showProvider(type,id,b.dataset.providerName||'',b.dataset.providerUrl||'');
-  else if(action==='delete')deleteProvider(type,id);
- }));
- $('providerCancel')?.addEventListener('click',hideProvider);
- $('modalSave')?.addEventListener('click',saveProvider);
- $('saveSecurity')?.addEventListener('click',saveSecurity);
- $('saveSite')?.addEventListener('click',saveSiteSettings);
- document.querySelectorAll('.default-provider-select').forEach(select=>select.addEventListener('change',()=>setDefaultProvider(select.dataset.type,select.value)));
- document.querySelectorAll('.modal-overlay').forEach(m=>m.addEventListener('click',e=>{if(e.target===m)m.style.display='none'}));
-}
-if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',initAdmin);else initAdmin();
-</script></body></html>`;
+<script src="/__cfsubs.js" defer></script></body></html>`;
 }
