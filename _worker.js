@@ -1561,24 +1561,27 @@ async function renderSubUIHome(request,url,env){
     const defaultApiId=String(cfg.defaultSubApiId||'');
     const defaultConfigId=String(cfg.defaultSubConfigId||'');
 
-    const savedApiIds=Array.isArray(prefs.apiIds)?prefs.apiIds:[];
-    const savedConfigIds=Array.isArray(prefs.configIds)?prefs.configIds:[];
-    const apiIds=savedApiIds.filter(id=>apis.some(x=>x.id===id));
-    const configIds=savedConfigIds.filter(id=>configs.some(x=>x.id===id));
-
-    if(!apiIds.length && prefs.apiCustom!==true && defaultApiId && apis.some(x=>x.id===defaultApiId)) apiIds.push(defaultApiId);
-    if(!configIds.length && prefs.configCustom!==true && defaultConfigId && configs.some(x=>x.id===defaultConfigId)) configIds.push(defaultConfigId);
+    const savedApiId=String(prefs.apiIds?.[0]||'');
+    const savedConfigId=String(prefs.configIds?.[0]||'');
+    let apiId=apis.some(x=>x.id===savedApiId)?savedApiId:'';
+    let configId=configs.some(x=>x.id===savedConfigId)?savedConfigId:'';
 
     const apiCustom=Boolean(prefs.apiCustom);
     const configCustom=Boolean(prefs.configCustom);
     const apiUrl=apiCustom?String(prefs.apiUrl||''):'';
     const configUrl=configCustom?String(prefs.configUrl||''):'';
+
+    if(!apiId && !apiCustom && defaultApiId && apis.some(x=>x.id===defaultApiId)) apiId=defaultApiId;
+    if(!configId && !configCustom && defaultConfigId && configs.some(x=>x.id===defaultConfigId)) configId=defaultConfigId;
+
     const noAds=String(prefs.noAds||'');
     const esc=x=>escapeHTML(String(x??''));
     const json=x=>JSON.stringify(x).replace(/</g,'\\u003c');
 
-    const apiCurrentValue=[...apiIds.map(id=>apis.find(x=>x.id===id)?.url||''),...(apiCustom&&apiUrl?[apiUrl]:[])].filter(Boolean).join('\n');
-    const configCurrentValue=[...configIds.map(id=>configs.find(x=>x.id===id)?.url||''),...(configCustom&&configUrl?[configUrl]:[])].filter(Boolean).join('\n');
+    const selectedApi=apiCustom?null:apis.find(x=>x.id===apiId);
+    const selectedConfig=configCustom?null:configs.find(x=>x.id===configId);
+    const apiCurrentValue=apiCustom?apiUrl:(selectedApi?.url||'');
+    const configCurrentValue=configCustom?configUrl:(selectedConfig?.url||'');
 
     return `<!doctype html>
 <html lang="zh-CN">
@@ -1595,8 +1598,13 @@ ${getSubUIStyles()}
 .choice-url{grid-column:2;color:#888;font-size:12px;line-height:1.45;word-break:break-all;overflow-wrap:anywhere}
 .current-box{margin-top:12px}
 .current-title{font-size:13px;font-weight:700;margin:0 0 7px}
-.current-input{width:100%;min-height:92px;resize:vertical;line-height:1.5;word-break:break-all;overflow-wrap:anywhere}
+.current-row{display:flex;align-items:center;gap:8px}
+.current-api-input{width:100%;height:42px;min-width:0}
+.current-config-input{width:100%;min-height:54px;resize:none;line-height:1.5;word-break:break-all;overflow-wrap:anywhere}
 .current-input[readonly]{cursor:default}
+.edit-custom{display:none;flex:0 0 auto;min-width:72px}
+.custom-selected + .custom-panel .edit-custom{display:inline-flex}
+.custom-editor{display:none}
 .status-box{margin-top:12px}
 .status-title{font-size:13px;font-weight:700;margin:0 0 7px}
 .status-list{display:grid;gap:7px}
@@ -1604,7 +1612,17 @@ ${getSubUIStyles()}
 .status-item.wait{background:rgba(255,152,0,.1);border:1px solid rgba(255,152,0,.2);color:#f57c00}
 .status-item.ok{background:rgba(76,175,80,.12);border:1px solid rgba(76,175,80,.25);color:#2e7d32}
 .status-item.bad{background:rgba(244,67,54,.1);border:1px solid rgba(244,67,54,.22);color:#c62828}
-@media(prefers-color-scheme:dark){.choice{background:rgba(40,40,40,.5);border-color:rgba(255,255,255,.1)}.choice-url{color:#aaa}.current-input{background:rgba(0,0,0,.3);color:#f1f1f1;border-color:rgba(255,255,255,.12)}.status-item.ok{background:rgba(129,199,132,.1);color:#81c784;border-color:rgba(129,199,132,.2)}.status-item.bad{background:rgba(229,115,115,.1);color:#e57373;border-color:rgba(229,115,115,.2)}.status-item.wait{background:rgba(255,183,77,.1);color:#ffb74d;border-color:rgba(255,183,77,.2)}}
+.custom-modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.42);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);display:none;align-items:center;justify-content:center;z-index:1200;padding:20px}
+.custom-modal{width:min(480px,100%);background:rgba(255,255,255,.96);border:1px solid rgba(229,229,223,.9);border-radius:18px;padding:20px;box-shadow:0 18px 50px rgba(0,0,0,.22)}
+.custom-modal h3{margin:0;font-size:17px}.custom-modal p{margin:6px 0 14px;color:#888;font-size:12px}.custom-modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}
+@media(prefers-color-scheme:dark){
+ .choice{background:rgba(40,40,40,.5);border-color:rgba(255,255,255,.1)}.choice-url{color:#aaa}
+ .current-api-input,.current-config-input{background:rgba(0,0,0,.3);color:#f1f1f1;border-color:rgba(255,255,255,.12)}
+ .status-item.ok{background:rgba(129,199,132,.1);color:#81c784;border-color:rgba(129,199,132,.2)}
+ .status-item.bad{background:rgba(229,115,115,.1);color:#e57373;border-color:rgba(229,115,115,.2)}
+ .status-item.wait{background:rgba(255,183,77,.1);color:#ffb74d;border-color:rgba(255,183,77,.2)}
+ .custom-modal{background:rgba(30,30,30,.97);border-color:rgba(255,255,255,.1)}
+}
 </style>
 </head>
 <body>
@@ -1619,14 +1637,17 @@ ${getSubUIStyles()}
 
 <section class="panel">
 <h2 class="section-title">订阅转换后端(SUBAPI)</h2>
-<div class="section-note">勾选一个或多个配置。</div>
+<div class="section-note">选择一个订阅转换后端。</div>
 <div class="choice-list">
-${apis.map(x=>`<label class="choice"><input type="checkbox" name="apiChoice" value="${esc(x.id)}" ${apiIds.includes(x.id)?'checked':''}><span class="choice-name">${esc(x.name)}</span><span class="choice-url">${esc(x.url)}</span></label>`).join('')}
-<label class="choice"><input type="checkbox" id="apiCustomCheck" ${apiCustom?'checked':''}><span class="choice-name">自定义</span><span class="choice-url">使用自己的订阅转换后端</span></label>
+${apis.map(x=>`<label class="choice"><input type="radio" name="apiChoice" value="${esc(x.id)}" ${!apiCustom&&apiId===x.id?'checked':''}><span class="choice-name">${esc(x.name)}</span><span class="choice-url">${esc(x.url)}</span></label>`).join('')}
+<label class="choice ${apiCustom?'custom-selected':''}"><input type="radio" name="apiChoice" value="__custom" ${apiCustom?'checked':''}><span class="choice-name">自定义</span><span class="choice-url">使用你自己的订阅转换后端</span></label>
 </div>
 <div class="current-box">
 <div class="current-title">当前配置</div>
-<textarea id="apiCurrent" class="current-input" ${apiCustom?'':'readonly'} placeholder="请选择配置">${esc(apiCurrentValue)}</textarea>
+<div class="current-row custom-panel">
+<input id="apiCurrent" class="current-api-input" readonly value="${esc(apiCurrentValue)}" placeholder="请选择订阅转换后端">
+<button type="button" class="button secondary edit-custom" id="editApiCustom">编辑</button>
+</div>
 </div>
 <div class="status-box">
 <div class="status-title">可用状态</div>
@@ -1636,14 +1657,17 @@ ${apis.map(x=>`<label class="choice"><input type="checkbox" name="apiChoice" val
 
 <section class="panel">
 <h2 class="section-title">订阅转换规则(SUBCONFIG)</h2>
-<div class="section-note">勾选一个或多个配置。</div>
+<div class="section-note">选择一个订阅转换规则。</div>
 <div class="choice-list">
-${configs.map(x=>`<label class="choice"><input type="checkbox" name="configChoice" value="${esc(x.id)}" ${configIds.includes(x.id)?'checked':''}><span class="choice-name">${esc(x.name)}</span><span class="choice-url">${esc(x.url)}</span></label>`).join('')}
-<label class="choice"><input type="checkbox" id="configCustomCheck" ${configCustom?'checked':''}><span class="choice-name">自定义</span><span class="choice-url">使用自己的订阅转换规则</span></label>
+${configs.map(x=>`<label class="choice"><input type="radio" name="configChoice" value="${esc(x.id)}" ${!configCustom&&configId===x.id?'checked':''}><span class="choice-name">${esc(x.name)}</span><span class="choice-url">${esc(x.url)}</span></label>`).join('')}
+<label class="choice ${configCustom?'custom-selected':''}"><input type="radio" name="configChoice" value="__custom" ${configCustom?'checked':''}><span class="choice-name">自定义</span><span class="choice-url">使用你自己的订阅转换规则</span></label>
 </div>
 <div class="current-box">
 <div class="current-title">当前配置</div>
-<textarea id="configCurrent" class="current-input" ${configCustom?'':'readonly'} placeholder="请选择配置">${esc(configCurrentValue)}</textarea>
+<div class="current-row custom-panel">
+<textarea id="configCurrent" class="current-config-input" readonly placeholder="请选择订阅转换规则">${esc(configCurrentValue)}</textarea>
+<button type="button" class="button secondary edit-custom" id="editConfigCustom">编辑</button>
+</div>
 </div>
 <div class="status-box">
 <div class="status-title">可用状态</div>
@@ -1661,83 +1685,94 @@ ${configs.map(x=>`<label class="choice"><input type="checkbox" name="configChoic
 <section id="result" class="panel result-panel" hidden><h2 class="section-title">订阅链接页面</h2><div class="section-note">生成成功，打开下面的链接即可访问你的订阅链接页面。</div><div class="result-url" id="direct"></div><div class="actions"><button class="button" id="copyDirect" type="button">复制订阅链接</button><a class="button secondary" id="openDirect" target="_blank" rel="noopener">打开订阅链接页面</a></div></section>
 </main>
 
+<div id="customApiModal" class="custom-modal-overlay"><div class="custom-modal"><h3>自定义订阅转换后端</h3><p>输入你自己的 SUBAPI 地址。</p><input id="customApiInput" placeholder="https://subapi.example.com"><div class="custom-modal-actions"><button type="button" class="button secondary" id="cancelApiCustom">取消</button><button type="button" class="button" id="saveApiCustom">保存</button></div></div></div>
+<div id="customConfigModal" class="custom-modal-overlay"><div class="custom-modal"><h3>自定义订阅转换规则</h3><p>输入你自己的 SUBCONFIG 地址。</p><input id="customConfigInput" placeholder="https://example.com/config.ini"><div class="custom-modal-actions"><button type="button" class="button secondary" id="cancelConfigCustom">取消</button><button type="button" class="button" id="saveConfigCustom">保存</button></div></div></div>
+
 <script>
 const API_LIST=${json(apis)};
 const CONFIG_LIST=${json(configs)};
 const $=id=>document.getElementById(id);
-const state={apiCustom:${apiCustom},configCustom:${configCustom},apiUrl:${json(apiUrl)},configUrl:${json(configUrl)}};
+const state={apiId:${json(apiId)},configId:${json(configId)},apiCustom:${apiCustom},configCustom:${configCustom},apiUrl:${json(apiUrl)},configUrl:${json(configUrl)}};
 
 function selected(kind){
  const api=kind==='api';
- const ids=[...document.querySelectorAll('input[name="'+(api?'apiChoice':'configChoice')+'"]:checked')].map(x=>x.value);
- const custom=$(api?'apiCustomCheck':'configCustomCheck').checked;
- const box=$(api?'apiCurrent':'configCurrent');
+ const input=document.querySelector('input[name="'+(api?'apiChoice':'configChoice')+'"]:checked');
+ const value=input?.value||'';
+ const custom=value==='__custom';
  const list=api?API_LIST:CONFIG_LIST;
- const items=ids.map(id=>list.find(x=>x.id===id)).filter(Boolean);
- const customUrl=custom?box.value.trim().split('\n').slice(-1)[0].trim():'';
- return {ids,custom,items,customUrl,all:[...items.map(x=>x.url),...(custom&&customUrl?[customUrl]:[])]};
+ const id=custom?'':value;
+ const item=list.find(x=>x.id===id)||null;
+ const customUrl=api?state.apiUrl:state.configUrl;
+ return {id,custom,item,customUrl,all:custom?(customUrl?[customUrl]:[]):(item?[item.url]:[])};
 }
-function updateCurrent(kind){
- const api=kind==='api', s=selected(kind), box=$(api?'apiCurrent':'configCurrent');
- const preset=s.items.map(x=>x.url);
- const oldCustom=api?state.apiUrl:state.configUrl;
- box.readOnly=!s.custom;
- if(s.custom){
-   if(!box.value.trim() || box.readOnly!==false) box.value=[...preset,...(oldCustom?[oldCustom]:[])].filter(Boolean).join('\n');
- }else{
-   box.value=preset.join('\n');
+function renderCurrent(kind){
+ const api=kind==='api',s=selected(kind);
+ const box=$(api?'apiCurrent':'configCurrent');
+ box.value=s.custom?s.customUrl:(s.item?.url||'');
+ if(!api){
+   box.style.height='auto';
+   box.style.height=Math.max(54,Math.min(260,box.scrollHeight))+'px';
  }
- if(api){state.apiIds=s.ids;state.apiCustom=s.custom;state.apiUrl=s.custom?box.value.trim().split('\n').slice(-1)[0]||'':'';}
- else{state.configIds=s.ids;state.configCustom=s.custom;state.configUrl=s.custom?box.value.trim().split('\n').slice(-1)[0]||'':'';}
+ $(api?'editApiCustom':'editConfigCustom').style.display=s.custom?'inline-flex':'none';
 }
 function savePrefs(){
  const a=selected('api'),c=selected('config');
- const v={apiIds:a.ids,apiCustom:a.custom,apiUrl:a.custom?state.apiUrl:'',configIds:c.ids,configCustom:c.custom,configUrl:c.custom?state.configUrl:'',noAds:$('#noAds').value.trim()};
+ const v={apiIds:a.id?[a.id]:[],apiCustom:a.custom,apiUrl:a.custom?state.apiUrl:'',configIds:c.id?[c.id]:[],configCustom:c.custom,configUrl:c.custom?state.configUrl:'',noAds:$('#noAds').value.trim()};
  const e=encodeURIComponent(JSON.stringify(v));
  if(e.length<=3600)document.cookie='CF_SUB_PREFS='+e+'; Max-Age=2592000; Path=/; SameSite=Lax; Secure';
 }
+function escText(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
 function setStatus(id,html){$(id).innerHTML=html}
 async function checkAvailability(){
- updateCurrent('api');updateCurrent('config');
+ renderCurrent('api');renderCurrent('config');
  const a=selected('api'),c=selected('config');
- if(!a.all.length){setStatus('apiStatus','<div class="status-item wait">⏳ 未选择订阅转换后端</div>');}
- if(!c.all.length){setStatus('configStatus','<div class="status-item wait">⏳ 未选择订阅转换规则</div>');}
+ if(!a.all.length){setStatus('apiStatus','<div class="status-item wait">⏳ 未配置订阅转换后端</div>')}
+ if(!c.all.length){setStatus('configStatus','<div class="status-item wait">⏳ 未配置订阅转换规则</div>')}
  if(!a.all.length||!c.all.length)return;
  setStatus('apiStatus','<div class="status-item wait">⏳ 状态检测中</div>');
  setStatus('configStatus','<div class="status-item wait">⏳ 状态检测中</div>');
- const pairs=[];
- a.all.forEach(api=>c.all.forEach(config=>pairs.push({api,config})));
- const results=await Promise.all(pairs.map(async p=>{
-   try{
-     const r=await fetch('/api/status?api='+encodeURIComponent(p.api)+'&config='+encodeURIComponent(p.config),{cache:'no-store'});
-     const d=await r.json();
-     return {...p,apiOk:Boolean(r.ok&&d.api?.ok),configOk:Boolean(r.ok&&d.config?.ok),version:d.api?.version||''};
-   }catch(e){return {...p,apiOk:false,configOk:false,version:''}}
- }));
- setStatus('apiStatus',a.all.map(api=>{
-   const rs=results.filter(x=>x.api===api),ok=rs.some(x=>x.apiOk),v=rs.find(x=>x.api===api&&x.version)?.version||'';
-   return '<div class="status-item '+(ok?'ok':'bad')+'">'+(ok?'✅ ':'❌ ')+api.replace(/</g,'&lt;')+(v?' ('+v.replace(/</g,'&lt;')+')':'')+'</div>';
- }).join(''));
- setStatus('configStatus',c.all.map(config=>{
-   const rs=results.filter(x=>x.config===config),ok=rs.some(x=>x.configOk);
-   return '<div class="status-item '+(ok?'ok':'bad')+'">'+(ok?'✅ ':'❌ ')+config.replace(/</g,'&lt;')+'</div>';
- }).join(''));
+ const api=a.all[0],config=c.all[0];
+ try{
+   const r=await fetch('/api/status?api='+encodeURIComponent(api)+'&config='+encodeURIComponent(config),{cache:'no-store'});
+   const d=await r.json();
+   const apiOk=Boolean(r.ok&&d.api?.ok),configOk=Boolean(r.ok&&d.config?.ok),version=d.api?.version||'';
+   setStatus('apiStatus','<div class="status-item '+(apiOk?'ok':'bad')+'">'+(apiOk?'✅ ':'❌ ')+escText(api)+(version?' ('+escText(version)+')':'')+'</div>');
+   setStatus('configStatus','<div class="status-item '+(configOk?'ok':'bad')+'">'+(configOk?'✅ ':'❌ ')+escText(config)+'</div>');
+ }catch(e){
+   setStatus('apiStatus','<div class="status-item bad">❌ '+escText(api)+'</div>');
+   setStatus('configStatus','<div class="status-item bad">❌ '+escText(config)+'</div>');
+ }
 }
-function choiceChanged(kind){updateCurrent(kind);savePrefs();checkAvailability();}
+function choiceChanged(kind){
+ const api=kind==='api',s=selected(kind);
+ if(api){state.apiId=s.id;state.apiCustom=s.custom}
+ else{state.configId=s.id;state.configCustom=s.custom}
+ renderCurrent(kind);savePrefs();checkAvailability();
+}
+function openCustomModal(kind){
+ const api=kind==='api';
+ const overlay=$(api?'customApiModal':'customConfigModal');
+ const input=$(api?'customApiInput':'customConfigInput');
+ input.value=api?state.apiUrl:state.configUrl;
+ overlay.style.display='flex';
+ setTimeout(()=>input.focus(),0);
+}
+function closeCustomModal(kind){$(kind==='api'?'customApiModal':'customConfigModal').style.display='none'}
+function saveCustom(kind){
+ const api=kind==='api',input=$(api?'customApiInput':'customConfigInput'),value=input.value.trim();
+ if(!/^https?:\/\//i.test(value))return alert('URL 必须以 http:// 或 https:// 开头');
+ if(api)state.apiUrl=value;else state.configUrl=value;
+ closeCustomModal(kind);renderCurrent(kind);savePrefs();checkAvailability();
+}
 document.querySelectorAll('input[name="apiChoice"]').forEach(x=>x.addEventListener('change',()=>choiceChanged('api')));
 document.querySelectorAll('input[name="configChoice"]').forEach(x=>x.addEventListener('change',()=>choiceChanged('config')));
-$('#apiCustomCheck').addEventListener('change',()=>choiceChanged('api'));
-$('#configCustomCheck').addEventListener('change',()=>choiceChanged('config'));
-$('#apiCurrent').addEventListener('input',()=>{
- if(!$('#apiCustomCheck').checked)return;
- state.apiCustom=true;state.apiUrl=$('#apiCurrent').value.trim().split('\n').slice(-1)[0]||'';savePrefs();
- clearTimeout(window.__apiTimer);window.__apiTimer=setTimeout(checkAvailability,450);
-});
-$('#configCurrent').addEventListener('input',()=>{
- if(!$('#configCustomCheck').checked)return;
- state.configCustom=true;state.configUrl=$('#configCurrent').value.trim().split('\n').slice(-1)[0]||'';savePrefs();
- clearTimeout(window.__configTimer);window.__configTimer=setTimeout(checkAvailability,450);
-});
+$('#editApiCustom').addEventListener('click',()=>openCustomModal('api'));
+$('#editConfigCustom').addEventListener('click',()=>openCustomModal('config'));
+$('#cancelApiCustom').addEventListener('click',()=>closeCustomModal('api'));
+$('#cancelConfigCustom').addEventListener('click',()=>closeCustomModal('config'));
+$('#saveApiCustom').addEventListener('click',()=>saveCustom('api'));
+$('#saveConfigCustom').addEventListener('click',()=>saveCustom('config'));
+document.querySelectorAll('.custom-modal-overlay').forEach(m=>m.addEventListener('click',e=>{if(e.target===m)m.style.display='none'}));
 $('#noAds').addEventListener('input',savePrefs);
 $('#copyDirect').addEventListener('click',async()=>{
  const v=$('#direct').textContent.trim();
@@ -1746,18 +1781,18 @@ $('#copyDirect').addEventListener('click',async()=>{
 $('#generate').addEventListener('click',async()=>{
  const button=$('#generate'),sources=$('#sources').value.trim(),a=selected('api'),c=selected('config');
  if(!sources)return alert('请输入订阅链接');
- if(!a.all.length)return alert('请选择至少一个订阅转换后端');
- if(!c.all.length)return alert('请选择至少一个订阅转换规则');
- if(a.custom&&!/^https?:\\/\\//i.test(a.customUrl))return alert('自定义订阅转换后端必须以 http:// 或 https:// 开头');
- if(c.custom&&!/^https?:\\/\\//i.test(c.customUrl))return alert('自定义订阅转换规则必须以 http:// 或 https:// 开头');
+ if(!a.all.length)return alert('请选择订阅转换后端');
+ if(!c.all.length)return alert('请选择订阅转换规则');
+ if(a.custom&&!/^https?:\/\//i.test(a.customUrl))return alert('请先在自定义弹窗中填写有效的订阅转换后端');
+ if(c.custom&&!/^https?:\/\//i.test(c.customUrl))return alert('请先在自定义弹窗中填写有效的订阅转换规则');
  savePrefs();button.disabled=true;button.textContent='生成中…';
  try{
-   const r=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},cache:'no-store',body:JSON.stringify({sources,apiIds:a.ids,apiCustom:a.custom,apiUrl:a.custom?a.customUrl:'',configIds:c.ids,configCustom:c.custom,configUrl:c.custom?a.customUrl:'',noAds:$('#noAds').value.trim()})});
+   const r=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},cache:'no-store',body:JSON.stringify({sources,apiIds:a.id?[a.id]:[],apiCustom:a.custom,apiUrl:a.custom?a.customUrl:'',configIds:c.id?[c.id]:[],configCustom:c.custom,configUrl:c.custom?c.customUrl:'',noAds:$('#noAds').value.trim()})});
    const d=await r.json();if(!r.ok||!d.ok)throw new Error(d.error||'生成失败');
    $('#direct').textContent=d.subscription_url;$('#openDirect').href=d.subscription_url;$('#result').hidden=false;$('#result').scrollIntoView({behavior:'smooth',block:'start'});
  }catch(e){alert(e.message||'生成失败')}finally{button.disabled=false;button.textContent='生成聚合订阅'}
 });
-updateCurrent('api');updateCurrent('config');checkAvailability();
+renderCurrent('api');renderCurrent('config');checkAvailability();
 </script>
 </body>
 </html>`;
@@ -1797,13 +1832,27 @@ function renderAdminPage(url,env,settings){
     return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(settings.subName||'CF-SUBS')} · 管理后台</title><style>${getToolStyles()}
 .sub-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap}.provider-main{min-width:0}.provider-url{margin-bottom:0;word-break:break-all;overflow-wrap:anywhere}.provider-item{padding:12px}.chip{display:inline-flex;align-items:center;padding:3px 8px;margin:2px 3px 2px 0;border-radius:8px;background:rgba(31,75,153,.08);color:#1f4b99;font-size:12px}.chip-on{background:rgba(76,175,80,.1);color:#2e7d32}.chip-off{background:rgba(120,120,120,.1);color:#777}.chip-default{background:rgba(31,75,153,.1);color:#1f4b99}.empty{font-size:12px;color:#888}.topbar{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap}.topbar-main{min-width:0;flex:1}.site-title-input{font-size:28px!important;font-weight:700!important;border:0!important;background:transparent!important;padding:0!important;height:auto!important;box-shadow:none!important;color:#1a1a1a!important}.site-title-input:focus{box-shadow:none!important}.top-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}.top-actions .button{min-width:86px}.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.4);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);display:none;align-items:center;justify-content:center;z-index:1000;padding:20px}.modal-content{width:min(460px,100%);background:rgba(255,255,255,.95);border-radius:20px;padding:24px;box-shadow:0 10px 40px rgba(0,0,0,.2);border:1px solid rgba(255,255,255,.5)}.modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}.modal-content input[type=checkbox]{width:18px;height:18px;padding:0;margin-right:7px;vertical-align:-4px}@media(max-width:600px){.top-actions{width:100%;justify-content:stretch}.top-actions .button{flex:1}.admin-row-actions{width:100%}.admin-row-actions button{flex:1}.modal-content{padding:20px}}@media(prefers-color-scheme:dark){.site-title-input{color:#f5f5f5!important}.modal-content{background:rgba(30,30,30,.96);border-color:rgba(255,255,255,.1)}.chip{background:rgba(100,181,246,.1);color:#90caf9}.chip-on{background:rgba(129,199,132,.1);color:#81c784}.chip-off{background:rgba(255,255,255,.08);color:#aaa}.chip-default{background:rgba(100,181,246,.12);color:#90caf9}.empty{color:#aaa}}</style></head><body><main class="page">
 <header class="header topbar"><div class="topbar-main"><input id="siteName" class="site-title-input" value="${esc(settings.subName||'CF-SUBS')}" aria-label="站点标题"><div class="subtitle">管理订阅转换后端、订阅转换规则和站点安全设置。</div></div><div class="top-actions"><button type="button" class="button secondary" onclick="openModal('securityModal')">安全</button><button type="button" class="button secondary" onclick="openModal('pathModal')">管理员路径</button><a class="button danger" href="/${esc(settings.adminPath||'admin')}/logout">退出</a></div></header>
-<section class="panel"><div class="sub-head"><div><h2 class="section-title">订阅转换后端(SUBAPI)</h2><div class="section-note">管理员预留给访客使用的订阅转换后端。</div></div><button type="button" onclick="showProvider('subapi','')">＋ 添加订阅转换后端</button></div><div class="sub-grid" style="margin-top:12px">${rows(apis,'subapi','暂无订阅转换后端，请手动添加。',defaultApiId)}</div></section>
-<section class="panel"><div class="sub-head"><div><h2 class="section-title">订阅转换规则(SUBCONFIG)</h2><div class="section-note">管理员预留给访客使用的订阅转换规则。</div></div><button type="button" onclick="showProvider('subconfig','')">＋ 添加订阅转换规则</button></div><div class="sub-grid" style="margin-top:12px">${rows(configs,'subconfig','暂无订阅转换规则，请手动添加。',defaultConfigId)}</div></section>
+<section class="panel"><div class="sub-head"><div><h2 class="section-title">订阅转换后端(SUBAPI)</h2><div class="section-note">可供访客选择的订阅转换后端。</div></div><button type="button" onclick="showProvider('subapi','')">＋ 添加订阅转换后端</button></div><div class="sub-grid" style="margin-top:12px">${rows(apis,'subapi','暂无订阅转换后端，请手动添加。',defaultApiId)}</div></section>
+<section class="panel"><div class="sub-head"><div><h2 class="section-title">订阅转换规则(SUBCONFIG)</h2><div class="section-note">可供访客选择的订阅转换规则。</div></div><button type="button" onclick="showProvider('subconfig','')">＋ 添加订阅转换规则</button></div><div class="sub-grid" style="margin-top:12px">${rows(configs,'subconfig','暂无订阅转换规则，请手动添加。',defaultConfigId)}</div></section>
 </main>
 <div id="providerModal" class="modal-overlay"><div class="modal-content"><h2 class="section-title" id="modalTitle">添加</h2><div class="field"><label for="modalName">备注</label><input id="modalName"></div><div class="field"><label for="modalUrl">URL</label><input id="modalUrl" placeholder="https://..."></div><div class="field"><label><input id="modalEnabled" type="checkbox" checked>允许访客选择</label></div><div class="field"><label><input id="modalDefault" type="checkbox">设为无 Cookie 时的默认项</label></div><div class="modal-actions"><button type="button" class="secondary" onclick="hideProvider()">取消</button><button type="button" id="modalSave" onclick="saveProvider()">保存</button></div></div></div>
 <div id="securityModal" class="modal-overlay"><div class="modal-content"><h2 class="section-title">安全</h2><div class="section-note">修改管理员账号和密码。密码留空表示保持原密码。</div><div class="field"><label for="securityUser">管理员账号</label><input id="securityUser" value="${esc(settings.user||'')}" autocomplete="username"></div><div class="field"><label for="securityPass">管理员密码</label><input id="securityPass" type="password" placeholder="留空保持原密码" autocomplete="new-password"></div><div class="modal-actions"><button type="button" class="secondary" onclick="closeModal('securityModal')">取消</button><button type="button" id="saveSecurity" onclick="saveSecurity()">保存</button></div></div></div>
 <div id="pathModal" class="modal-overlay"><div class="modal-content"><h2 class="section-title">管理员路径</h2><div class="section-note">保存后立即进入新的管理员地址。</div><div class="field"><label for="pathValue">路径</label><input id="pathValue" value="${esc(settings.adminPath||'admin')}" placeholder="admin"></div><div class="modal-actions"><button type="button" class="secondary" onclick="closeModal('pathModal')">取消</button><button type="button" id="savePath" onclick="savePath()">保存</button></div></div></div>
 <script>
+let toastTimer;
+function showToast(message){
+    let toast=document.getElementById('adminToast');
+    if(!toast){
+        toast=document.createElement('div');
+        toast.id='adminToast';
+        toast.style.cssText='position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:9999;padding:12px 18px;border-radius:12px;background:rgba(20,22,25,.92);color:#fff;font-weight:600;box-shadow:0 10px 30px rgba(0,0,0,.25);pointer-events:none;';
+        document.body.appendChild(toast);
+    }
+    toast.textContent=message;
+    toast.style.display='block';
+    clearTimeout(toastTimer);
+    toastTimer=setTimeout(()=>{toast.style.display='none'},1400);
+}
 const DATA=${safeJson({apis,configs,defaultApiId,defaultConfigId})};
 let modalState=null;
 const $=id=>document.getElementById(id);
