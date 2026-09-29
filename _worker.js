@@ -253,7 +253,7 @@ async function handleRequest(request, env) {
                 effectiveSubProtocol,
                 userAgent,
                 userAgentHeader,
-                config_noAds: '',
+                config_noAds: String(tokenData?.noAds || ''),
                 FileName,
                 UD,
                 expire,
@@ -585,6 +585,7 @@ async function handleAdmin(request, env, runtime) {
                     if(!validName(name))return jsonResponse({ok:false,error:'备注不能为空且不能超过 80 个字符'},400);
                     if(!/^https?:\/\//i.test(value))return jsonResponse({ok:false,error:'URL 必须以 http:// 或 https:// 开头'},400);
                     const itemId=id||makeSubId(), item={id:itemId,name,url:value,enabled:data.enabled!==false};
+                    if(data.isDefault===true && item.enabled===false) return jsonResponse({ok:false,error:'默认项目必须保持启用'},400);
                     if(action==='create')list.push(item);
                     else{
                         const index=list.findIndex(x=>x.id===id);
@@ -593,6 +594,7 @@ async function handleAdmin(request, env, runtime) {
                     }
                     if(data.isDefault===true)cfg[defaultKey]=itemId;
                     if(data.isDefault===false&&String(cfg[defaultKey]||'')===itemId)cfg[defaultKey]='';
+                    if(item.enabled===false&&String(cfg[defaultKey]||'')===itemId)cfg[defaultKey]='';
                     cfg[key]=list;
                 }
                 await env.KV.put('CONFIG.json',JSON.stringify(cfg));
@@ -713,36 +715,34 @@ async function handlePublicGenerate(request,env,requestUrl){
         const configId=String(data.configId||'').trim();
         const apiItem=apiMode==='preset'?apis.find(x=>x.id===apiId):null;
         const configItem=configMode==='preset'?configs.find(x=>x.id===configId):null;
-        if(apiMode==='preset'&&!apiItem) return jsonResponse({ok:false,error:'请选择有效的 SUBAPI'},400);
-        if(configMode==='preset'&&!configItem) return jsonResponse({ok:false,error:'请选择有效的 SUBCONFIG'},400);
+        if(apiMode==='preset'&&!apiItem) return jsonResponse({ok:false,error:'请选择有效的订阅转换后端'},400);
+        if(configMode==='preset'&&!configItem) return jsonResponse({ok:false,error:'请选择有效的订阅转换规则'},400);
 
         const apiRaw=String(apiMode==='custom'?data.apiUrl:apiItem.url).trim();
         const configRaw=String(configMode==='custom'?data.configUrl:configItem.url).trim();
-        if(!/^https?:\/\//i.test(apiRaw)) return jsonResponse({ok:false,error:'SUBAPI 必须以 http:// 或 https:// 开头'},400);
-        if(!/^https?:\/\//i.test(configRaw)) return jsonResponse({ok:false,error:'SUBCONFIG 必须以 http:// 或 https:// 开头'},400);
+        if(!/^https?:\/\//i.test(apiRaw)) return jsonResponse({ok:false,error:'订阅转换后端必须以 http:// 或 https:// 开头'},400);
+        if(!/^https?:\/\//i.test(configRaw)) return jsonResponse({ok:false,error:'订阅转换规则必须以 http:// 或 https:// 开头'},400);
 
         const protocol=/^http:\/\//i.test(apiRaw)?'http':'https';
         const apiHost=apiRaw.replace(/^https?:\/\//i,'').replace(/\/+$/,'');
-        if(!apiHost) return jsonResponse({ok:false,error:'SUBAPI 无效'},400);
+        if(!apiHost) return jsonResponse({ok:false,error:'订阅转换后端无效'},400);
 
         const noAds=String(data.noAds||'').trim().slice(0,5000);
         const token=await makeRandomToken(env,8);
-        const name=normalizeName(data.name||`订阅链接 ${token}`);
-        const target=['auto','clash','singbox','surge','quanx','loon','mixed'].includes(String(data.target))?String(data.target):'auto';
-
+        const name='订阅链接';
         const item={
             url:token,name,sources,
             subApiIds:apiMode==='preset'?[apiItem.id]:[],
             subConfigIds:configMode==='preset'?[configItem.id]:[],
             backends:[{api:apiHost,config:configRaw,protocol}],
-            noAds,target,
+            noAds,target:'auto',
             createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),
             type:'sub-ui'
         };
         await env.KV.put(`${URL_PREFIX}${token}`,JSON.stringify(item));
 
         const prefs={
-            apiMode,apiId:apiMode==='preset'?apiItem.id:'',apiUrl:apiMode==='custom'?`${protocol}://${apiHost}`:'',
+            apiMode,apiId:apiMode==='preset'?apiItem.id:'',apiUrl:apiMode==='custom'?apiRaw:'',
             configMode,configId:configMode==='preset'?configItem.id:'',configUrl:configMode==='custom'?configRaw:'',
             noAds
         };
@@ -752,6 +752,279 @@ async function handlePublicGenerate(request,env,requestUrl){
         return jsonResponse({ok:true,url:item,subscription_url:subscriptionUrl},200,headers);
     }catch(e){return jsonResponse({ok:false,error:e?.message||String(e)},500);}
 }
+async function generateSubscription(request, env, sourceList, runtime, token) {
+    let allSources = [...new Set((sourceList || []).map(x => String(x).trim()).filter(Boolean))];
+
+    let 自建节点 = '';
+    let 订阅链接 = '';
+
+    for (const x of allSources) {
+        if (x.toLowerCase().startsWith('http')) {
+            订阅链接 += x + '\n';
+        } else {
+            自建节点 += x + '\n';
+        }
+    }
+
+    let nodeUrls = await ADD(订阅链接);
+    let req_data = 自建节点;
+
+    const isSubConverterRequest =
+        request.headers.get('subconverter-request') ||
+        request.headers.get('subconverter-version') ||
+        runtime.userAgent.includes('subconverter');
+
+    let 订阅格式 = 'base64';
+
+    if (
+        !(
+            runtime.userAgent.includes('null') ||
+            isSubConverterRequest ||
+            runtime.userAgent.includes('nekobox') ||
+            runtime.userAgent.includes('cf-sub')
+        )
+    ) {
+        if (
+            runtime.userAgent.includes('sing-box') ||
+            runtime.userAgent.includes('singbox') ||
+            new URL(request.url).searchParams.has('sb') ||
+            new URL(request.url).searchParams.has('singbox')
+        ) {
+            订阅格式 = 'singbox';
+        } else if (
+            runtime.userAgent.includes('surge') ||
+            new URL(request.url).searchParams.has('surge')
+        ) {
+            订阅格式 = 'surge';
+        } else if (
+            runtime.userAgent.includes('quantumult') ||
+            new URL(request.url).searchParams.has('quanx')
+        ) {
+            订阅格式 = 'quanx';
+        } else if (
+            runtime.userAgent.includes('loon') ||
+            new URL(request.url).searchParams.has('loon')
+        ) {
+            订阅格式 = 'loon';
+        } else if (
+            runtime.userAgent.includes('clash') ||
+            runtime.userAgent.includes('meta') ||
+            runtime.userAgent.includes('mihomo') ||
+            new URL(request.url).searchParams.has('clash')
+        ) {
+            订阅格式 = 'clash';
+        }
+    }
+
+    if (runtime.tokenData?.target && runtime.tokenData.target !== 'auto') {
+        订阅格式 = runtime.tokenData.target;
+    }
+
+    const sourceToken = new URL(request.url).searchParams.get('sourceToken') || token || '';
+    const conversionSeed = `${new URL(request.url).origin}/${await MD5MD5(runtime.fakeToken)}?token=${encodeURIComponent(runtime.fakeToken)}${sourceToken ? `&sourceToken=${encodeURIComponent(sourceToken)}` : ''}`;
+    let 订阅转换URL = conversionSeed;
+    let 追加UA = 'v2rayn';
+    const requestUrl = new URL(request.url);
+
+    if (requestUrl.searchParams.has('b64') || requestUrl.searchParams.has('base64')) {
+        订阅格式 = 'base64';
+    } else if (requestUrl.searchParams.has('clash')) {
+        追加UA = 'clash';
+    } else if (requestUrl.searchParams.has('singbox')) {
+        追加UA = 'singbox';
+    } else if (requestUrl.searchParams.has('surge')) {
+        追加UA = 'surge';
+    } else if (requestUrl.searchParams.has('quanx')) {
+        追加UA = 'Quantumult%20X';
+    } else if (requestUrl.searchParams.has('loon')) {
+        追加UA = 'Loon';
+    }
+
+    nodeUrls = [...new Set(nodeUrls)].filter(item => item && item.trim());
+
+    if (nodeUrls.length > 0) {
+        const 请求订阅响应内容 = await getSUB(
+            nodeUrls,
+            request,
+            追加UA,
+            runtime.userAgentHeader
+        );
+
+        req_data += 请求订阅响应内容[0].join('\n');
+        订阅转换URL += '|' + 请求订阅响应内容[1];
+
+        // base64 模式下，对结构化订阅再做 mixed 转换；只使用本次订阅实际绑定的后端。
+        if (
+            订阅格式 === 'base64' &&
+            !isSubConverterRequest &&
+            请求订阅响应内容[1].includes('://')
+        ) {
+            try {
+                const backendPairs = await getSelectedBackends(env, runtime.tokenData, runtime);
+                const backend = backendPairs[0];
+                if (backend?.api && backend?.config) {
+                    const u = buildSubUrl(backend.api, backend.config, 'mixed', 请求订阅响应内容[1], backend.protocol);
+                    const res = await fetch(u, { headers: { 'User-Agent': 'v2rayn/CF-SUB' } });
+                    if (res.ok) req_data += '\n' + atob(await res.text());
+                }
+            } catch (error) {}
+        }
+    }
+
+    // 原 CF-SUB WARP 支持
+    if (env.WARP) {
+        const warpList = await ADD(env.WARP);
+        订阅转换URL += '|' + warpList.join('|');
+    }
+
+    const text = new TextDecoder().decode(
+        new TextEncoder().encode(req_data)
+    );
+
+    // 原 CF-SUB NOADS
+    let filteredLines = text.split('\n');
+
+    if (runtime.config_noAds) {
+        const adKeywords = runtime.config_noAds
+            .split(/[, \r\n]+/)
+            .map(k => k.trim().toLowerCase())
+            .filter(k => k.length > 0);
+
+        if (adKeywords.length > 0) {
+            filteredLines = filteredLines.filter(line => {
+                const lowerLine = line.toLowerCase();
+                return !adKeywords.some(keyword => lowerLine.includes(keyword));
+            });
+        }
+    }
+
+    const uniqueLines = new Set(filteredLines);
+    const result = [...uniqueLines].join('\n');
+
+    let base64Data;
+
+    try {
+        base64Data = btoa(result);
+    } catch (e) {
+        base64Data = encodeBase64(result);
+    }
+
+    const responseHeaders = {
+        'content-type': 'text/plain; charset=utf-8',
+        'Profile-Update-Interval': `${SUBUpdateTime}`,
+        'Profile-web-page-url': request.url.includes('?')
+            ? request.url.split('?')[0]
+            : request.url
+    };
+
+    if (订阅格式 === 'base64' || token === runtime.fakeToken) {
+        return new Response(base64Data, { headers: responseHeaders });
+    }
+
+    try {
+        const backendPairs = await getSelectedBackends(env, runtime.tokenData, runtime);
+        let lastError;
+        for (const backend of backendPairs) {
+            try {
+                const finalUrl = buildSubUrl(backend.api, backend.config, 订阅格式, 订阅转换URL, backend.protocol);
+                const res = await fetch(finalUrl, { headers: { 'User-Agent': runtime.userAgentHeader } });
+                if (!res.ok) throw new Error(`SUBAPI ${res.status}`);
+                let content = await res.text();
+                if (订阅格式 === 'clash') content = clashFix(content);
+                if (!runtime.userAgent.includes('mozilla')) {
+                    responseHeaders['Content-Disposition'] = `attachment; filename*=utf-8''${encodeURIComponent(runtime.FileName)}`;
+                }
+                return new Response(content, { headers: responseHeaders });
+            } catch (e) { lastError = e; }
+        }
+        throw lastError || new Error('没有可用的 SUBAPI/SUBCONFIG');
+    } catch (error) {
+        // 没有可用的转换后端时，返回已经聚合/去重后的 Base64 订阅，避免依赖任何隐藏的默认 SUBAPI/SUBCONFIG。
+        return new Response(base64Data, { headers: responseHeaders });
+    }
+
+}
+
+/* =========================================================
+ * 以下为原 CF-SUB 核心函数：保持原行为
+ * ======================================================= */
+
+function normalizeProviderList(input) {
+    if (!Array.isArray(input)) return [];
+    return input.map(x => ({
+        id: String(x?.id || makeSubId()),
+        name: normalizeName(x?.name || '未命名'),
+        url: String(x?.url || '').trim(),
+        enabled: x?.enabled !== false,
+        ...(x?.providerType ? { providerType: String(x.providerType) } : {})
+    })).filter(x => x.url);
+}
+
+async function getSelectedBackends(env, tokenData, runtime) {
+    const cfg = await getConfig(env);
+    const apis = normalizeProviderList(cfg.subApis).filter(x => x.enabled);
+    const configs = normalizeProviderList(cfg.subConfigs).filter(x => x.enabled);
+    const selectedApis = (tokenData?.subApiIds || []).map(id => apis.find(x => x.id === id)).filter(Boolean);
+    const selectedConfigs = (tokenData?.subConfigIds || []).map(id => configs.find(x => x.id === id)).filter(Boolean);
+    const apiList = selectedApis.length ? selectedApis : (apis.length ? apis : [{ url: runtime.effectiveSubConverter }]);
+    const configList = selectedConfigs.length ? selectedConfigs : (configs.length ? configs : [{ url: runtime.effectiveSubConfig }]);
+    const pairs=[];
+    for(const api of apiList){ let apiUrl=String(api.url||'').trim(), protocol=/^http:\/\//i.test(apiUrl)?'http':'https'; apiUrl=apiUrl.replace(/^https?:\/\//i,'').replace(/\/+$/,''); for(const config of configList) pairs.push({api:apiUrl,config:config.url,protocol}); }
+    return pairs.length ? pairs : [{api:runtime.effectiveSubConverter,config:runtime.effectiveSubConfig,protocol:runtime.effectiveSubProtocol}];
+}
+
+async function handlePublicGenerate(request, env, requestUrl) {
+    if (!env.KV) return jsonResponse({ ok: false, error: '未绑定 KV' }, 500);
+    try {
+        const data = await request.json();
+        const sources = cleanSourceList(data.sources || data.url || '');
+        if (!sources.length) return jsonResponse({ ok: false, error: '请输入至少一个订阅链接' }, 400);
+        if (sources.length > 100) return jsonResponse({ ok: false, error: '订阅链接最多 100 条' }, 400);
+
+        const cfg = await getConfig(env);
+        const apis = normalizeProviderList(cfg.subApis).filter(x => x.enabled);
+        const configs = normalizeProviderList(cfg.subConfigs).filter(x => x.enabled);
+        const apiIds = Array.isArray(data.subApiIds)
+            ? [...new Set(data.subApiIds.map(String))].filter(id => apis.some(x => x.id === id))
+            : [];
+        const configIds = Array.isArray(data.subConfigIds)
+            ? [...new Set(data.subConfigIds.map(String))].filter(id => configs.some(x => x.id === id))
+            : [];
+
+        if (apis.length && !apiIds.length) return jsonResponse({ ok: false, error: '请选择至少一个 SUBAPI' }, 400);
+        if (configs.length && !configIds.length) return jsonResponse({ ok: false, error: '请选择至少一个 SUBCONFIG' }, 400);
+
+        const token = await makeRandomToken(env, 8);
+        const name = normalizeName(data.name || `订阅链接 ${token}`);
+        const target = ['auto', 'clash', 'singbox', 'surge', 'quanx', 'loon', 'mixed'].includes(String(data.target))
+            ? String(data.target)
+            : 'auto';
+
+        const item = {
+            url: token,
+            name,
+            sources,
+            subApiIds: apiIds,
+            subConfigIds: configIds,
+            target,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            type: 'sub-ui'
+        };
+
+        await env.KV.put(`${URL_PREFIX}${token}`, JSON.stringify(item));
+
+        const subscriptionUrl = `${requestUrl.origin}/${encodeURIComponent(token)}`;
+        return jsonResponse({
+            ok: true,
+            url: item,
+            subscription_url: subscriptionUrl
+        });
+    } catch (e) {
+        return jsonResponse({ ok: false, error: e?.message || String(e) }, 500);
+    }
+}
+
 
 function buildSubUrl(api, config, target, urlToConvert, protocol) {
     let base = `${protocol}://${api}/sub?target=${target}&url=${encodeURIComponent(urlToConvert)}&insert=false&config=${encodeURIComponent(config)}&emoji=true&list=false&tfo=false&scv=true&fdn=false&sort=false`;
@@ -1350,74 +1623,38 @@ async function renderSubUIHome(request,url,env){
     const configMode=prefs?.configMode==='custom'&&configCustom?'custom':'preset';
     const noAds=String(prefs?.noAds||'');
     const esc=x=>escapeHTML(String(x??''));
-    return `<!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${esc(cfg.subName||'CF-SUBS')} · 订阅转换</title>
-<style>${getSubUIStyles()}
-.backend-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.mode-tabs{display:flex;gap:8px;margin-bottom:10px}
-.mode-tab{flex:1;min-height:36px;border:1px solid #c8c8c0;border-radius:10px;background:rgba(255,255,255,.7);color:#222;font-weight:600;cursor:pointer}
-.mode-tab.active{background:#2f3338;color:#fff;border-color:#343a40}.backend-list{display:grid;gap:8px}
-.backend-option{display:grid;grid-template-columns:18px minmax(0,1fr);gap:8px;align-items:center;padding:10px;border:1px solid rgba(229,229,223,.6);border-radius:10px;background:rgba(255,255,255,.5);cursor:pointer}
-.backend-option input{width:18px;height:18px;margin:0}.backend-option span{font-weight:600;overflow-wrap:anywhere}.backend-option small{grid-column:2;color:#888;font-size:12px;word-break:break-all;overflow-wrap:anywhere}
-.custom-box[hidden]{display:none}.availability{display:grid;grid-template-columns:1fr 1fr;gap:10px}
-.availability-item{padding:10px 12px;border-radius:10px;border:1px solid rgba(229,229,223,.7);background:rgba(255,255,255,.5)}
-.availability-label{font-size:12px;color:#777;margin-bottom:4px}.availability-value{font-weight:700}
-.available{color:#2e7d32}.unavailable{color:#c62828}.checking{color:#888}.site-name{font-size:12px;color:#888;margin-bottom:4px}
-.noads-box textarea{min-height:100px}@media(max-width:700px){.backend-grid,.availability{grid-template-columns:1fr}}
-@media(prefers-color-scheme:dark){.mode-tab{background:rgba(40,40,40,.7);color:#eee;border-color:rgba(255,255,255,.15)}.mode-tab.active{background:#3f4650;border-color:#69717c;color:#fff}
-.backend-option,.availability-item{background:rgba(40,40,40,.5);border-color:rgba(255,255,255,.1)}.backend-option small,.availability-label,.site-name{color:#aaa}
-.available{color:#81c784}.unavailable{color:#e57373}.checking{color:#aaa}}
-</style></head>
-<body><main class="page">
+    const json=x=>JSON.stringify(x).replace(/</g,'\\u003c');
+    return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${esc(cfg.subName||'CF-SUBS')} · 订阅转换</title><style>${getSubUIStyles()}
+.backend-list{display:grid;gap:8px}.backend-option{display:grid;grid-template-columns:18px minmax(0,1fr);gap:8px;align-items:center;padding:10px;border:1px solid rgba(229,229,223,.6);border-radius:10px;background:rgba(255,255,255,.5);cursor:pointer}.backend-option input{width:18px;height:18px;margin:0}.backend-option span{font-weight:600;overflow-wrap:anywhere}.backend-option small{grid-column:2;color:#888;font-size:12px;word-break:break-all;overflow-wrap:anywhere}.mode-tabs{display:flex;gap:8px;margin-bottom:10px}.mode-tab{flex:1;min-height:36px;border:1px solid #c8c8c0;border-radius:10px;background:rgba(255,255,255,.7);color:#222;font-weight:600;cursor:pointer}.mode-tab.active{background:#2f3338;color:#fff;border-color:#343a40}.custom-box[hidden],.preset-box[hidden]{display:none}.status-card{padding:0}.status-block{padding:14px;border:1px solid rgba(229,229,223,.7);border-radius:14px;background:rgba(255,255,255,.5);margin-top:10px}.status-okbar{background:rgba(76,175,80,.12);border:1px solid rgba(76,175,80,.25);color:#2e7d32;border-radius:9px;padding:9px 12px;font-weight:700;word-break:break-all}.status-badbar{background:rgba(244,67,54,.1);border:1px solid rgba(244,67,54,.22);color:#c62828;border-radius:9px;padding:9px 12px;font-weight:700;word-break:break-all}.status-waitbar{background:rgba(255,152,0,.1);border:1px solid rgba(255,152,0,.2);color:#f57c00;border-radius:9px;padding:9px 12px;font-weight:700}.current-label{margin:12px 0 6px;font-size:13px;font-weight:700}.current-url{padding:10px 12px;border:1px solid rgba(229,229,223,.8);border-radius:9px;background:rgba(250,250,250,.7);color:#1f4b99;word-break:break-all;overflow-wrap:anywhere}.current-url a{color:inherit;text-decoration:none}.site-name{font-size:12px;color:#888;margin-bottom:4px}.result-url{padding:10px 12px;border:1px solid rgba(229,229,223,.8);border-radius:9px;background:rgba(250,250,250,.7);color:#1f4b99;word-break:break-all;overflow-wrap:anywhere}.result-url a{color:inherit}@media(max-width:600px){.mode-tabs{gap:6px}}@media(prefers-color-scheme:dark){.backend-option,.status-block{background:rgba(40,40,40,.5);border-color:rgba(255,255,255,.1)}.backend-option small,.site-name{color:#aaa}.mode-tab{background:rgba(40,40,40,.7);color:#eee;border-color:rgba(255,255,255,.15)}.mode-tab.active{background:#3f4650;border-color:#69717c}.status-okbar{background:rgba(129,199,132,.1);color:#81c784;border-color:rgba(129,199,132,.2)}.status-badbar{background:rgba(229,115,115,.1);color:#e57373;border-color:rgba(229,115,115,.2)}.status-waitbar{background:rgba(255,183,77,.1);color:#ffb74d;border-color:rgba(255,183,77,.2)}.current-url,.result-url{background:rgba(0,0,0,.3);color:#64b5f6;border-color:rgba(255,255,255,.1)}}
+</style></head><body><main class="page">
 <header class="header"><div class="site-name">${esc(cfg.subName||'CF-SUBS')}</div><h1 class="title">订阅转换</h1><div class="subtitle">粘贴你的订阅链接，生成属于你的聚合订阅。</div></header>
-
-<section class="panel"><h2 class="section-title">订阅链接</h2><div class="section-note">支持多个订阅地址，每行一个。</div>
-<div class="field"><textarea id="sources" placeholder="https://example.com/subscribe&#10;https://example.com/another"></textarea></div>
-<div class="row"><div><label for="target">生成类型</label><select id="target"><option value="auto">自动</option><option value="clash">Clash</option><option value="singbox">Sing-box</option><option value="surge">Surge</option><option value="quanx">Quantumult X</option><option value="loon">Loon</option><option value="mixed">Mixed</option></select></div>
-<div><label for="name">订阅名称</label><input id="name" placeholder="可选，例如：我的订阅"></div></div></section>
-
-<section class="panel"><h2 class="section-title">可用状态</h2><div class="section-note">查看你当前选择的两个订阅后端是否可用。</div>
-<div class="availability"><div class="availability-item"><div class="availability-label">SUBAPI</div><div class="availability-value checking" id="apiStatus">等待选择</div></div>
-<div class="availability-item"><div class="availability-label">SUBCONFIG</div><div class="availability-value checking" id="configStatus">等待选择</div></div></div></section>
-
-<section class="panel"><h2 class="section-title">SUBAPI</h2><div class="section-note">可以选择管理员预留的后端，也可以使用自己的后端。</div>
-<div class="mode-tabs"><button type="button" class="mode-tab ${apiMode==='preset'?'active':''}" data-mode="api" data-value="preset">管理员预留</button><button type="button" class="mode-tab ${apiMode==='custom'?'active':''}" data-mode="api" data-value="custom">自定义</button></div>
-<div id="apiPreset" class="backend-list" ${apiMode==='custom'?'hidden':''}>${apis.length?apis.map(x=>`<label class="backend-option"><input type="radio" name="apiPreset" value="${esc(x.id)}" ${x.id===apiPreset?'checked':''}><span>${esc(x.name)}${x.id===String(cfg.defaultSubApiId||'')?' · 默认':''}</span><small>${esc(x.url)}</small></label>`).join(''):'<div class="empty">管理员暂未预留 SUBAPI。</div>'}</div>
+<section class="panel"><h2 class="section-title">订阅链接</h2><div class="section-note">支持多个订阅地址，每行一个。</div><div class="field"><textarea id="sources" placeholder="https://example.com/subscribe&#10;https://example.com/another"></textarea></div></section>
+<section class="panel"><h2 class="section-title">可用状态</h2><div class="section-note">当前选择的订阅转换后端和订阅转换规则。</div>
+<div class="status-block"><div id="apiStatusBar" class="status-waitbar">⏳ 订阅转换后端状态检测中</div><div class="current-label">当前配置</div><div id="apiCurrent" class="current-url">未选择</div></div>
+<div class="status-block"><div id="configStatusBar" class="status-waitbar">⏳ 订阅转换规则状态检测中</div><div class="current-label">当前配置</div><div id="configCurrent" class="current-url">未选择</div></div></section>
+<section class="panel"><h2 class="section-title">订阅转换后端(SUBAPI)</h2><div class="section-note">选择管理员预留的后端，或填写你自己的 SUBAPI。</div><div class="mode-tabs"><button type="button" class="mode-tab ${apiMode==='preset'?'active':''}" data-mode="api" data-value="preset">管理员预留</button><button type="button" class="mode-tab ${apiMode==='custom'?'active':''}" data-mode="api" data-value="custom">自定义</button></div>
+<div id="apiPreset" class="preset-box" ${apiMode==='custom'?'hidden':''}><div class="backend-list">${apis.length?apis.map(x=>`<label class="backend-option"><input type="radio" name="apiPreset" value="${esc(x.id)}" ${x.id===apiPreset?'checked':''}><span>${esc(x.name)}${x.id===String(cfg.defaultSubApiId||'')?' · 默认':''}</span><small>${esc(x.url)}</small></label>`).join(''):'<div class="empty">管理员暂未预留订阅转换后端。</div>'}</div></div>
 <div id="apiCustom" class="custom-box" ${apiMode==='preset'?'hidden':''}><div class="field"><label for="apiCustomUrl">你的 SUBAPI</label><input id="apiCustomUrl" value="${esc(apiCustom)}" placeholder="https://subapi.example.com"></div></div></section>
-
-<section class="panel"><h2 class="section-title">SUBCONFIG</h2><div class="section-note">可以选择管理员预留的配置，也可以使用自己的配置。</div>
-<div class="mode-tabs"><button type="button" class="mode-tab ${configMode==='preset'?'active':''}" data-mode="config" data-value="preset">管理员预留</button><button type="button" class="mode-tab ${configMode==='custom'?'active':''}" data-mode="config" data-value="custom">自定义</button></div>
-<div id="configPreset" class="backend-list" ${configMode==='custom'?'hidden':''}>${configs.length?configs.map(x=>`<label class="backend-option"><input type="radio" name="configPreset" value="${esc(x.id)}" ${x.id===configPreset?'checked':''}><span>${esc(x.name)}${x.id===String(cfg.defaultSubConfigId||'')?' · 默认':''}</span><small>${esc(x.url)}</small></label>`).join(''):'<div class="empty">管理员暂未预留 SUBCONFIG。</div>'}</div>
+<section class="panel"><h2 class="section-title">订阅转换规则(SUBCONFIG)</h2><div class="section-note">选择管理员预留的规则，或填写你自己的 SUBCONFIG。</div><div class="mode-tabs"><button type="button" class="mode-tab ${configMode==='preset'?'active':''}" data-mode="config" data-value="preset">管理员预留</button><button type="button" class="mode-tab ${configMode==='custom'?'active':''}" data-mode="config" data-value="custom">自定义</button></div>
+<div id="configPreset" class="preset-box" ${configMode==='custom'?'hidden':''}><div class="backend-list">${configs.length?configs.map(x=>`<label class="backend-option"><input type="radio" name="configPreset" value="${esc(x.id)}" ${x.id===configPreset?'checked':''}><span>${esc(x.name)}${x.id===String(cfg.defaultSubConfigId||'')?' · 默认':''}</span><small>${esc(x.url)}</small></label>`).join(''):'<div class="empty">管理员暂未预留订阅转换规则。</div>'}</div></div>
 <div id="configCustom" class="custom-box" ${configMode==='preset'?'hidden':''}><div class="field"><label for="configCustomUrl">你的 SUBCONFIG</label><input id="configCustomUrl" value="${esc(configCustom)}" placeholder="https://example.com/config.ini"></div></div></section>
-
-<section class="panel noads-box"><h2 class="section-title">排除节点</h2><div class="section-note">公开使用。每行填写一个关键词，包含关键词的节点会被排除。</div>
-<div class="field"><textarea id="noAds" placeholder="例如：t.me&#10;广告&#10;example.com">${esc(noAds)}</textarea></div></section>
-
-<button class="primary" id="generate" type="button">生成订阅链接</button>
-<section id="result" class="panel result-panel" hidden><h2 class="section-title">订阅链接页面</h2><div class="section-note">生成成功。打开下面的地址即可进入你的订阅链接页面。</div>
-<div class="result-label">订阅链接</div><div class="result-url" id="direct"></div><div class="actions"><button class="button" id="copyDirect" type="button">复制订阅链接</button><a class="button secondary" id="openDirect" target="_blank" rel="noopener">打开订阅链接页面</a></div></section>
-</main>
-<script>
-const state={apiMode:${JSON.stringify(apiMode)},configMode:${JSON.stringify(configMode)}},$=id=>document.getElementById(id);
-function copyText(t){if(!t)return;navigator.clipboard.writeText(t).then(()=>alert('已复制')).catch(()=>alert('复制失败，请手动复制'))}
-function savePrefs(){
-    const a=selected('api'),c=selected('config');
-    const value={apiMode:state.apiMode,apiId:a.id||'',apiUrl:a.custom?a.url:'',configMode:state.configMode,configId:c.id||'',configUrl:c.custom?c.url:'',noAds:$('noAds').value.trim()};
-    const encoded=encodeURIComponent(JSON.stringify(value));
-    if(encoded.length<=3600) document.cookie='CF_SUB_PREFS='+encoded+'; Max-Age=2592000; Path=/; SameSite=Lax';
-}
-function switchMode(k,v){state[k+'Mode']=v;$(k==='api'?'apiPreset':'configPreset').hidden=v==='custom';$(k==='api'?'apiCustom':'configCustom').hidden=v==='preset';document.querySelectorAll('.mode-tab[data-mode="'+k+'"]').forEach(b=>b.classList.toggle('active',b.dataset.value===v));checkAvailability()}
-document.querySelectorAll('.mode-tab').forEach(b=>b.addEventListener('click',()=>{switchMode(b.dataset.mode,b.dataset.value);savePrefs()}));
-document.querySelectorAll('input[name="apiPreset"],input[name="configPreset"]').forEach(e=>e.addEventListener('change',()=>{checkAvailability();savePrefs()}));
-document.querySelectorAll('#apiCustomUrl,#configCustomUrl').forEach(e=>e.addEventListener('input',()=>{clearTimeout(window.__st);window.__st=setTimeout(()=>{checkAvailability();savePrefs()},450)}));
-function selected(k){if(state[k+'Mode']==='custom')return{url:$(k==='api'?'apiCustomUrl':'configCustomUrl').value.trim(),custom:true};const i=document.querySelector('input[name="'+k+'Preset"]:checked'),list=k==='api'?${JSON.stringify(apis)}:${JSON.stringify(configs)},x=i?list.find(v=>v.id===i.value):null;return{url:x?.url||'',id:x?.id||'',custom:false}}
-async function checkAvailability(){const a=selected('api').url,c=selected('config').url,ae=$('apiStatus'),ce=$('configStatus');if(!a){ae.textContent='未选择';ae.className='availability-value checking'}if(!c){ce.textContent='未选择';ce.className='availability-value checking'}if(!a||!c)return;ae.textContent='检测中…';ce.textContent='检测中…';ae.className=ce.className='availability-value checking';try{const r=await fetch('/api/status?api='+encodeURIComponent(a)+'&config='+encodeURIComponent(c),{cache:'no-store'}),d=await r.json();if(!r.ok||!d.ok)throw new Error(d.error||'检测失败');ae.textContent=d.api.ok?'✓ 可用'+(d.api.version?' · '+d.api.version:''):'✕ 不可用';ce.textContent=d.config.ok?'✓ 可用':'✕ 不可用';ae.className='availability-value '+(d.api.ok?'available':'unavailable');ce.className='availability-value '+(d.config.ok?'available':'unavailable')}catch(e){ae.textContent='✕ 检测失败';ce.textContent='✕ 检测失败';ae.className=ce.className='availability-value unavailable'}}
-$('copyDirect').addEventListener('click',()=>copyText($('direct').textContent.trim()));
-$('generate').addEventListener('click',async()=>{savePrefs();const b=$('generate'),s=$('sources').value.trim(),a=selected('api'),c=selected('config');if(!s)return alert('请输入订阅链接');if(!a.url)return alert('请选择或填写 SUBAPI');if(!c.url)return alert('请选择或填写 SUBCONFIG');if(!/^https?:\/\//i.test(a.url)||!/^https?:\/\//i.test(c.url))return alert('SUBAPI / SUBCONFIG 必须以 http:// 或 https:// 开头');b.disabled=true;b.textContent='生成中…';try{const r=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},cache:'no-store',body:JSON.stringify({sources:s,target:$('target').value,name:$('name').value.trim(),apiMode:state.apiMode,apiId:a.id,apiUrl:a.custom?a.url:'',configMode:state.configMode,configId:c.id,configUrl:c.custom?c.url:'',noAds:$('noAds').value.trim()})}),d=await r.json();if(!r.ok||!d.ok)throw new Error(d.error||'生成失败');$('direct').textContent=d.subscription_url;$('openDirect').href=d.subscription_url;$('result').hidden=false;$('result').scrollIntoView({behavior:'smooth',block:'start'})}catch(e){alert(e.message||'生成失败')}finally{b.disabled=false;b.textContent='生成订阅链接'}});
+<section class="panel"><h2 class="section-title">排除节点</h2><div class="section-note">公开使用。每行填写一个关键词，包含关键词的节点会被排除。</div><div class="field"><textarea id="noAds" placeholder="例如：t.me&#10;广告&#10;example.com">${esc(noAds)}</textarea></div></section>
+<button class="primary" id="generate" type="button">生成聚合订阅</button>
+<section id="result" class="panel result-panel" hidden><h2 class="section-title">订阅链接页面</h2><div class="section-note">生成成功，打开下面的链接即可访问你的订阅链接页面。</div><div class="result-url" id="direct"></div><div class="actions"><button class="button" id="copyDirect" type="button">复制订阅链接</button><a class="button secondary" id="openDirect" target="_blank" rel="noopener">打开订阅链接页面</a></div></section>
+</main><script>
+const state={apiMode:${json(apiMode)},configMode:${json(configMode)}},$=id=>document.getElementById(id);const API_LIST=${json(apis)},CONFIG_LIST=${json(configs)};
+function selected(k){if(state[k+'Mode']==='custom'){const id=k==='api'?'apiCustomUrl':'configCustomUrl';return{url:$(id)?.value.trim()||'',id:'',custom:true}}const input=document.querySelector('input[name="'+k+'Preset"]:checked'),list=k==='api'?API_LIST:CONFIG_LIST,x=input?list.find(v=>v.id===input.value):null;return{url:x?.url||'',id:x?.id||'',custom:false}}
+function savePrefs(){const a=selected('api'),c=selected('config'),v={apiMode:state.apiMode,apiId:a.id,apiUrl:a.custom?a.url:'',configMode:state.configMode,configId:c.id,configUrl:c.custom?c.url:'',noAds:$('noAds').value.trim()},e=encodeURIComponent(JSON.stringify(v));if(e.length<=3600)document.cookie='CF_SUB_PREFS='+e+'; Max-Age=2592000; Path=/; SameSite=Lax; Secure'}
+function setMode(k,v){state[k+'Mode']=v;$(k==='api'?'apiPreset':'configPreset').hidden=v==='custom';$(k==='api'?'apiCustom':'configCustom').hidden=v==='preset';document.querySelectorAll('.mode-tab[data-mode="'+k+'"]').forEach(b=>b.classList.toggle('active',b.dataset.value===v));checkAvailability();savePrefs()}
+document.querySelectorAll('.mode-tab').forEach(b=>b.addEventListener('click',()=>setMode(b.dataset.mode,b.dataset.value)));document.querySelectorAll('input[name="apiPreset"],input[name="configPreset"]').forEach(e=>e.addEventListener('change',()=>{checkAvailability();savePrefs()}));document.querySelectorAll('#apiCustomUrl,#configCustomUrl').forEach(e=>e?.addEventListener('input',()=>{clearTimeout(window.__st);window.__st=setTimeout(()=>{checkAvailability();savePrefs()},400)}));
+function showStatus(bar,cur,kind,text,url){bar.textContent=text;bar.className=kind;cur.innerHTML=url?'<a href="'+url.replace(/"/g,'&quot;')+'" target="_blank" rel="noopener">'+url.replace(/&/g,'&amp;').replace(/</g,'&lt;')+'</a>':'未选择'}
+async function checkAvailability(){const a=selected('api').url,c=selected('config').url;const ab=$('apiStatusBar'),cb=$('configStatusBar'),ac=$('apiCurrent'),cc=$('configCurrent');if(!a){showStatus(ab,ac,'status-waitbar','⏳ 未选择订阅转换后端','');}if(!c){showStatus(cb,cc,'status-waitbar','⏳ 未选择订阅转换规则','');}if(!a||!c)return;showStatus(ab,ac,'status-waitbar','⏳ 订阅转换后端状态检测中',a);showStatus(cb,cc,'status-waitbar','⏳ 订阅转换规则状态检测中',c);try{const r=await fetch('/api/status?api='+encodeURIComponent(a)+'&config='+encodeURIComponent(c),{cache:'no-store'}),d=await r.json();if(!r.ok||!d.ok)throw new Error(d.error||'检测失败');showStatus(ab,ac,d.api.ok?'status-okbar':'status-badbar',d.api.ok?'✅ 订阅转换后端状态正常'+(d.api.version?' ('+d.api.version+')':''):'❌ 订阅转换后端不可用',d.api.url||a);showStatus(cb,cc,d.config.ok?'status-okbar':'status-badbar',d.config.ok?'✅ 订阅转换规则状态正常':'❌ 订阅转换规则不可用',d.config.url||c)}catch(e){showStatus(ab,ac,'status-badbar','❌ 订阅转换后端检测失败',a);showStatus(cb,cc,'status-badbar','❌ 订阅转换规则检测失败',c)}}
+$('copyDirect').addEventListener('click',()=>navigator.clipboard.writeText($('direct').textContent.trim()).then(()=>alert('已复制')).catch(()=>alert('复制失败，请手动复制')));
+$('generate').addEventListener('click',async()=>{const b=$('generate'),s=$('sources').value.trim(),a=selected('api'),c=selected('config');if(!s)return alert('请输入订阅链接');if(!a.url)return alert('请选择或填写订阅转换后端');if(!c.url)return alert('请选择或填写订阅转换规则');if(!new RegExp('^https?://','i').test(a.url)||!new RegExp('^https?://','i').test(c.url))return alert('后端地址必须以 http:// 或 https:// 开头');savePrefs();b.disabled=true;b.textContent='生成中…';try{const r=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},cache:'no-store',body:JSON.stringify({sources:s,apiMode:state.apiMode,apiId:a.id,apiUrl:a.custom?a.url:'',configMode:state.configMode,configId:c.id,configUrl:c.custom?c.url:'',noAds:$('noAds').value.trim()})}),d=await r.json();if(!r.ok||!d.ok)throw new Error(d.error||'生成失败');$('direct').innerHTML='<a href="'+d.subscription_url+'" target="_blank" rel="noopener">'+d.subscription_url.replace(/&/g,'&amp;').replace(/</g,'&lt;')+'</a>';$('openDirect').href=d.subscription_url;$('result').hidden=false;$('result').scrollIntoView({behavior:'smooth',block:'start'})}catch(e){alert(e.message||'生成失败')}finally{b.disabled=false;b.textContent='生成聚合订阅'}});
 checkAvailability();
 </script></body></html>`;
 }
-
 function getSubUIStyles(){return getToolStyles()+`
 .page{width:100%;max-width:760px;margin:0 auto;padding:18px 14px 28px}
 .header{margin-bottom:14px}.title{margin:0;font-size:28px;font-weight:700;line-height:1.2}.subtitle{margin-top:8px}
@@ -1431,38 +1668,28 @@ function getSubUIStyles(){return getToolStyles()+`
 
 
 function renderAdminPage(url,env,settings){
-    const apis=normalizeProviderList(settings.subApis), configs=normalizeProviderList(settings.subConfigs), esc=x=>escapeHTML(String(x??''));
-    const defaultApiId=String(settings.defaultSubApiId||''), defaultConfigId=String(settings.defaultSubConfigId||'');
-    const rows=(arr,type,empty,def)=>arr.length?arr.map(x=>`<div class="link-item provider-item"><div class="sub-head"><div class="provider-main"><div class="link-label">${esc(x.name)}</div><div class="section-note provider-url">${esc(x.url)}</div><div class="chips"><span class="chip ${x.enabled!==false?'chip-on':'chip-off'}">${x.enabled!==false?'启用':'禁用'}</span>${x.id===def?'<span class="chip chip-default">管理员默认</span>':''}</div></div><div class="actions admin-row-actions" style="margin-top:0"><button type="button" class="secondary" data-action="edit" data-type="${type}" data-id="${esc(x.id)}">编辑</button><button type="button" class="danger" data-action="delete" data-type="${type}" data-id="${esc(x.id)}">删除</button></div></div></div>`).join(''):`<div class="empty">${empty}</div>`;
-    return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(settings.subName||'CF-SUBS')} · 管理后台</title><style>
-${getToolStyles()}
-.sub-grid{display:grid;gap:10px}.sub-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap}.provider-main{min-width:0}.provider-url{margin-bottom:0;word-break:break-all;overflow-wrap:anywhere}.provider-item{padding:12px}.chip{display:inline-flex;align-items:center;padding:3px 8px;margin:2px 3px 2px 0;border-radius:8px;background:rgba(31,75,153,.08);color:#1f4b99;font-size:12px}.chip-on{background:rgba(76,175,80,.1);color:#2e7d32}.chip-off{background:rgba(120,120,120,.1);color:#777}.chip-default{background:rgba(31,75,153,.1);color:#1f4b99}.empty{font-size:12px;color:#888}.topbar{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap}.topbar-main{min-width:0;flex:1}.site-title-input{font-size:28px!important;font-weight:700!important;border:0!important;background:transparent!important;padding:0!important;height:auto!important;box-shadow:none!important;color:#1a1a1a!important}.site-title-input:focus{box-shadow:none!important}.top-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}.top-actions .button{min-width:86px}.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.4);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);display:none;align-items:center;justify-content:center;z-index:1000;padding:20px}.modal-content{width:min(460px,100%);background:rgba(255,255,255,.95);border-radius:20px;padding:24px;box-shadow:0 10px 40px rgba(0,0,0,.2);border:1px solid rgba(255,255,255,.5)}.modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}@media(max-width:600px){.top-actions{width:100%;justify-content:stretch}.top-actions .button{flex:1}.modal-content{padding:20px}}@media(prefers-color-scheme:dark){.site-title-input{color:#f5f5f5!important}.modal-content{background:rgba(30,30,30,.96);border-color:rgba(255,255,255,.1)}.chip{background:rgba(100,181,246,.1);color:#90caf9}.chip-on{background:rgba(129,199,132,.1);color:#81c784}.chip-off{background:rgba(255,255,255,.08);color:#aaa}.chip-default{background:rgba(100,181,246,.12);color:#90caf9}.empty{color:#aaa}}</style></head>
-<body><main class="page">
-<header class="header topbar"><div class="topbar-main"><input id="siteName" class="site-title-input" value="${esc(settings.subName||'CF-SUBS')}" aria-label="站点标题"><div class="subtitle">管理 SUBAPI、SUBCONFIG 和站点安全设置。</div></div><div class="top-actions"><button type="button" class="button secondary" id="securityButton">安全</button><button type="button" class="button secondary" id="pathButton">管理员路径</button><a class="button danger" href="/${esc(settings.adminPath||'admin')}/logout">退出</a></div></header>
-
-<section class="panel"><div class="sub-head"><div><h2 class="section-title">订阅转换后端 SUBAPI</h2><div class="section-note">管理员预留给访客使用的 SUBAPI。</div></div><button type="button" data-action="add" data-type="subapi">＋ 添加 SUBAPI</button></div><div class="sub-grid" style="margin-top:12px">${rows(apis,'subapi','暂无 SUBAPI，请手动添加。',defaultApiId)}</div></section>
-<section class="panel"><div class="sub-head"><div><h2 class="section-title">订阅转换规则 SUBCONFIG</h2><div class="section-note">管理员预留给访客使用的 SUBCONFIG。</div></div><button type="button" data-action="add" data-type="subconfig">＋ 添加 SUBCONFIG</button></div><div class="sub-grid" style="margin-top:12px">${rows(configs,'subconfig','暂无 SUBCONFIG，请手动添加。',defaultConfigId)}</div></section>
-<section class="panel"><h2 class="section-title">默认预留</h2><div class="section-note">访客没有偏好 Cookie 时，主页使用这里的默认组合。</div><div class="security-grid"><div class="field"><label>默认 SUBAPI</label><select id="defaultApi">${apis.map(x=>`<option value="${esc(x.id)}" ${x.id===defaultApiId?'selected':''}>${esc(x.name)}</option>`).join('')}</select></div><div class="field"><label>默认 SUBCONFIG</label><select id="defaultConfig">${configs.map(x=>`<option value="${esc(x.id)}" ${x.id===defaultConfigId?'selected':''}>${esc(x.name)}</option>`).join('')}</select></div></div><div class="actions"><button type="button" id="saveDefaults">保存默认预留</button></div></section>
+    const apis=normalizeProviderList(settings.subApis),configs=normalizeProviderList(settings.subConfigs);
+    const defaultApiId=String(settings.defaultSubApiId||''),defaultConfigId=String(settings.defaultSubConfigId||'');
+    const esc=x=>escapeHTML(String(x??''));
+    const safeJson=x=>JSON.stringify(x).replace(/</g,'\\u003c');
+    const rows=(list,type,empty,defaultId)=>list.length?list.map(x=>`<div class="link-item provider-item"><div class="sub-head"><div class="provider-main"><div class="link-label">${esc(x.name)}</div><div class="provider-url link-url">${esc(x.url)}</div><div style="margin-top:7px"><span class="chip ${x.enabled?'chip-on':'chip-off'}">${x.enabled?'管理员预留':'停用'}</span>${x.id===defaultId?'<span class="chip chip-default">默认</span>':''}</div></div><div class="actions admin-row-actions" style="margin-top:0"><button type="button" class="secondary" data-action="edit" data-type="${type}" data-id="${esc(x.id)}">编辑</button><button type="button" class="danger" data-action="delete" data-type="${type}" data-id="${esc(x.id)}">删除</button></div></div></div>`).join(''):`<div class="empty">${empty}</div>`;
+    return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(settings.subName||'CF-SUBS')} · 管理后台</title><style>${getToolStyles()}
+.sub-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap}.provider-main{min-width:0}.provider-url{margin-bottom:0;word-break:break-all;overflow-wrap:anywhere}.provider-item{padding:12px}.chip{display:inline-flex;align-items:center;padding:3px 8px;margin:2px 3px 2px 0;border-radius:8px;background:rgba(31,75,153,.08);color:#1f4b99;font-size:12px}.chip-on{background:rgba(76,175,80,.1);color:#2e7d32}.chip-off{background:rgba(120,120,120,.1);color:#777}.chip-default{background:rgba(31,75,153,.1);color:#1f4b99}.empty{font-size:12px;color:#888}.topbar{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap}.topbar-main{min-width:0;flex:1}.site-title-input{font-size:28px!important;font-weight:700!important;border:0!important;background:transparent!important;padding:0!important;height:auto!important;box-shadow:none!important;color:#1a1a1a!important}.site-title-input:focus{box-shadow:none!important}.top-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}.top-actions .button{min-width:86px}.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.4);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);display:none;align-items:center;justify-content:center;z-index:1000;padding:20px}.modal-content{width:min(460px,100%);background:rgba(255,255,255,.95);border-radius:20px;padding:24px;box-shadow:0 10px 40px rgba(0,0,0,.2);border:1px solid rgba(255,255,255,.5)}.modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}.modal-content input[type=checkbox]{width:18px;height:18px;padding:0;margin-right:7px;vertical-align:-4px}@media(max-width:600px){.top-actions{width:100%;justify-content:stretch}.top-actions .button{flex:1}.admin-row-actions{width:100%}.admin-row-actions button{flex:1}.modal-content{padding:20px}}@media(prefers-color-scheme:dark){.site-title-input{color:#f5f5f5!important}.modal-content{background:rgba(30,30,30,.96);border-color:rgba(255,255,255,.1)}.chip{background:rgba(100,181,246,.1);color:#90caf9}.chip-on{background:rgba(129,199,132,.1);color:#81c784}.chip-off{background:rgba(255,255,255,.08);color:#aaa}.chip-default{background:rgba(100,181,246,.12);color:#90caf9}.empty{color:#aaa}}</style></head><body><main class="page">
+<header class="header topbar"><div class="topbar-main"><input id="siteName" class="site-title-input" value="${esc(settings.subName||'CF-SUBS')}" aria-label="站点标题"><div class="subtitle">管理订阅转换后端、订阅转换规则和站点安全设置。</div></div><div class="top-actions"><button type="button" class="button secondary" id="securityButton">安全</button><button type="button" class="button secondary" id="pathButton">管理员路径</button><a class="button danger" href="/${esc(settings.adminPath||'admin')}/logout">退出</a></div></header>
+<section class="panel"><div class="sub-head"><div><h2 class="section-title">订阅转换后端(SUBAPI)</h2><div class="section-note">管理员预留给访客使用的订阅转换后端。</div></div><button type="button" data-action="add" data-type="subapi">＋ 添加订阅转换后端</button></div><div class="sub-grid" style="margin-top:12px">${rows(apis,'subapi','暂无订阅转换后端，请手动添加。',defaultApiId)}</div></section>
+<section class="panel"><div class="sub-head"><div><h2 class="section-title">订阅转换规则(SUBCONFIG)</h2><div class="section-note">管理员预留给访客使用的订阅转换规则。</div></div><button type="button" data-action="add" data-type="subconfig">＋ 添加订阅转换规则</button></div><div class="sub-grid" style="margin-top:12px">${rows(configs,'subconfig','暂无订阅转换规则，请手动添加。',defaultConfigId)}</div></section>
 </main>
-
-<div id="providerModal" class="modal-overlay"><div class="modal-content"><h2 class="section-title" id="modalTitle">添加 SUBAPI</h2><div class="field"><label for="modalName">备注</label><input id="modalName"></div><div class="field"><label for="modalUrl">URL</label><input id="modalUrl" placeholder="https://..."></div><div class="field"><label><input id="modalEnabled" type="checkbox" checked style="width:18px;height:18px;margin-right:7px;vertical-align:-4px">启用</label></div><div class="field"><label><input id="modalDefault" type="checkbox" style="width:18px;height:18px;margin-right:7px;vertical-align:-4px">设为管理员默认</label></div><div class="modal-actions"><button type="button" class="secondary" id="modalCancel">取消</button><button type="button" id="modalSave">保存</button></div></div></div>
-
+<div id="providerModal" class="modal-overlay"><div class="modal-content"><h2 class="section-title" id="modalTitle">添加</h2><div class="field"><label for="modalName">备注</label><input id="modalName"></div><div class="field"><label for="modalUrl">URL</label><input id="modalUrl" placeholder="https://..."></div><div class="field"><label><input id="modalEnabled" type="checkbox" checked>允许访客选择</label></div><div class="field"><label><input id="modalDefault" type="checkbox">设为无 Cookie 时的默认项</label></div><div class="modal-actions"><button type="button" class="secondary" id="modalCancel">取消</button><button type="button" id="modalSave">保存</button></div></div></div>
 <div id="securityModal" class="modal-overlay"><div class="modal-content"><h2 class="section-title">安全</h2><div class="section-note">修改管理员账号和密码。密码留空表示保持原密码。</div><div class="field"><label for="securityUser">管理员账号</label><input id="securityUser" value="${esc(settings.user||'')}" autocomplete="username"></div><div class="field"><label for="securityPass">管理员密码</label><input id="securityPass" type="password" placeholder="留空保持原密码" autocomplete="new-password"></div><div class="modal-actions"><button type="button" class="secondary" data-close="securityModal">取消</button><button type="button" id="saveSecurity">保存</button></div></div></div>
 <div id="pathModal" class="modal-overlay"><div class="modal-content"><h2 class="section-title">管理员路径</h2><div class="section-note">保存后立即进入新的管理员地址。</div><div class="field"><label for="pathValue">路径</label><input id="pathValue" value="${esc(settings.adminPath||'admin')}" placeholder="admin"></div><div class="modal-actions"><button type="button" class="secondary" data-close="pathModal">取消</button><button type="button" id="savePath">保存</button></div></div></div>
-
 <script>
-const DATA=${JSON.stringify({apis,configs,defaultApiId,defaultConfigId}).replace(/</g,'\u003c')},$=id=>document.getElementById(id);let modalState=null;
-function openModal(id){$(id).style.display='flex'}function closeModal(id){$(id).style.display='none'}
-async function post(o){const r=await fetch(location.pathname,{method:'POST',headers:{'Content-Type':'application/json'},cache:'no-store',body:JSON.stringify(o)}),t=await r.text();let d={};try{d=t?JSON.parse(t):{}}catch(e){throw new Error(t||'服务器返回无效数据')}if(!r.ok||d.ok===false)throw new Error(d.error||t||'操作失败');return d}
-function showProvider(type,id){const list=type==='subapi'?DATA.apis:DATA.configs,old=id?list.find(x=>x.id===id):null,def=type==='subapi'?DATA.defaultApiId:DATA.defaultConfigId;modalState={type,id:id||''};$('modalTitle').textContent=(id?'编辑 ':'添加 ')+(type==='subapi'?'SUBAPI':'SUBCONFIG');$('modalName').value=old?.name||'';$('modalUrl').value=old?.url||'';$('modalEnabled').checked=old?.enabled!==false;$('modalDefault').checked=old?old.id===def:false;openModal('providerModal')}
+const DATA=${safeJson({apis,configs,defaultApiId,defaultConfigId})};let modalState=null;const $=id=>document.getElementById(id);
+function openModal(id){const e=$(id);if(e)e.style.display='flex'}function closeModal(id){const e=$(id);if(e)e.style.display='none'}
+async function post(o){const r=await fetch(location.pathname,{method:'POST',headers:{'Content-Type':'application/json'},cache:'no-store',body:JSON.stringify(o)});const t=await r.text();let d={};try{d=t?JSON.parse(t):{}}catch(e){throw new Error(t||'服务器返回无效数据')}if(!r.ok||d.ok===false)throw new Error(d.error||t||'操作失败');return d}
+function showProvider(type,id){const list=type==='subapi'?DATA.apis:DATA.configs,old=id?list.find(x=>x.id===id):null,def=type==='subapi'?DATA.defaultApiId:DATA.defaultConfigId;modalState={type,id:id||''};$('modalTitle').textContent=(id?'编辑 ':'添加 ')+(type==='subapi'?'订阅转换后端':'订阅转换规则');$('modalName').value=old?.name||'';$('modalUrl').value=old?.url||'';$('modalEnabled').checked=old?.enabled!==false;$('modalDefault').checked=old?old.id===def:false;openModal('providerModal')}
 function hideProvider(){closeModal('providerModal');modalState=null}
-document.querySelectorAll('[data-close]').forEach(b=>b.onclick=()=>closeModal(b.dataset.close));document.querySelectorAll('.modal-overlay').forEach(m=>m.onclick=e=>{if(e.target===m)m.style.display='none'});$('securityButton').onclick=()=>openModal('securityModal');$('pathButton').onclick=()=>openModal('pathModal');
-document.querySelectorAll('[data-action="add"]').forEach(b=>b.onclick=()=>showProvider(b.dataset.type,''));document.querySelectorAll('[data-action="edit"]').forEach(b=>b.onclick=()=>showProvider(b.dataset.type,b.dataset.id));document.querySelectorAll('[data-action="delete"]').forEach(b=>b.onclick=async()=>{if(!confirm('确定删除这个项目？'))return;try{await post({type:b.dataset.type+'_delete',id:b.dataset.id});location.reload()}catch(e){alert(e.message)}});
-$('modalCancel').onclick=hideProvider;$('modalSave').onclick=async()=>{if(!modalState)return;const name=$('modalName').value.trim(),url=$('modalUrl').value.trim();if(!name)return alert('请输入备注');if(!/^https?:\/\//i.test(url))return alert('URL 必须以 http:// 或 https:// 开头');try{await post({type:modalState.type+'_'+(modalState.id?'update':'create'),id:modalState.id,name,url,enabled:$('modalEnabled').checked,isDefault:$('modalDefault').checked});location.reload()}catch(e){alert(e.message)}};
-$('saveDefaults').onclick=async()=>{try{await post({type:'config',settings:{subName:$('siteName').value.trim()||'CF-SUBS',subApis:DATA.apis,subConfigs:DATA.configs,defaultSubApiId:$('defaultApi').value,defaultSubConfigId:$('defaultConfig').value}});location.reload()}catch(e){alert(e.message)}};
+document.addEventListener('click',async e=>{const btn=e.target.closest('button,[data-action]');if(!btn)return;if(btn.id==='securityButton'){openModal('securityModal');return}if(btn.id==='pathButton'){openModal('pathModal');return}if(btn.dataset.close){closeModal(btn.dataset.close);return}if(btn.id==='modalCancel'){hideProvider();return}if(btn.dataset.action==='add'){showProvider(btn.dataset.type,'');return}if(btn.dataset.action==='edit'){showProvider(btn.dataset.type,btn.dataset.id);return}if(btn.dataset.action==='delete'){if(!confirm('确定删除这个项目？'))return;try{await post({type:btn.dataset.type+'_delete',id:btn.dataset.id});location.reload()}catch(err){alert(err.message)}return}if(btn.id==='modalSave'){if(!modalState)return;const name=$('modalName').value.trim(),url=$('modalUrl').value.trim();if(!name)return alert('请输入备注');if(!/^https?:\\/\\//i.test(url))return alert('URL 必须以 http:// 或 https:// 开头');try{await post({type:modalState.type+'_'+(modalState.id?'update':'create'),id:modalState.id,name,url,enabled:$('modalEnabled').checked,isDefault:$('modalDefault').checked});location.reload()}catch(err){alert(err.message)}return}if(btn.id==='saveSecurity'){const user=$('securityUser').value.trim(),pass=$('securityPass').value;if(!user)return alert('管理员账号不能为空');try{await post({type:'security',user,pass});alert('安全设置已保存');location.reload()}catch(err){alert(err.message)}return}if(btn.id==='savePath'){const path=$('pathValue').value.trim();if(!/^[A-Za-z0-9_-]{2,60}$/.test(path))return alert('管理员路径只能使用 2-60 个字母、数字、下划线或短横线');try{const d=await post({type:'admin_path',adminPath:path});location.href='/'+d.adminPath}catch(err){alert(err.message)}return}});
+document.querySelectorAll('.modal-overlay').forEach(m=>m.addEventListener('click',e=>{if(e.target===m)m.style.display='none'}));
 $('siteName').addEventListener('change',async()=>{const name=$('siteName').value.trim()||'CF-SUBS';try{await post({type:'site_name',subName:name})}catch(e){alert(e.message)}});
-$('saveSecurity').onclick=async()=>{const user=$('securityUser').value.trim(),pass=$('securityPass').value;if(!user)return alert('管理员账号不能为空');try{await post({type:'security',user,pass});alert('安全设置已保存');closeModal('securityModal');location.reload()}catch(e){alert(e.message)}};
-$('savePath').onclick=async()=>{const path=$('pathValue').value.trim();if(!/^[A-Za-z0-9_-]{2,60}$/.test(path))return alert('管理员路径只能使用 2-60 个字母、数字、下划线或短横线');try{const d=await post({type:'admin_path',adminPath:path});location.href='/'+d.adminPath}catch(e){alert(e.message)}};
 </script></body></html>`;
 }
-
