@@ -1775,7 +1775,6 @@ async function renderSubUIHome(request,url,env){
     const configCurrentValue=selectedConfig?.url||'';
     const noAds='';
     const esc=x=>escapeHTML(String(x??''));
-    const json=x=>JSON.stringify(x).replaceAll('</script','<\\/script').replace(/</g,'\\u003c');
 
     return `<!doctype html>
 <html lang="zh-CN">
@@ -1802,8 +1801,8 @@ ${getSubUIStyles()}
 
 <section class="panel">
 <h2 class="section-title">订阅转换后端(SUBAPI)</h2><div class="section-note">选择一个订阅转换后端。</div>
-<select class="native-picker" id="apiPicker" aria-label="选择订阅转换后端">
-${apis.map(x=>`<option value="${esc(x.url)}" data-id="${esc(x.id)}">${esc(x.name)}</option>`).join('')}
+<select class="native-picker" id="apiPicker" aria-label="选择订阅转换后端" data-default-id="${esc(apiId)}">
+${apis.map(x=>`<option value="${esc(x.url)}" data-id="${esc(x.id)}" ${x.id===apiId?'selected':''}>${esc(x.name)}</option>`).join('')}
 <option value="__custom">自定义</option>
 </select>
 <div class="current-box"><div class="current-title">当前配置</div><div class="current-row"><input id="apiCurrent" class="current-api-input" readonly value="${esc(apiCurrentValue)}" placeholder="请选择订阅转换后端"><button type="button" class="button secondary edit-custom" id="editApiCustom">编辑</button></div></div>
@@ -1812,8 +1811,8 @@ ${apis.map(x=>`<option value="${esc(x.url)}" data-id="${esc(x.id)}">${esc(x.name
 
 <section class="panel">
 <h2 class="section-title">订阅转换规则(SUBCONFIG)</h2><div class="section-note">选择一个订阅转换规则。</div>
-<select class="native-picker" id="configPicker" aria-label="选择订阅转换规则">
-${configs.map(x=>`<option value="${esc(x.url)}" data-id="${esc(x.id)}">${esc(x.name)}</option>`).join('')}
+<select class="native-picker" id="configPicker" aria-label="选择订阅转换规则" data-default-id="${esc(configId)}">
+${configs.map(x=>`<option value="${esc(x.url)}" data-id="${esc(x.id)}" ${x.id===configId?'selected':''}>${esc(x.name)}</option>`).join('')}
 <option value="__custom">自定义</option>
 </select>
 <div class="current-box"><div class="current-title">当前配置</div><div class="current-row"><textarea id="configCurrent" class="current-config-input" readonly placeholder="请选择订阅转换规则">${esc(configCurrentValue)}</textarea><button type="button" class="button secondary edit-custom" id="editConfigCustom">编辑</button></div></div>
@@ -1829,8 +1828,7 @@ ${configs.map(x=>`<option value="${esc(x.url)}" data-id="${esc(x.id)}">${esc(x.n
 <div id="customConfigModal" class="custom-modal-overlay"><div class="custom-modal"><h3>自定义订阅转换规则</h3><p>输入你自己的 SUBCONFIG 地址。</p><input id="customConfigInput" placeholder="https://example.com/config.ini"><div class="custom-modal-actions"><button type="button" class="button secondary" id="cancelConfigCustom">取消</button><button type="button" class="button" id="saveConfigCustom">保存</button></div></div></div>
 
 <script id="cf-subs-public-script">
-const API_LIST=${json(apis)},CONFIG_LIST=${json(configs)};
-const PUBLIC_STATE={apiId:${json(apiId)},configId:${json(configId)},apiCustom:${apiCustom},configCustom:${configCustom},apiUrl:${json(apiUrl)},configUrl:${json(configUrl)}};
+const PUBLIC_STATE={apiId:'',configId:'',apiCustom:false,configCustom:false,apiUrl:'',configUrl:''};
 const $=id=>document.getElementById(id);
 
 function currentValue(kind){
@@ -1904,8 +1902,12 @@ function onPickerChange(kind){
 function openCustom(kind){const api=kind==='api';$(api?'customApiInput':'customConfigInput').value=api?PUBLIC_STATE.apiUrl:PUBLIC_STATE.configUrl;$(api?'customApiModal':'customConfigModal').style.display='flex';}
 function cancelCustom(kind){
  const api=kind==='api',picker=$(api?'apiPicker':'configPicker');
- if(api){PUBLIC_STATE.apiCustom=false;PUBLIC_STATE.apiUrl='';if(PUBLIC_STATE.apiId)picker.value=API_LIST.find(x=>x.id===PUBLIC_STATE.apiId)?.url||API_LIST[0]?.url||'';else picker.selectedIndex=0;}
- else{PUBLIC_STATE.configCustom=false;PUBLIC_STATE.configUrl='';if(PUBLIC_STATE.configId)picker.value=CONFIG_LIST.find(x=>x.id===PUBLIC_STATE.configId)?.url||CONFIG_LIST[0]?.url||'';else picker.selectedIndex=0;}
+ PUBLIC_STATE[api?'apiCustom':'configCustom']=false;
+ PUBLIC_STATE[api?'apiUrl':'configUrl']='';
+ const defaultId=picker?.dataset?.defaultId||'';
+ const option=Array.from(picker?.options||[]).find(o=>String(o.dataset.id||'')===defaultId)||picker?.options?.[0];
+ if(option)picker.value=option.value;
+ PUBLIC_STATE[api?'apiId':'configId']=String(option?.dataset?.id||'');
  $(api?'customApiModal':'customConfigModal').style.display='none';updateCurrent(kind);checkStatus(kind);
 }
 function saveCustom(kind){
@@ -1919,14 +1921,9 @@ function initPublicHome(){
  if(window.__CF_SUBS_PUBLIC_READY)return;
  window.__CF_SUBS_PUBLIC_READY=true;
  const ap=$('apiPicker'),cp=$('configPicker');
- if(ap){
-  if(PUBLIC_STATE.apiCustom)ap.value='__custom';else{const item=API_LIST.find(x=>x.id===PUBLIC_STATE.apiId)||API_LIST[0];if(item)ap.value=item.url;}
-  ap.addEventListener('change',()=>onPickerChange('api'));
- }
- if(cp){
-  if(PUBLIC_STATE.configCustom)cp.value='__custom';else{const item=CONFIG_LIST.find(x=>x.id===PUBLIC_STATE.configId)||CONFIG_LIST[0];if(item)cp.value=item.url;}
-  cp.addEventListener('change',()=>onPickerChange('config'));
- }
+ if(ap){PUBLIC_STATE.apiId=currentId('api');ap.addEventListener('change',()=>onPickerChange('api'));}
+ if(cp){PUBLIC_STATE.configId=currentId('config');cp.addEventListener('change',()=>onPickerChange('config'));}
+
  $('editApiCustom')?.addEventListener('click',()=>openCustom('api'));$('editConfigCustom')?.addEventListener('click',()=>openCustom('config'));
  $('cancelApiCustom')?.addEventListener('click',()=>cancelCustom('api'));$('cancelConfigCustom')?.addEventListener('click',()=>cancelCustom('config'));
  $('saveApiCustom')?.addEventListener('click',()=>saveCustom('api'));$('saveConfigCustom')?.addEventListener('click',()=>saveCustom('config'));
@@ -1960,7 +1957,6 @@ function renderAdminPage(url,env,settings){
     const apis=normalizeProviderList(settings.subApis),configs=normalizeProviderList(settings.subConfigs);
     
     const esc=x=>escapeHTML(String(x??''));
-    const safeJson=x=>JSON.stringify(x).replaceAll('</script','<\\/script').replace(/</g,'\\u003c');
     const defaultApiId=String(settings.defaultSubApiId||'');
     const defaultConfigId=String(settings.defaultSubConfigId||'');
     const rows=(list,type,empty)=>list.length?list.map(x=>{
@@ -1970,7 +1966,7 @@ function renderAdminPage(url,env,settings){
             <div class="provider-url link-url">${esc(x.url)}</div>
         </div>
         <div class="actions admin-row-actions">
-            <button type="button" class="secondary" data-provider-action="edit" data-provider-type="${esc(type)}" data-provider-id="${esc(x.id)}">编辑</button>
+            <button type="button" class="secondary" data-provider-action="edit" data-provider-type="${esc(type)}" data-provider-id="${esc(x.id)}" data-provider-name="${esc(x.name)}" data-provider-url="${esc(x.url)}">编辑</button>
             <button type="button" class="danger" data-provider-action="delete" data-provider-type="${esc(type)}" data-provider-id="${esc(x.id)}">删除</button>
         </div>
     </div>`;
@@ -1985,7 +1981,7 @@ function renderAdminPage(url,env,settings){
 
     return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(settings.subName||'SUB')} · 管理后台</title>${settings.siteLogo?`<link rel="icon" href="${esc(settings.siteLogo)}">`:''}<style>${getToolStyles()}
 .sub-head{display:grid;grid-template-columns:max-content minmax(0,1fr);align-items:start;gap:14px}.sub-head .section-title{white-space:nowrap;font-size:16px;line-height:40px;margin:0}.sub-head-actions{display:grid;grid-template-columns:270px 190px;align-items:center;justify-content:end;gap:10px;width:100%}.default-provider-select{width:270px;min-width:270px;height:40px;padding:0 30px 0 12px;border:1px solid rgba(120,120,120,.45);border-radius:9px;background:rgba(255,255,255,.7);color:inherit;font-size:14px;font-weight:600;cursor:pointer;box-sizing:border-box}.default-provider-select:focus{outline:none;border-color:#3b82f6;box-shadow:0 0 0 2px rgba(59,130,246,.18);width:max-content;min-width:270px;max-width:calc(100vw - 40px)}.sub-head-actions>button{width:190px;min-width:190px;height:40px;white-space:nowrap;word-break:keep-all;overflow:hidden;text-overflow:clip;font-size:14px}.provider-main{min-width:0;width:100%}.provider-url{display:block;width:100%;margin-bottom:0;word-break:break-all;overflow-wrap:anywhere}.provider-item{position:relative;padding:12px 104px 12px 12px}.admin-row-actions{position:absolute;top:12px;right:12px;display:flex;flex-direction:column;gap:7px;margin-top:0;align-items:stretch}.admin-row-actions button{min-width:68px}.empty{font-size:12px;color:#888}.topbar{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap}.topbar-main{min-width:0;flex:1}.site-title-display{font-size:28px;font-weight:700;line-height:1.2;color:#1a1a1a}.site-title-input{font-size:15px!important}.site-title-input:focus{box-shadow:none!important}.top-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}.top-actions .button{min-width:86px}.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.4);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);display:none;align-items:center;justify-content:center;z-index:1000;padding:20px}.modal-content{width:min(460px,100%);background:rgba(255,255,255,.95);border-radius:20px;padding:24px;box-shadow:0 10px 40px rgba(0,0,0,.2);border:1px solid rgba(255,255,255,.5)}.modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}@media(max-width:760px){.sub-head{grid-template-columns:1fr;gap:8px}.sub-head-actions{width:100%;grid-template-columns:minmax(0,1fr) 190px}.default-provider-select{width:100%;min-width:0;font-size:14px}.default-provider-select:focus{width:max-content;min-width:0;max-width:100%}}@media(max-width:600px){.top-actions{width:100%;justify-content:stretch}.top-actions .button{flex:1}.sub-head-actions{width:100%;grid-template-columns:minmax(0,1fr) 170px}.default-provider-select{width:100%;min-width:0}.default-provider-select:focus{width:max-content;min-width:0;max-width:100%}.sub-head-actions>button{width:170px;min-width:170px;white-space:nowrap}.provider-item{padding-right:12px}.admin-row-actions{position:absolute;top:12px;right:12px;width:auto;justify-content:flex-start}.admin-row-actions button{flex:none}.modal-content{padding:20px}}@media(prefers-color-scheme:dark){.site-title-display{color:#f5f5f5}.site-title-input{color:#f5f5f5!important}.default-provider-select{background:rgba(30,30,30,.92);border-color:rgba(255,255,255,.18);color:#fff}.modal-content{background:rgba(30,30,30,.96);border-color:rgba(255,255,255,.1)}.empty{color:#aaa}}</style></head><body><main class="page">
-<header class="header topbar"><div class="topbar-main"><div class="site-title-display">${esc(settings.subName||'SUB')}</div><div class="subtitle">管理订阅转换后端、订阅转换规则和站点安全设置。</div></div><div class="top-actions"><button type="button" class="button secondary" onclick="openModal('securityModal')">安全</button><button type="button" class="button secondary" onclick="openModal('siteModal')">站点</button><a class="button danger" href="/${esc(settings.adminPath||'admin')}/logout">退出</a></div></header>
+<header class="header topbar"><div class="topbar-main"><div class="site-title-display">${esc(settings.subName||'SUB')}</div><div class="subtitle">管理订阅转换后端、订阅转换规则和站点安全设置。</div></div><div class="top-actions"><button type="button" class="button secondary" data-open-modal="securityModal">安全</button><button type="button" class="button secondary" data-open-modal="siteModal">站点</button><a class="button danger" href="/${esc(settings.adminPath||'admin')}/logout">退出</a></div></header>
 <section class="panel"><div class="sub-head"><div><h2 class="section-title">订阅转换后端(SUBAPI)</h2></div><div class="sub-head-actions">${defaultSelect(apis,'subapi',defaultApiId)}<button type="button" data-provider-action="add" data-provider-type="subapi">＋ 添加订阅转换后端</button></div></div><div class="sub-grid" style="margin-top:12px">${rows(apis,'subapi','暂无订阅转换后端，请手动添加。')}</div></section>
 <section class="panel"><div class="sub-head"><div><h2 class="section-title">订阅转换规则(SUBCONFIG)</h2></div><div class="sub-head-actions">${defaultSelect(configs,'subconfig',defaultConfigId)}<button type="button" data-provider-action="add" data-provider-type="subconfig">＋ 添加订阅转换规则</button></div></div><div class="sub-grid" style="margin-top:12px">${rows(configs,'subconfig','暂无订阅转换规则，请手动添加。')}</div></section>
 </main>
@@ -2007,16 +2003,14 @@ function showToast(message){
     clearTimeout(toastTimer);
     toastTimer=setTimeout(()=>{toast.style.display='none'},1400);
 }
-const DATA=${safeJson({apis,configs})};
 let modalState=null;
 const $=id=>document.getElementById(id);
 function openModal(id){const el=$(id);if(el)el.style.display='flex'}
 function closeModal(id){const el=$(id);if(el)el.style.display='none'}
-function showProvider(type,id){
- const list=type==='subapi'?DATA.apis:DATA.configs,old=id?list.find(x=>x.id===id):null;
+function showProvider(type,id,name,url){
  modalState={type,id:id||''};
  $('modalTitle').textContent=(id?'编辑 ':'添加 ')+(type==='subapi'?'订阅转换后端':'订阅转换规则');
- $('modalName').value=old?.name||'';$('modalUrl').value=old?.url||'';
+ $('modalName').value=name||'';$('modalUrl').value=url||'';
  openModal('providerModal');
 }
 function hideProvider(){closeModal('providerModal');modalState=null}
@@ -2071,18 +2065,24 @@ async function saveSiteSettings(){
  catch(e){alert(e.message||'保存失败')}finally{b.disabled=false;b.textContent='保存'}
 }
 
-document.querySelectorAll('[data-open-modal]').forEach(b=>b.addEventListener('click',()=>openModal(b.dataset.openModal)));
-document.querySelectorAll('[data-close-modal]').forEach(b=>b.addEventListener('click',()=>closeModal(b.dataset.closeModal)));
-document.querySelectorAll('[data-provider-action]').forEach(b=>b.addEventListener('click',()=>{
- const action=b.dataset.providerAction,type=b.dataset.providerType||'',id=b.dataset.providerId||'';
- if(action==='add'||action==='edit')showProvider(type,action==='edit'?id:'');
- else if(action==='delete')deleteProvider(type,id);
-}));
-$('providerCancel')?.addEventListener('click',hideProvider);
-$('modalSave')?.addEventListener('click',saveProvider);
-$('saveSecurity')?.addEventListener('click',saveSecurity);
-$('saveSite')?.addEventListener('click',saveSiteSettings);
-document.querySelectorAll('.default-provider-select').forEach(select=>select.addEventListener('change',()=>setDefaultProvider(select.dataset.type,select.value)));
-document.querySelectorAll('.modal-overlay').forEach(m=>m.addEventListener('click',e=>{if(e.target===m)m.style.display='none'}));
+function initAdmin(){
+ if(window.__CF_SUBS_ADMIN_READY)return;
+ window.__CF_SUBS_ADMIN_READY=true;
+ document.querySelectorAll('[data-open-modal]').forEach(b=>b.addEventListener('click',()=>openModal(b.dataset.openModal)));
+ document.querySelectorAll('[data-close-modal]').forEach(b=>b.addEventListener('click',()=>closeModal(b.dataset.closeModal)));
+ document.querySelectorAll('[data-provider-action]').forEach(b=>b.addEventListener('click',()=>{
+  const action=b.dataset.providerAction,type=b.dataset.providerType||'',id=b.dataset.providerId||'';
+  if(action==='add')showProvider(type,'','','');
+  else if(action==='edit')showProvider(type,id,b.dataset.providerName||'',b.dataset.providerUrl||'');
+  else if(action==='delete')deleteProvider(type,id);
+ }));
+ $('providerCancel')?.addEventListener('click',hideProvider);
+ $('modalSave')?.addEventListener('click',saveProvider);
+ $('saveSecurity')?.addEventListener('click',saveSecurity);
+ $('saveSite')?.addEventListener('click',saveSiteSettings);
+ document.querySelectorAll('.default-provider-select').forEach(select=>select.addEventListener('change',()=>setDefaultProvider(select.dataset.type,select.value)));
+ document.querySelectorAll('.modal-overlay').forEach(m=>m.addEventListener('click',e=>{if(e.target===m)m.style.display='none'}));
+}
+if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',initAdmin);else initAdmin();
 </script></body></html>`;
 }
