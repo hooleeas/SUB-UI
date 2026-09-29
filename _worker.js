@@ -584,16 +584,15 @@ async function handleAdmin(request, env, runtime) {
                     const name=normalizeName(data.name), value=String(data.url||'').trim();
                     if(!validName(name))return jsonResponse({ok:false,error:'备注不能为空且不能超过 80 个字符'},400);
                     if(!/^https?:\/\//i.test(value))return jsonResponse({ok:false,error:'URL 必须以 http:// 或 https:// 开头'},400);
-                    const itemId=id||makeSubId(), item={id:itemId,name,url:value,enabled:data.enabled!==false};
-                    if(data.isDefault===true && item.enabled===false) return jsonResponse({ok:false,error:'默认项目必须保持启用'},400);
+                    const itemId=id||makeSubId(), item={id:itemId,name,url:value,enabled:true};
+                    
                     if(action==='create')list.push(item);
                     else{
                         const index=list.findIndex(x=>x.id===id);
                         if(index<0)return jsonResponse({ok:false,error:'项目不存在'},404);
                         list[index]={...list[index],...item,id};
                     }
-                    if(data.isDefault===true)cfg[defaultKey]=itemId;
-                    if(data.isDefault===false&&String(cfg[defaultKey]||'')===itemId)cfg[defaultKey]='';
+                    if(!String(cfg[defaultKey]||'') && list.length)cfg[defaultKey]=list[0].id;
                     if(item.enabled===false&&String(cfg[defaultKey]||'')===itemId)cfg[defaultKey]='';
                     cfg[key]=list;
                 }
@@ -1613,12 +1612,12 @@ ${getSubUIStyles()}
 .status-item.ok{background:rgba(76,175,80,.12);border:1px solid rgba(76,175,80,.25);color:#2e7d32}
 .status-item.bad{background:rgba(244,67,54,.1);border:1px solid rgba(244,67,54,.22);color:#c62828}
  .native-picker{position:relative;margin-top:12px}
-.native-picker-trigger{width:100%;min-height:42px;padding:9px 12px;border:1px solid rgba(229,229,223,.8);border-radius:10px;background:rgba(250,250,250,.7);color:inherit;font:inherit;display:flex;align-items:center;justify-content:space-between;text-align:left;cursor:pointer}
+.native-picker-trigger{width:100%;min-height:42px;padding:9px 12px;border:1px solid rgba(229,229,223,.8);border-radius:10px;background:rgba(250,250,250,.7);color:inherit;font:inherit;display:flex;align-items:center;justify-content:space-between;text-align:left;cursor:pointer;list-style:none}
+.native-picker-trigger::-webkit-details-marker{display:none}
 .native-picker-trigger:hover{border-color:#777}
 .native-picker-arrow{font-size:18px;line-height:1;opacity:.7;transition:transform .15s}
-.native-picker.open .native-picker-arrow{transform:rotate(180deg)}
-.native-picker-menu{display:none;margin-top:6px;padding:6px;border:1px solid rgba(229,229,223,.8);border-radius:10px;background:rgba(255,255,255,.98);box-shadow:0 8px 24px rgba(0,0,0,.12)}
-.native-picker.open .native-picker-menu{display:block}
+.native-picker[open] .native-picker-arrow{transform:rotate(180deg)}
+.native-picker-menu{margin-top:6px;padding:6px;border:1px solid rgba(229,229,223,.8);border-radius:10px;background:rgba(255,255,255,.98);box-shadow:0 8px 24px rgba(0,0,0,.12)}
 .native-option{display:grid;grid-template-columns:20px minmax(0,1fr);column-gap:9px;align-items:start;padding:9px 8px;border-radius:8px;cursor:pointer}
 .native-option:hover{background:rgba(127,127,127,.08)}
 .native-option input{width:16px;height:16px;margin:2px 0 0}
@@ -1659,53 +1658,35 @@ ${getSubUIStyles()}
 <section class="panel">
 <h2 class="section-title">订阅转换后端(SUBAPI)</h2>
 <div class="section-note">点击选择订阅转换后端。</div>
-<div class="native-picker" id="apiPicker">
-    <button type="button" class="native-picker-trigger" id="apiPickerTrigger">
-        <span id="apiPickerLabel">请选择订阅转换后端</span>
-        <span class="native-picker-arrow">⌄</span>
-    </button>
-    <div class="native-picker-menu" id="apiPickerMenu">
-        ${apis.map(x=>`<label class="native-option"><input type="radio" name="apiChoice" value="${esc(x.id)}" ${!apiCustom&&apiId===x.id?'checked':''}><span>${esc(x.name)}</span><small>${esc(x.url)}</small></label>`).join('')}
-        <label class="native-option"><input type="radio" name="apiChoice" value="__custom" ${apiCustom?'checked':''}><span>自定义</span><small>使用你自己的订阅转换后端</small></label>
-    </div>
+<details class="native-picker" id="apiPicker">
+<summary class="native-picker-trigger"><span id="apiPickerLabel">请选择订阅转换后端</span><span class="native-picker-arrow">⌄</span></summary>
+<div class="native-picker-menu">
+${apis.map(x=>`<label class="native-option"><input type="radio" name="apiChoice" value="${esc(x.id)}" ${!apiCustom&&apiId===x.id?'checked':''}><span>${esc(x.name)}</span><small>${esc(x.url)}</small></label>`).join('')}
+<label class="native-option"><input type="radio" name="apiChoice" value="__custom" ${apiCustom?'checked':''}><span>自定义</span><small>使用你自己的订阅转换后端</small></label>
 </div>
-<div class="current-box">
-<div class="current-title">当前配置</div>
-<div class="current-row">
+</details>
+<div class="current-box"><div class="current-title">当前配置</div><div class="current-row">
 <input id="apiCurrent" class="current-api-input" readonly value="${esc(apiCurrentValue)}" placeholder="请选择订阅转换后端">
 <button type="button" class="button secondary edit-custom" id="editApiCustom">编辑</button>
-</div>
-</div>
-<div class="status-box">
-<div class="status-title">可用状态</div>
-<div id="apiStatus" class="status-list"><div class="status-item wait">⏳ 状态检测中</div></div>
-</div>
+</div></div>
+<div class="status-box"><div class="status-title">可用状态</div><div id="apiStatus" class="status-list"><div class="status-item wait">⏳ 状态检测中</div></div></div>
 </section>
 
 <section class="panel">
 <h2 class="section-title">订阅转换规则(SUBCONFIG)</h2>
 <div class="section-note">点击选择订阅转换规则。</div>
-<div class="native-picker" id="configPicker">
-    <button type="button" class="native-picker-trigger" id="configPickerTrigger">
-        <span id="configPickerLabel">请选择订阅转换规则</span>
-        <span class="native-picker-arrow">⌄</span>
-    </button>
-    <div class="native-picker-menu" id="configPickerMenu">
-        ${configs.map(x=>`<label class="native-option"><input type="radio" name="configChoice" value="${esc(x.id)}" ${!configCustom&&configId===x.id?'checked':''}><span>${esc(x.name)}</span><small>${esc(x.url)}</small></label>`).join('')}
-        <label class="native-option"><input type="radio" name="configChoice" value="__custom" ${configCustom?'checked':''}><span>自定义</span><small>使用你自己的订阅转换规则</small></label>
-    </div>
+<details class="native-picker" id="configPicker">
+<summary class="native-picker-trigger"><span id="configPickerLabel">请选择订阅转换规则</span><span class="native-picker-arrow">⌄</span></summary>
+<div class="native-picker-menu">
+${configs.map(x=>`<label class="native-option"><input type="radio" name="configChoice" value="${esc(x.id)}" ${!configCustom&&configId===x.id?'checked':''}><span>${esc(x.name)}</span><small>${esc(x.url)}</small></label>`).join('')}
+<label class="native-option"><input type="radio" name="configChoice" value="__custom" ${configCustom?'checked':''}><span>自定义</span><small>使用你自己的订阅转换规则</small></label>
 </div>
-<div class="current-box">
-<div class="current-title">当前配置</div>
-<div class="current-row">
+</details>
+<div class="current-box"><div class="current-title">当前配置</div><div class="current-row">
 <textarea id="configCurrent" class="current-config-input" readonly placeholder="请选择订阅转换规则">${esc(configCurrentValue)}</textarea>
 <button type="button" class="button secondary edit-custom" id="editConfigCustom">编辑</button>
-</div>
-</div>
-<div class="status-box">
-<div class="status-title">可用状态</div>
-<div id="configStatus" class="status-list"><div class="status-item wait">⏳ 状态检测中</div></div>
-</div>
+</div></div>
+<div class="status-box"><div class="status-title">可用状态</div><div id="configStatus" class="status-list"><div class="status-item wait">⏳ 状态检测中</div></div></div>
 </section>
 
 <section class="panel">
@@ -1798,26 +1779,16 @@ function saveCustom(kind){
  closeCustomModal(kind);renderCurrent(kind);savePrefs();checkAvailability();
 }
 function updatePickerLabel(kind){
- const api=kind==='api', picker=$(api?'apiPicker':'configPicker'), label=$(api?'apiPickerLabel':'configPickerLabel');
+ const api=kind==='api',label=$(api?'apiPickerLabel':'configPickerLabel');
  const s=selected(kind);
  label.textContent=s.custom?'自定义':(s.item?.name||'请选择'+(api?'订阅转换后端':'订阅转换规则'));
- picker.classList.remove('open');
 }
-function bindPicker(kind){
- const api=kind==='api',picker=$(api?'apiPicker':'configPicker'),trigger=$(api?'apiPickerTrigger':'configPickerTrigger');
- trigger.addEventListener('click',e=>{
-   e.stopPropagation();
-   document.querySelectorAll('.native-picker.open').forEach(x=>{if(x!==picker)x.classList.remove('open')});
-   picker.classList.toggle('open');
- });
- picker.querySelectorAll('input[type="radio"]').forEach(x=>x.addEventListener('change',()=>{
-   choiceChanged(kind);
-   updatePickerLabel(kind);
- }));
-}
-bindPicker('api');
-bindPicker('config');
-document.addEventListener('click',()=>document.querySelectorAll('.native-picker.open').forEach(x=>x.classList.remove('open')));
+document.querySelectorAll('input[name="apiChoice"]').forEach(x=>x.addEventListener('change',()=>{
+ choiceChanged('api');updatePickerLabel('api');document.getElementById('apiPicker').open=false;
+}));
+document.querySelectorAll('input[name="configChoice"]').forEach(x=>x.addEventListener('change',()=>{
+ choiceChanged('config');updatePickerLabel('config');document.getElementById('configPicker').open=false;
+}));
 $('#editApiCustom').addEventListener('click',()=>openCustomModal('api'));
 $('#editConfigCustom').addEventListener('click',()=>openCustomModal('config'));
 $('#cancelApiCustom').addEventListener('click',()=>closeCustomModal('api'));
@@ -1864,30 +1835,27 @@ function getSubUIStyles(){return getToolStyles()+`
 
 function renderAdminPage(url,env,settings){
     const apis=normalizeProviderList(settings.subApis),configs=normalizeProviderList(settings.subConfigs);
-    const defaultApiId=String(settings.defaultSubApiId||''),defaultConfigId=String(settings.defaultSubConfigId||'');
+    
     const esc=x=>escapeHTML(String(x??''));
     const safeJson=x=>JSON.stringify(x).replace(/</g,'\\u003c');
-    const rows=(list,type,empty,defaultId)=>list.length?list.map(x=>`<div class="link-item provider-item">
-        <div class="sub-head">
-            <div class="provider-main">
-                <div class="link-label">${esc(x.name)}</div>
-                <div class="provider-url link-url">${esc(x.url)}</div>
-                <div style="margin-top:7px"><span class="chip ${x.enabled?'chip-on':'chip-off'}">${x.enabled?'启用':'停用'}</span>${x.id===defaultId?'<span class="chip chip-default">默认</span>':''}</div>
-            </div>
-            <div class="actions admin-row-actions" style="margin-top:0">
-                <button type="button" class="secondary" onclick="showProvider('${type}','${esc(x.id)}')">编辑</button>
-                <button type="button" class="danger" onclick="deleteProvider('${type}','${esc(x.id)}')">删除</button>
-            </div>
+    const rows=(list,type,empty)=>list.length?list.map(x=>`<div class="link-item provider-item">
+        <div class="provider-main">
+            <div class="link-label">${esc(x.name)}</div>
+            <div class="provider-url link-url">${esc(x.url)}</div>
+        </div>
+        <div class="actions admin-row-actions">
+            <button type="button" class="secondary" onclick="showProvider('${type}','${esc(x.id)}')">编辑</button>
+            <button type="button" class="danger" onclick="deleteProvider('${type}','${esc(x.id)}')">删除</button>
         </div>
     </div>`).join(''):`<div class="empty">${empty}</div>`;
 
     return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(settings.subName||'CF-SUBS')} · 管理后台</title><style>${getToolStyles()}
-.sub-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap}.provider-main{min-width:0}.provider-url{margin-bottom:0;word-break:break-all;overflow-wrap:anywhere}.provider-item{padding:12px}.chip{display:inline-flex;align-items:center;padding:3px 8px;margin:2px 3px 2px 0;border-radius:8px;background:rgba(31,75,153,.08);color:#1f4b99;font-size:12px}.chip-on{background:rgba(76,175,80,.1);color:#2e7d32}.chip-off{background:rgba(120,120,120,.1);color:#777}.chip-default{background:rgba(31,75,153,.1);color:#1f4b99}.empty{font-size:12px;color:#888}.topbar{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap}.topbar-main{min-width:0;flex:1}.site-title-input{font-size:28px!important;font-weight:700!important;border:0!important;background:transparent!important;padding:0!important;height:auto!important;box-shadow:none!important;color:#1a1a1a!important}.site-title-input:focus{box-shadow:none!important}.top-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}.top-actions .button{min-width:86px}.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.4);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);display:none;align-items:center;justify-content:center;z-index:1000;padding:20px}.modal-content{width:min(460px,100%);background:rgba(255,255,255,.95);border-radius:20px;padding:24px;box-shadow:0 10px 40px rgba(0,0,0,.2);border:1px solid rgba(255,255,255,.5)}.modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}.modal-content input[type=checkbox]{width:18px;height:18px;padding:0;margin-right:7px;vertical-align:-4px}@media(max-width:600px){.top-actions{width:100%;justify-content:stretch}.top-actions .button{flex:1}.admin-row-actions{width:100%}.admin-row-actions button{flex:1}.modal-content{padding:20px}}@media(prefers-color-scheme:dark){.site-title-input{color:#f5f5f5!important}.modal-content{background:rgba(30,30,30,.96);border-color:rgba(255,255,255,.1)}.chip{background:rgba(100,181,246,.1);color:#90caf9}.chip-on{background:rgba(129,199,132,.1);color:#81c784}.chip-off{background:rgba(255,255,255,.08);color:#aaa}.chip-default{background:rgba(100,181,246,.12);color:#90caf9}.empty{color:#aaa}}</style></head><body><main class="page">
+.sub-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap}.provider-main{min-width:0;width:100%}.provider-url{display:block;width:100%;margin-bottom:0;word-break:break-all;overflow-wrap:anywhere}.provider-item{position:relative;padding:12px 150px 12px 12px}.admin-row-actions{position:absolute;top:12px;right:12px;display:flex;gap:8px;margin-top:0}.empty{font-size:12px;color:#888}.topbar{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap}.topbar-main{min-width:0;flex:1}.site-title-input{font-size:28px!important;font-weight:700!important;border:0!important;background:transparent!important;padding:0!important;height:auto!important;box-shadow:none!important;color:#1a1a1a!important}.site-title-input:focus{box-shadow:none!important}.top-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}.top-actions .button{min-width:86px}.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.4);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);display:none;align-items:center;justify-content:center;z-index:1000;padding:20px}.modal-content{width:min(460px,100%);background:rgba(255,255,255,.95);border-radius:20px;padding:24px;box-shadow:0 10px 40px rgba(0,0,0,.2);border:1px solid rgba(255,255,255,.5)}.modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}@media(max-width:600px){.top-actions{width:100%;justify-content:stretch}.top-actions .button{flex:1}.provider-item{padding:12px}.admin-row-actions{position:static;margin-top:10px;width:100%;justify-content:flex-end}.admin-row-actions button{flex:1}.modal-content{padding:20px}}@media(prefers-color-scheme:dark){.site-title-input{color:#f5f5f5!important}.modal-content{background:rgba(30,30,30,.96);border-color:rgba(255,255,255,.1)}.empty{color:#aaa}}</style></head><body><main class="page">
 <header class="header topbar"><div class="topbar-main"><input id="siteName" class="site-title-input" value="${esc(settings.subName||'CF-SUBS')}" aria-label="站点标题"><div class="subtitle">管理订阅转换后端、订阅转换规则和站点安全设置。</div></div><div class="top-actions"><button type="button" class="button secondary" onclick="openModal('securityModal')">安全</button><button type="button" class="button secondary" onclick="openModal('pathModal')">管理员路径</button><a class="button danger" href="/${esc(settings.adminPath||'admin')}/logout">退出</a></div></header>
-<section class="panel"><div class="sub-head"><div><h2 class="section-title">订阅转换后端(SUBAPI)</h2><div class="section-note">可供访客选择的订阅转换后端。</div></div><button type="button" onclick="showProvider('subapi','')">＋ 添加订阅转换后端</button></div><div class="sub-grid" style="margin-top:12px">${rows(apis,'subapi','暂无订阅转换后端，请手动添加。',defaultApiId)}</div></section>
-<section class="panel"><div class="sub-head"><div><h2 class="section-title">订阅转换规则(SUBCONFIG)</h2><div class="section-note">可供访客选择的订阅转换规则。</div></div><button type="button" onclick="showProvider('subconfig','')">＋ 添加订阅转换规则</button></div><div class="sub-grid" style="margin-top:12px">${rows(configs,'subconfig','暂无订阅转换规则，请手动添加。',defaultConfigId)}</div></section>
+<section class="panel"><div class="sub-head"><div><h2 class="section-title">订阅转换后端(SUBAPI)</h2><div class="section-note">订阅转换后端配置。</div></div><button type="button" onclick="showProvider('subapi','')">＋ 添加订阅转换后端</button></div><div class="sub-grid" style="margin-top:12px">${rows(apis,'subapi','暂无订阅转换后端，请手动添加。')}</div></section>
+<section class="panel"><div class="sub-head"><div><h2 class="section-title">订阅转换规则(SUBCONFIG)</h2><div class="section-note">订阅转换规则配置。</div></div><button type="button" onclick="showProvider('subconfig','')">＋ 添加订阅转换规则</button></div><div class="sub-grid" style="margin-top:12px">${rows(configs,'subconfig','暂无订阅转换规则，请手动添加。')}</div></section>
 </main>
-<div id="providerModal" class="modal-overlay"><div class="modal-content"><h2 class="section-title" id="modalTitle">添加</h2><div class="field"><label for="modalName">备注</label><input id="modalName"></div><div class="field"><label for="modalUrl">URL</label><input id="modalUrl" placeholder="https://..."></div><div class="field"><label><input id="modalEnabled" type="checkbox" checked>允许访客选择</label></div><div class="field"><label><input id="modalDefault" type="checkbox">设为无 Cookie 时的默认项</label></div><div class="modal-actions"><button type="button" class="secondary" onclick="hideProvider()">取消</button><button type="button" id="modalSave" onclick="saveProvider()">保存</button></div></div></div>
+<div id="providerModal" class="modal-overlay"><div class="modal-content"><h2 class="section-title" id="modalTitle">添加</h2><div class="field"><label for="modalName">备注</label><input id="modalName"></div><div class="field"><label for="modalUrl">URL</label><input id="modalUrl" placeholder="https://..."></div><div class="modal-actions"><button type="button" class="secondary" onclick="hideProvider()">取消</button><button type="button" id="modalSave" onclick="saveProvider()">保存</button></div></div></div>
 <div id="securityModal" class="modal-overlay"><div class="modal-content"><h2 class="section-title">安全</h2><div class="section-note">修改管理员账号和密码。密码留空表示保持原密码。</div><div class="field"><label for="securityUser">管理员账号</label><input id="securityUser" value="${esc(settings.user||'')}" autocomplete="username"></div><div class="field"><label for="securityPass">管理员密码</label><input id="securityPass" type="password" placeholder="留空保持原密码" autocomplete="new-password"></div><div class="modal-actions"><button type="button" class="secondary" onclick="closeModal('securityModal')">取消</button><button type="button" id="saveSecurity" onclick="saveSecurity()">保存</button></div></div></div>
 <div id="pathModal" class="modal-overlay"><div class="modal-content"><h2 class="section-title">管理员路径</h2><div class="section-note">保存后立即进入新的管理员地址。</div><div class="field"><label for="pathValue">路径</label><input id="pathValue" value="${esc(settings.adminPath||'admin')}" placeholder="admin"></div><div class="modal-actions"><button type="button" class="secondary" onclick="closeModal('pathModal')">取消</button><button type="button" id="savePath" onclick="savePath()">保存</button></div></div></div>
 <script>
@@ -1905,17 +1873,16 @@ function showToast(message){
     clearTimeout(toastTimer);
     toastTimer=setTimeout(()=>{toast.style.display='none'},1400);
 }
-const DATA=${safeJson({apis,configs,defaultApiId,defaultConfigId})};
+const DATA=${safeJson({apis,configs})};
 let modalState=null;
 const $=id=>document.getElementById(id);
 function openModal(id){const el=$(id);if(el)el.style.display='flex'}
 function closeModal(id){const el=$(id);if(el)el.style.display='none'}
 function showProvider(type,id){
- const list=type==='subapi'?DATA.apis:DATA.configs,old=id?list.find(x=>x.id===id):null,def=type==='subapi'?DATA.defaultApiId:DATA.defaultConfigId;
+ const list=type==='subapi'?DATA.apis:DATA.configs,old=id?list.find(x=>x.id===id):null;
  modalState={type,id:id||''};
  $('modalTitle').textContent=(id?'编辑 ':'添加 ')+(type==='subapi'?'订阅转换后端':'订阅转换规则');
  $('modalName').value=old?.name||'';$('modalUrl').value=old?.url||'';
- $('modalEnabled').checked=old?.enabled!==false;$('modalDefault').checked=old?old.id===def:false;
  openModal('providerModal');
 }
 function hideProvider(){closeModal('providerModal');modalState=null}
@@ -1938,7 +1905,7 @@ async function saveProvider(){
  if(!/^https?:\\/\\//i.test(url))return alert('URL 必须以 http:// 或 https:// 开头');
  const b=$('modalSave'),editing=Boolean(modalState.id);b.disabled=true;b.textContent='保存中...';
  try{
-  await post({type:modalState.type+'_'+(editing?'update':'create'),id:modalState.id,name,url,enabled:$('modalEnabled').checked,isDefault:$('modalDefault').checked});
+  await post({type:modalState.type+'_'+(editing?'update':'create'),id:modalState.id,name,url});
   hideProvider();showToast(editing?'已保存':'已添加');setTimeout(()=>location.reload(),700);
  }catch(e){alert(e.message||'保存失败')}finally{b.disabled=false;b.textContent='保存'}
 }
