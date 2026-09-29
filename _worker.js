@@ -1611,26 +1611,15 @@ ${getSubUIStyles()}
 .status-item.wait{background:rgba(255,152,0,.1);border:1px solid rgba(255,152,0,.2);color:#f57c00}
 .status-item.ok{background:rgba(76,175,80,.12);border:1px solid rgba(76,175,80,.25);color:#2e7d32}
 .status-item.bad{background:rgba(244,67,54,.1);border:1px solid rgba(244,67,54,.22);color:#c62828}
- .native-picker{position:relative;margin-top:12px}
-.native-picker-trigger{width:100%;min-height:42px;padding:9px 12px;border:1px solid rgba(229,229,223,.8);border-radius:10px;background:rgba(250,250,250,.7);color:inherit;font:inherit;display:flex;align-items:center;justify-content:space-between;text-align:left;cursor:pointer;list-style:none}
-.native-picker-trigger::-webkit-details-marker{display:none}
-.native-picker-trigger:hover{border-color:#777}
-.native-picker-arrow{font-size:18px;line-height:1;opacity:.7;transition:transform .15s}
-.native-picker[open] .native-picker-arrow{transform:rotate(180deg)}
-.native-picker-menu{margin-top:6px;padding:6px;border:1px solid rgba(229,229,223,.8);border-radius:10px;background:rgba(255,255,255,.98);box-shadow:0 8px 24px rgba(0,0,0,.12)}
-.native-option{display:grid;grid-template-columns:20px minmax(0,1fr);column-gap:9px;align-items:start;padding:9px 8px;border-radius:8px;cursor:pointer}
-.native-option:hover{background:rgba(127,127,127,.08)}
-.native-option input{width:16px;height:16px;margin:2px 0 0}
-.native-option span{font-weight:600;line-height:1.35}
-.native-option small{grid-column:2;margin-top:2px;color:#888;font-size:12px;line-height:1.4;word-break:break-all;overflow-wrap:anywhere}
+ .native-picker{display:block;width:100%;min-height:42px;padding:8px 38px 8px 12px;border:1px solid rgba(229,229,223,.8);border-radius:10px;background:rgba(250,250,250,.7);color:inherit;font:inherit;cursor:pointer;appearance:auto;-webkit-appearance:auto}
+.native-picker:focus{outline:none;border-color:#287ea8;box-shadow:0 0 0 2px rgba(40,126,168,.15)}
+.native-picker option{font:inherit;padding:8px}
 .current-row{display:flex;align-items:center;gap:8px}
 .current-api-input{min-width:0;flex:1;height:42px}
 .current-config-input{min-width:0;flex:1;min-height:54px;resize:none;line-height:1.5}
 @media(prefers-color-scheme:dark){
- .native-picker-trigger{background:#111;color:#f1f1f1;border-color:rgba(255,255,255,.14)}
- .native-picker-menu{background:#1b1b1b;border-color:rgba(255,255,255,.12);box-shadow:0 10px 28px rgba(0,0,0,.35)}
- .native-option:hover{background:rgba(255,255,255,.07)}
- .native-option small{color:#aaa}
+ .native-picker{background:#111;color:#f1f1f1;border-color:rgba(255,255,255,.14)}
+ .native-picker option{background:#1b1b1b;color:#f1f1f1}
 }
 .custom-modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.42);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);display:none;align-items:center;justify-content:center;z-index:1200;padding:20px}
 .custom-modal{width:min(480px,100%);background:rgba(255,255,255,.96);border:1px solid rgba(229,229,223,.9);border-radius:18px;padding:20px;box-shadow:0 18px 50px rgba(0,0,0,.22)}
@@ -1658,13 +1647,11 @@ ${getSubUIStyles()}
 <section class="panel">
 <h2 class="section-title">订阅转换后端(SUBAPI)</h2>
 <div class="section-note">点击选择订阅转换后端。</div>
-<details class="native-picker" id="apiPicker">
-<summary class="native-picker-trigger"><span id="apiPickerLabel">请选择订阅转换后端</span><span class="native-picker-arrow">⌄</span></summary>
-<div class="native-picker-menu">
-${apis.map(x=>`<label class="native-option"><input type="radio" name="apiChoice" value="${esc(x.id)}" ${!apiCustom&&apiId===x.id?'checked':''}><span>${esc(x.name)}</span><small>${esc(x.url)}</small></label>`).join('')}
-<label class="native-option"><input type="radio" name="apiChoice" value="__custom" ${apiCustom?'checked':''}><span>自定义</span><small>使用你自己的订阅转换后端</small></label>
-</div>
-</details>
+<select class="native-picker" id="apiPicker" aria-label="选择订阅转换后端">
+<option value="">请选择订阅转换后端</option>
+${apis.map(x=>`<option value="${esc(x.id)}" ${!apiCustom&&apiId===x.id?'selected':''}>${esc(x.name)} — ${esc(x.url)}</option>`).join('')}
+<option value="__custom" ${apiCustom?'selected':''}>自定义 — 使用你自己的订阅转换后端</option>
+</select>
 <div class="current-box"><div class="current-title">当前配置</div><div class="current-row">
 <input id="apiCurrent" class="current-api-input" readonly value="${esc(apiCurrentValue)}" placeholder="请选择订阅转换后端">
 <button type="button" class="button secondary edit-custom" id="editApiCustom">编辑</button>
@@ -1675,13 +1662,11 @@ ${apis.map(x=>`<label class="native-option"><input type="radio" name="apiChoice"
 <section class="panel">
 <h2 class="section-title">订阅转换规则(SUBCONFIG)</h2>
 <div class="section-note">点击选择订阅转换规则。</div>
-<details class="native-picker" id="configPicker">
-<summary class="native-picker-trigger"><span id="configPickerLabel">请选择订阅转换规则</span><span class="native-picker-arrow">⌄</span></summary>
-<div class="native-picker-menu">
-${configs.map(x=>`<label class="native-option"><input type="radio" name="configChoice" value="${esc(x.id)}" ${!configCustom&&configId===x.id?'checked':''}><span>${esc(x.name)}</span><small>${esc(x.url)}</small></label>`).join('')}
-<label class="native-option"><input type="radio" name="configChoice" value="__custom" ${configCustom?'checked':''}><span>自定义</span><small>使用你自己的订阅转换规则</small></label>
-</div>
-</details>
+<select class="native-picker" id="configPicker" aria-label="选择订阅转换规则">
+<option value="">请选择订阅转换规则</option>
+${configs.map(x=>`<option value="${esc(x.id)}" ${!configCustom&&configId===x.id?'selected':''}>${esc(x.name)} — ${esc(x.url)}</option>`).join('')}
+<option value="__custom" ${configCustom?'selected':''}>自定义 — 使用你自己的订阅转换规则</option>
+</select>
 <div class="current-box"><div class="current-title">当前配置</div><div class="current-row">
 <textarea id="configCurrent" class="current-config-input" readonly placeholder="请选择订阅转换规则">${esc(configCurrentValue)}</textarea>
 <button type="button" class="button secondary edit-custom" id="editConfigCustom">编辑</button>
@@ -1710,8 +1695,8 @@ const state={apiId:${json(apiId)},configId:${json(configId)},apiCustom:${apiCust
 
 function selected(kind){
  const api=kind==='api';
- const input=document.querySelector('input[name="'+(api?'apiChoice':'configChoice')+'"]:checked');
- const value=input?.value||'';
+ const picker=$(api?'apiPicker':'configPicker');
+ const value=picker?.value||'';
  const custom=value==='__custom';
  const list=api?API_LIST:CONFIG_LIST;
  const id=custom?'':value;
@@ -1740,8 +1725,10 @@ function setStatus(id,html){$(id).innerHTML=html}
 async function checkAvailability(){
  renderCurrent('api');renderCurrent('config');
  const a=selected('api'),c=selected('config');
- if(!a.all.length){setStatus('apiStatus','<div class="status-item wait">⏳ 未配置订阅转换后端</div>')}
- if(!c.all.length){setStatus('configStatus','<div class="status-item wait">⏳ 未配置订阅转换规则</div>')}
+ if(!a.all.length)setStatus('apiStatus','<div class="status-item wait">⏳ 未配置订阅转换后端</div>');
+ else setStatus('apiStatus','<div class="status-item wait">⏳ 状态检测中</div>');
+ if(!c.all.length)setStatus('configStatus','<div class="status-item wait">⏳ 未配置订阅转换规则</div>');
+ else setStatus('configStatus','<div class="status-item wait">⏳ 状态检测中</div>');
  if(!a.all.length||!c.all.length)return;
  setStatus('apiStatus','<div class="status-item wait">⏳ 状态检测中</div>');
  setStatus('configStatus','<div class="status-item wait">⏳ 状态检测中</div>');
@@ -1761,7 +1748,9 @@ function choiceChanged(kind){
  const api=kind==='api',s=selected(kind);
  if(api){state.apiId=s.id;state.apiCustom=s.custom}
  else{state.configId=s.id;state.configCustom=s.custom}
- renderCurrent(kind);savePrefs();checkAvailability();
+ renderCurrent(kind);
+ savePrefs();
+ checkAvailability();
 }
 function openCustomModal(kind){
  const api=kind==='api';
@@ -1779,16 +1768,11 @@ function saveCustom(kind){
  closeCustomModal(kind);renderCurrent(kind);savePrefs();checkAvailability();
 }
 function updatePickerLabel(kind){
- const api=kind==='api',label=$(api?'apiPickerLabel':'configPickerLabel');
- const s=selected(kind);
- label.textContent=s.custom?'自定义':(s.item?.name||'请选择'+(api?'订阅转换后端':'订阅转换规则'));
+ const api=kind==='api',picker=$(api?'apiPicker':'configPicker');
+ if(!picker)return;
 }
-document.querySelectorAll('input[name="apiChoice"]').forEach(x=>x.addEventListener('change',()=>{
- choiceChanged('api');updatePickerLabel('api');document.getElementById('apiPicker').open=false;
-}));
-document.querySelectorAll('input[name="configChoice"]').forEach(x=>x.addEventListener('change',()=>{
- choiceChanged('config');updatePickerLabel('config');document.getElementById('configPicker').open=false;
-}));
+$('#apiPicker').addEventListener('change',()=>choiceChanged('api'));
+$('#configPicker').addEventListener('change',()=>choiceChanged('config'));
 $('#editApiCustom').addEventListener('click',()=>openCustomModal('api'));
 $('#editConfigCustom').addEventListener('click',()=>openCustomModal('config'));
 $('#cancelApiCustom').addEventListener('click',()=>closeCustomModal('api'));
@@ -1815,7 +1799,9 @@ $('#generate').addEventListener('click',async()=>{
    $('#direct').textContent=d.subscription_url;$('#openDirect').href=d.subscription_url;$('#result').hidden=false;$('#result').scrollIntoView({behavior:'smooth',block:'start'});
  }catch(e){alert(e.message||'生成失败')}finally{button.disabled=false;button.textContent='生成聚合订阅'}
 });
-updatePickerLabel('api');updatePickerLabel('config');renderCurrent('api');renderCurrent('config');checkAvailability();
+$('#apiPicker').value=state.apiCustom?'__custom':state.apiId;
+$('#configPicker').value=state.configCustom?'__custom':state.configId;
+renderCurrent('api');renderCurrent('config');checkAvailability();
 </script>
 </body>
 </html>`;
@@ -1850,7 +1836,7 @@ function renderAdminPage(url,env,settings){
     </div>`).join(''):`<div class="empty">${empty}</div>`;
 
     return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(settings.subName||'CF-SUBS')} · 管理后台</title><style>${getToolStyles()}
-.sub-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap}.provider-main{min-width:0;width:100%}.provider-url{display:block;width:100%;margin-bottom:0;word-break:break-all;overflow-wrap:anywhere}.provider-item{position:relative;padding:12px 150px 12px 12px}.admin-row-actions{position:absolute;top:12px;right:12px;display:flex;gap:8px;margin-top:0}.empty{font-size:12px;color:#888}.topbar{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap}.topbar-main{min-width:0;flex:1}.site-title-input{font-size:28px!important;font-weight:700!important;border:0!important;background:transparent!important;padding:0!important;height:auto!important;box-shadow:none!important;color:#1a1a1a!important}.site-title-input:focus{box-shadow:none!important}.top-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}.top-actions .button{min-width:86px}.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.4);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);display:none;align-items:center;justify-content:center;z-index:1000;padding:20px}.modal-content{width:min(460px,100%);background:rgba(255,255,255,.95);border-radius:20px;padding:24px;box-shadow:0 10px 40px rgba(0,0,0,.2);border:1px solid rgba(255,255,255,.5)}.modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}@media(max-width:600px){.top-actions{width:100%;justify-content:stretch}.top-actions .button{flex:1}.provider-item{padding:12px}.admin-row-actions{position:static;margin-top:10px;width:100%;justify-content:flex-end}.admin-row-actions button{flex:1}.modal-content{padding:20px}}@media(prefers-color-scheme:dark){.site-title-input{color:#f5f5f5!important}.modal-content{background:rgba(30,30,30,.96);border-color:rgba(255,255,255,.1)}.empty{color:#aaa}}</style></head><body><main class="page">
+.sub-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap}.provider-main{min-width:0;width:100%}.provider-url{display:block;width:100%;margin-bottom:0;word-break:break-all;overflow-wrap:anywhere}.provider-item{position:relative;padding:12px 104px 12px 12px}.admin-row-actions{position:absolute;top:12px;right:12px;display:flex;flex-direction:column;gap:7px;margin-top:0;align-items:stretch}.admin-row-actions button{min-width:68px}.empty{font-size:12px;color:#888}.topbar{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap}.topbar-main{min-width:0;flex:1}.site-title-input{font-size:28px!important;font-weight:700!important;border:0!important;background:transparent!important;padding:0!important;height:auto!important;box-shadow:none!important;color:#1a1a1a!important}.site-title-input:focus{box-shadow:none!important}.top-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}.top-actions .button{min-width:86px}.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.4);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);display:none;align-items:center;justify-content:center;z-index:1000;padding:20px}.modal-content{width:min(460px,100%);background:rgba(255,255,255,.95);border-radius:20px;padding:24px;box-shadow:0 10px 40px rgba(0,0,0,.2);border:1px solid rgba(255,255,255,.5)}.modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}@media(max-width:600px){.top-actions{width:100%;justify-content:stretch}.top-actions .button{flex:1}.provider-item{padding-right:12px}.admin-row-actions{position:absolute;top:12px;right:12px;width:auto;justify-content:flex-start}.admin-row-actions button{flex:none}.modal-content{padding:20px}}@media(prefers-color-scheme:dark){.site-title-input{color:#f5f5f5!important}.modal-content{background:rgba(30,30,30,.96);border-color:rgba(255,255,255,.1)}.empty{color:#aaa}}</style></head><body><main class="page">
 <header class="header topbar"><div class="topbar-main"><input id="siteName" class="site-title-input" value="${esc(settings.subName||'CF-SUBS')}" aria-label="站点标题"><div class="subtitle">管理订阅转换后端、订阅转换规则和站点安全设置。</div></div><div class="top-actions"><button type="button" class="button secondary" onclick="openModal('securityModal')">安全</button><button type="button" class="button secondary" onclick="openModal('pathModal')">管理员路径</button><a class="button danger" href="/${esc(settings.adminPath||'admin')}/logout">退出</a></div></header>
 <section class="panel"><div class="sub-head"><div><h2 class="section-title">订阅转换后端(SUBAPI)</h2><div class="section-note">订阅转换后端配置。</div></div><button type="button" onclick="showProvider('subapi','')">＋ 添加订阅转换后端</button></div><div class="sub-grid" style="margin-top:12px">${rows(apis,'subapi','暂无订阅转换后端，请手动添加。')}</div></section>
 <section class="panel"><div class="sub-head"><div><h2 class="section-title">订阅转换规则(SUBCONFIG)</h2><div class="section-note">订阅转换规则配置。</div></div><button type="button" onclick="showProvider('subconfig','')">＋ 添加订阅转换规则</button></div><div class="sub-grid" style="margin-top:12px">${rows(configs,'subconfig','暂无订阅转换规则，请手动添加。')}</div></section>
