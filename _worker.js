@@ -244,7 +244,6 @@ async function handleRequest(request, env) {
                 headers: {
                     'Content-Type': 'text/html; charset=UTF-8',
                     'Cache-Control': 'no-store',
-                    'Content-Security-Policy': `default-src 'self'; script-src 'self' 'nonce-${nonce}'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'self'; base-uri 'self'; form-action 'self'`
                 }
             });
         }
@@ -1776,7 +1775,7 @@ async function renderSubUIHome(request,url,env){
     const configCurrentValue=selectedConfig?.url||'';
     const noAds='';
     const esc=x=>escapeHTML(String(x??''));
-    const json=x=>JSON.stringify(x).replace(/</g,'\\u003c');
+    const json=x=>JSON.stringify(x).replace(/<\\/script/gi,'<\\\\/script').replace(/</g,'\\u003c');
 
     return `<!doctype html>
 <html lang="zh-CN">
@@ -1917,6 +1916,8 @@ function saveCustom(kind){
  $(api?'customApiModal':'customConfigModal').style.display='none';updateCurrent(kind);checkStatus(kind);
 }
 function initPublicHome(){
+ if(window.__CF_SUBS_PUBLIC_READY)return;
+ window.__CF_SUBS_PUBLIC_READY=true;
  const ap=$('apiPicker'),cp=$('configPicker');
  if(ap){
   if(PUBLIC_STATE.apiCustom)ap.value='__custom';else{const item=API_LIST.find(x=>x.id===PUBLIC_STATE.apiId)||API_LIST[0];if(item)ap.value=item.url;}
@@ -1959,7 +1960,7 @@ function renderAdminPage(url,env,settings){
     const apis=normalizeProviderList(settings.subApis),configs=normalizeProviderList(settings.subConfigs);
     
     const esc=x=>escapeHTML(String(x??''));
-    const safeJson=x=>JSON.stringify(x).replace(/</g,'\\u003c');
+    const safeJson=x=>JSON.stringify(x).replace(/<\\/script/gi,'<\\\\/script').replace(/</g,'\\u003c');
     const defaultApiId=String(settings.defaultSubApiId||'');
     const defaultConfigId=String(settings.defaultSubConfigId||'');
     const rows=(list,type,empty)=>list.length?list.map(x=>{
@@ -1969,15 +1970,15 @@ function renderAdminPage(url,env,settings){
             <div class="provider-url link-url">${esc(x.url)}</div>
         </div>
         <div class="actions admin-row-actions">
-            <button type="button" class="secondary" onclick="showProvider('${type}','${esc(x.id)}')">编辑</button>
-            <button type="button" class="danger" onclick="deleteProvider('${type}','${esc(x.id)}')">删除</button>
+            <button type="button" class="secondary" data-provider-action="edit" data-provider-type="${esc(type)}" data-provider-id="${esc(x.id)}">编辑</button>
+            <button type="button" class="danger" data-provider-action="delete" data-provider-type="${esc(type)}" data-provider-id="${esc(x.id)}">删除</button>
         </div>
     </div>`;
     }).join(''):`<div class="empty">${empty}</div>`;
 
     const defaultSelect=(list,type,defaultId)=>{
         const label=type==='subapi'?'SUBAPI':'SUBCONFIG';
-        return `<select class="default-provider-select" aria-label="默认${label}" onchange="setDefaultProvider('${type}',this.value)">
+        return `<select class="default-provider-select" data-type="${esc(type)}" aria-label="默认${label}">
             ${list.length?list.map(x=>`<option value="${esc(x.id)}" ${x.id===defaultId?'selected':''}>${esc(x.name)}</option>`).join(''): '<option value="">暂无配置</option>'}
         </select>`;
     };
@@ -1985,12 +1986,12 @@ function renderAdminPage(url,env,settings){
     return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(settings.subName||'SUB')} · 管理后台</title>${settings.siteLogo?`<link rel="icon" href="${esc(settings.siteLogo)}">`:''}<style>${getToolStyles()}
 .sub-head{display:grid;grid-template-columns:max-content minmax(0,1fr);align-items:start;gap:14px}.sub-head .section-title{white-space:nowrap;font-size:16px;line-height:40px;margin:0}.sub-head-actions{display:grid;grid-template-columns:270px 190px;align-items:center;justify-content:end;gap:10px;width:100%}.default-provider-select{width:270px;min-width:270px;height:40px;padding:0 30px 0 12px;border:1px solid rgba(120,120,120,.45);border-radius:9px;background:rgba(255,255,255,.7);color:inherit;font-size:14px;font-weight:600;cursor:pointer;box-sizing:border-box}.default-provider-select:focus{outline:none;border-color:#3b82f6;box-shadow:0 0 0 2px rgba(59,130,246,.18);width:max-content;min-width:270px;max-width:calc(100vw - 40px)}.sub-head-actions>button{width:190px;min-width:190px;height:40px;white-space:nowrap;word-break:keep-all;overflow:hidden;text-overflow:clip;font-size:14px}.provider-main{min-width:0;width:100%}.provider-url{display:block;width:100%;margin-bottom:0;word-break:break-all;overflow-wrap:anywhere}.provider-item{position:relative;padding:12px 104px 12px 12px}.admin-row-actions{position:absolute;top:12px;right:12px;display:flex;flex-direction:column;gap:7px;margin-top:0;align-items:stretch}.admin-row-actions button{min-width:68px}.empty{font-size:12px;color:#888}.topbar{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap}.topbar-main{min-width:0;flex:1}.site-title-display{font-size:28px;font-weight:700;line-height:1.2;color:#1a1a1a}.site-title-input{font-size:15px!important}.site-title-input:focus{box-shadow:none!important}.top-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}.top-actions .button{min-width:86px}.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.4);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);display:none;align-items:center;justify-content:center;z-index:1000;padding:20px}.modal-content{width:min(460px,100%);background:rgba(255,255,255,.95);border-radius:20px;padding:24px;box-shadow:0 10px 40px rgba(0,0,0,.2);border:1px solid rgba(255,255,255,.5)}.modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}@media(max-width:760px){.sub-head{grid-template-columns:1fr;gap:8px}.sub-head-actions{width:100%;grid-template-columns:minmax(0,1fr) 190px}.default-provider-select{width:100%;min-width:0;font-size:14px}.default-provider-select:focus{width:max-content;min-width:0;max-width:100%}}@media(max-width:600px){.top-actions{width:100%;justify-content:stretch}.top-actions .button{flex:1}.sub-head-actions{width:100%;grid-template-columns:minmax(0,1fr) 170px}.default-provider-select{width:100%;min-width:0}.default-provider-select:focus{width:max-content;min-width:0;max-width:100%}.sub-head-actions>button{width:170px;min-width:170px;white-space:nowrap}.provider-item{padding-right:12px}.admin-row-actions{position:absolute;top:12px;right:12px;width:auto;justify-content:flex-start}.admin-row-actions button{flex:none}.modal-content{padding:20px}}@media(prefers-color-scheme:dark){.site-title-display{color:#f5f5f5}.site-title-input{color:#f5f5f5!important}.default-provider-select{background:rgba(30,30,30,.92);border-color:rgba(255,255,255,.18);color:#fff}.modal-content{background:rgba(30,30,30,.96);border-color:rgba(255,255,255,.1)}.empty{color:#aaa}}</style></head><body><main class="page">
 <header class="header topbar"><div class="topbar-main"><div class="site-title-display">${esc(settings.subName||'SUB')}</div><div class="subtitle">管理订阅转换后端、订阅转换规则和站点安全设置。</div></div><div class="top-actions"><button type="button" class="button secondary" onclick="openModal('securityModal')">安全</button><button type="button" class="button secondary" onclick="openModal('siteModal')">站点</button><a class="button danger" href="/${esc(settings.adminPath||'admin')}/logout">退出</a></div></header>
-<section class="panel"><div class="sub-head"><div><h2 class="section-title">订阅转换后端(SUBAPI)</h2></div><div class="sub-head-actions">${defaultSelect(apis,'subapi',defaultApiId)}<button type="button" onclick="showProvider('subapi','')">＋ 添加订阅转换后端</button></div></div><div class="sub-grid" style="margin-top:12px">${rows(apis,'subapi','暂无订阅转换后端，请手动添加。')}</div></section>
-<section class="panel"><div class="sub-head"><div><h2 class="section-title">订阅转换规则(SUBCONFIG)</h2></div><div class="sub-head-actions">${defaultSelect(configs,'subconfig',defaultConfigId)}<button type="button" onclick="showProvider('subconfig','')">＋ 添加订阅转换规则</button></div></div><div class="sub-grid" style="margin-top:12px">${rows(configs,'subconfig','暂无订阅转换规则，请手动添加。')}</div></section>
+<section class="panel"><div class="sub-head"><div><h2 class="section-title">订阅转换后端(SUBAPI)</h2></div><div class="sub-head-actions">${defaultSelect(apis,'subapi',defaultApiId)}<button type="button" data-provider-action="add" data-provider-type="subapi">＋ 添加订阅转换后端</button></div></div><div class="sub-grid" style="margin-top:12px">${rows(apis,'subapi','暂无订阅转换后端，请手动添加。')}</div></section>
+<section class="panel"><div class="sub-head"><div><h2 class="section-title">订阅转换规则(SUBCONFIG)</h2></div><div class="sub-head-actions">${defaultSelect(configs,'subconfig',defaultConfigId)}<button type="button" data-provider-action="add" data-provider-type="subconfig">＋ 添加订阅转换规则</button></div></div><div class="sub-grid" style="margin-top:12px">${rows(configs,'subconfig','暂无订阅转换规则，请手动添加。')}</div></section>
 </main>
-<div id="providerModal" class="modal-overlay"><div class="modal-content"><h2 class="section-title" id="modalTitle">添加</h2><div class="field"><label for="modalName">备注</label><input id="modalName"></div><div class="field"><label for="modalUrl">URL</label><input id="modalUrl" placeholder="https://..."></div><div class="modal-actions"><button type="button" class="secondary" onclick="hideProvider()">取消</button><button type="button" id="modalSave" onclick="saveProvider()">保存</button></div></div></div>
-<div id="securityModal" class="modal-overlay"><div class="modal-content"><h2 class="section-title">安全</h2><div class="section-note">修改管理员账号和密码。修改密码时必须输入两次；两次留空表示保持原密码。</div><div class="field"><label for="securityUser">管理员账号</label><input id="securityUser" value="${esc(settings.user||'')}" autocomplete="username"></div><div class="field"><label for="securityPass">管理员密码</label><input id="securityPass" type="password" placeholder="留空保持原密码" autocomplete="new-password"></div><div class="field"><label for="securityPass2">确认管理员密码</label><input id="securityPass2" type="password" placeholder="再次输入新密码" autocomplete="new-password"></div><div class="modal-actions"><button type="button" class="secondary" onclick="closeModal('securityModal')">取消</button><button type="button" id="saveSecurity" onclick="saveSecurity()">保存</button></div></div></div>
-<div id="siteModal" class="modal-overlay"><div class="modal-content"><h2 class="section-title">站点</h2><div class="field"><label for="siteName">站点标题</label><input id="siteName" value="${esc(settings.subName||'SUB')}" placeholder="SUB"></div><div class="field"><label for="sitePath">管理员路径</label><input id="sitePath" value="${esc(settings.adminPath||'admin')}" placeholder="admin"></div><div class="field"><label for="siteLogo">站点标签栏 Logo 地址</label><input id="siteLogo" value="${esc(settings.siteLogo||'')}" placeholder="https://example.com/favicon.png" type="url"><div class="section-note">支持 http:// 或 https:// 直链；留空则不设置。</div></div><div class="modal-actions"><button type="button" class="secondary" onclick="closeModal('siteModal')">取消</button><button type="button" id="saveSite" onclick="saveSiteSettings()">保存</button></div></div></div>
+<div id="providerModal" class="modal-overlay"><div class="modal-content"><h2 class="section-title" id="modalTitle">添加</h2><div class="field"><label for="modalName">备注</label><input id="modalName"></div><div class="field"><label for="modalUrl">URL</label><input id="modalUrl" placeholder="https://..."></div><div class="modal-actions"><button type="button" class="secondary" id="providerCancel">取消</button><button type="button" id="modalSave">保存</button></div></div></div>
+<div id="securityModal" class="modal-overlay"><div class="modal-content"><h2 class="section-title">安全</h2><div class="section-note">修改管理员账号和密码。修改密码时必须输入两次；两次留空表示保持原密码。</div><div class="field"><label for="securityUser">管理员账号</label><input id="securityUser" value="${esc(settings.user||'')}" autocomplete="username"></div><div class="field"><label for="securityPass">管理员密码</label><input id="securityPass" type="password" placeholder="留空保持原密码" autocomplete="new-password"></div><div class="field"><label for="securityPass2">确认管理员密码</label><input id="securityPass2" type="password" placeholder="再次输入新密码" autocomplete="new-password"></div><div class="modal-actions"><button type="button" class="secondary" data-close-modal="securityModal">取消</button><button type="button" id="saveSecurity">保存</button></div></div></div>
+<div id="siteModal" class="modal-overlay"><div class="modal-content"><h2 class="section-title">站点</h2><div class="field"><label for="siteName">站点标题</label><input id="siteName" value="${esc(settings.subName||'SUB')}" placeholder="SUB"></div><div class="field"><label for="sitePath">管理员路径</label><input id="sitePath" value="${esc(settings.adminPath||'admin')}" placeholder="admin"></div><div class="field"><label for="siteLogo">站点标签栏 Logo 地址</label><input id="siteLogo" value="${esc(settings.siteLogo||'')}" placeholder="https://example.com/favicon.png" type="url"><div class="section-note">支持 http:// 或 https:// 直链；留空则不设置。</div></div><div class="modal-actions"><button type="button" class="secondary" data-close-modal="siteModal">取消</button><button type="button" id="saveSite">保存</button></div></div></div>
 <script>
 let toastTimer;
 function showToast(message){
@@ -2070,6 +2071,18 @@ async function saveSiteSettings(){
  catch(e){alert(e.message||'保存失败')}finally{b.disabled=false;b.textContent='保存'}
 }
 
+document.querySelectorAll('[data-open-modal]').forEach(b=>b.addEventListener('click',()=>openModal(b.dataset.openModal)));
+document.querySelectorAll('[data-close-modal]').forEach(b=>b.addEventListener('click',()=>closeModal(b.dataset.closeModal)));
+document.querySelectorAll('[data-provider-action]').forEach(b=>b.addEventListener('click',()=>{
+ const action=b.dataset.providerAction,type=b.dataset.providerType||'',id=b.dataset.providerId||'';
+ if(action==='add'||action==='edit')showProvider(type,action==='edit'?id:'');
+ else if(action==='delete')deleteProvider(type,id);
+}));
+$('providerCancel')?.addEventListener('click',hideProvider);
+$('modalSave')?.addEventListener('click',saveProvider);
+$('saveSecurity')?.addEventListener('click',saveSecurity);
+$('saveSite')?.addEventListener('click',saveSiteSettings);
+document.querySelectorAll('.default-provider-select').forEach(select=>select.addEventListener('change',()=>setDefaultProvider(select.dataset.type,select.value)));
 document.querySelectorAll('.modal-overlay').forEach(m=>m.addEventListener('click',e=>{if(e.target===m)m.style.display='none'}));
 </script></body></html>`;
 }
