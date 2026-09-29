@@ -2007,7 +2007,6 @@ async function post(data){
  return d;
 }
 async function setDefaultProvider(type,id){
- const input=document.querySelector(`input[name=\"default-${type}\"][value=\"${id}\"]`);
  try{
   await post({type:type+'_default',id});
   showToast('默认配置已更新');
