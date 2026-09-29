@@ -627,7 +627,7 @@ async function handleAdmin(request, env, runtime) {
                 return jsonResponse({ok:true,subName});
             }
 
-            if(['subapi_create','subapi_update','subapi_delete','subconfig_create','subconfig_update','subconfig_delete'].includes(data.type)){
+            if(['subapi_create','subapi_update','subapi_delete','subapi_default','subconfig_create','subconfig_update','subconfig_delete','subconfig_default'].includes(data.type)){
                 const cfg=await getConfig(env);
                 const isApi=data.type.startsWith('subapi_');
                 const key=isApi?'subApis':'subConfigs';
@@ -636,10 +636,17 @@ async function handleAdmin(request, env, runtime) {
                 const action=data.type.split('_')[1];
                 const id=String(data.id||'').trim();
 
+                if(action==='default'){
+                    if(!list.some(x=>x.id===id)) return jsonResponse({ok:false,error:'项目不存在'},404);
+                    cfg[defaultKey]=id;
+                    await env.KV.put('CONFIG.json',JSON.stringify(cfg));
+                    return jsonResponse({ok:true,items:normalizeProviderList(cfg[key]),defaultId:String(cfg[defaultKey]||'')});
+                }
+
                 if(action==='delete'){
                     if(!list.some(x=>x.id===id))return jsonResponse({ok:false,error:'项目不存在'},404);
                     cfg[key]=list.filter(x=>x.id!==id);
-                    if(String(cfg[defaultKey]||'')===id)cfg[defaultKey]='';
+                    if(String(cfg[defaultKey]||'')===id) cfg[defaultKey]=cfg[key][0]?.id||'';
                 }else{
                     const name=normalizeName(data.name), value=String(data.url||'').trim();
                     if(!validName(name))return jsonResponse({ok:false,error:'备注不能为空且不能超过 80 个字符'},400);
@@ -1734,30 +1741,22 @@ async function renderSubUIHome(request,url,env){
     const cfg=await getConfig(env);
     const apis=normalizeProviderList(cfg.subApis).filter(x=>x.enabled);
     const configs=normalizeProviderList(cfg.subConfigs).filter(x=>x.enabled);
-    const prefs=readPublicPreferences(request)||{};
-
+    // 主页全部为临时变量：不读取、不写入 Cookie/KV。刷新后始终恢复管理员设置的默认配置，NOADS 默认留空。
     const defaultApiId=String(cfg.defaultSubApiId||'');
     const defaultConfigId=String(cfg.defaultSubConfigId||'');
 
-    let apiId=String(prefs.apiIds?.[0]||'');
-    let configId=String(prefs.configIds?.[0]||'');
-    let apiCustom=Boolean(prefs.apiCustom);
-    let configCustom=Boolean(prefs.configCustom);
-    let apiUrl=apiCustom?String(prefs.apiUrl||''):'';
-    let configUrl=configCustom?String(prefs.configUrl||''):'';
+    let apiId=defaultApiId&&apis.some(x=>x.id===defaultApiId)?defaultApiId:(apis[0]?.id||'');
+    let configId=defaultConfigId&&configs.some(x=>x.id===defaultConfigId)?defaultConfigId:(configs[0]?.id||'');
+    let apiCustom=false;
+    let configCustom=false;
+    let apiUrl='';
+    let configUrl='';
 
-    if(!apiCustom && !apis.some(x=>x.id===apiId)) apiId='';
-    if(!configCustom && !configs.some(x=>x.id===configId)) configId='';
-    if(!apiCustom && !apiId && defaultApiId && apis.some(x=>x.id===defaultApiId)) apiId=defaultApiId;
-    if(!configCustom && !configId && defaultConfigId && configs.some(x=>x.id===defaultConfigId)) configId=defaultConfigId;
-    if(!apiCustom && !apiId && apis[0]) apiId=apis[0].id;
-    if(!configCustom && !configId && configs[0]) configId=configs[0].id;
-
-    const selectedApi=apiCustom?null:apis.find(x=>x.id===apiId);
-    const selectedConfig=configCustom?null:configs.find(x=>x.id===configId);
-    const apiCurrentValue=apiCustom?apiUrl:(selectedApi?.url||'');
-    const configCurrentValue=configCustom?configUrl:(selectedConfig?.url||'');
-    const noAds=String(prefs.noAds||'');
+    const selectedApi=apis.find(x=>x.id===apiId);
+    const selectedConfig=configs.find(x=>x.id===configId);
+    const apiCurrentValue=selectedApi?.url||'';
+    const configCurrentValue=selectedConfig?.url||'';
+    const noAds='';
     const esc=x=>escapeHTML(String(x??''));
     const json=x=>JSON.stringify(x).replace(/</g,'\\u003c');
 
@@ -1835,12 +1834,6 @@ function updateCurrent(kind){
  if(api){edit.style.display=custom?'inline-flex':'none';edit.hidden=!custom;}
  else{edit.style.display=custom?'inline-flex':'none';edit.hidden=!custom;current.style.height='auto';current.style.height=Math.max(70,Math.min(260,current.scrollHeight))+'px';}
 }
-function savePrefs(){
- const a=$('apiPicker'),c=$('configPicker');
- const v={apiIds:a?.value==='__custom'?[]:[currentId('api')],apiCustom:a?.value==='__custom',apiUrl:a?.value==='__custom'?PUBLIC_STATE.apiUrl:'',configIds:c?.value==='__custom'?[]:[currentId('config')],configCustom:c?.value==='__custom',configUrl:c?.value==='__custom'?PUBLIC_STATE.configUrl:'',noAds:($('noAds')?.value||'').trim()};
- const e=encodeURIComponent(JSON.stringify(v));
- if(e.length<=3600)document.cookie='CF_SUB_PREFS='+e+'; Max-Age=2592000; Path=/; SameSite=Lax; Secure';
-}
 function setStatus(id,html){const el=$(id);if(el)el.innerHTML=html;}
 function statusText(kind,info,ok){
  const api=kind==='api';
@@ -1885,12 +1878,10 @@ function onPickerChange(kind){
    $(api?'customApiModal':'customConfigModal').style.display='flex';
    setTimeout(()=>$(api?'customApiInput':'customConfigInput').focus(),0);
    updateCurrent(kind);
-   savePrefs();
    return;
  }
  if(api){PUBLIC_STATE.apiId=currentId('api');PUBLIC_STATE.apiCustom=false;}else{PUBLIC_STATE.configId=currentId('config');PUBLIC_STATE.configCustom=false;}
  updateCurrent(kind);
- savePrefs();
  checkStatus(kind);
 }
 function openCustom(kind){const api=kind==='api';$(api?'customApiInput':'customConfigInput').value=api?PUBLIC_STATE.apiUrl:PUBLIC_STATE.configUrl;$(api?'customApiModal':'customConfigModal').style.display='flex';}
@@ -1898,14 +1889,14 @@ function cancelCustom(kind){
  const api=kind==='api',picker=$(api?'apiPicker':'configPicker');
  if(api){PUBLIC_STATE.apiCustom=false;PUBLIC_STATE.apiUrl='';if(PUBLIC_STATE.apiId)picker.value=API_LIST.find(x=>x.id===PUBLIC_STATE.apiId)?.url||API_LIST[0]?.url||'';else picker.selectedIndex=0;}
  else{PUBLIC_STATE.configCustom=false;PUBLIC_STATE.configUrl='';if(PUBLIC_STATE.configId)picker.value=CONFIG_LIST.find(x=>x.id===PUBLIC_STATE.configId)?.url||CONFIG_LIST[0]?.url||'';else picker.selectedIndex=0;}
- $(api?'customApiModal':'customConfigModal').style.display='none';updateCurrent(kind);savePrefs();checkStatus(kind);
+ $(api?'customApiModal':'customConfigModal').style.display='none';updateCurrent(kind);checkStatus(kind);
 }
 function saveCustom(kind){
  const api=kind==='api',input=$(api?'customApiInput':'customConfigInput'),value=input.value.trim();
  if(!/^https?:\\/\\//i.test(value)){alert('URL 必须以 http:// 或 https:// 开头');return;}
  if(api){PUBLIC_STATE.apiUrl=value;PUBLIC_STATE.apiCustom=true;PUBLIC_STATE.apiId='';$('apiPicker').value='__custom';}
  else{PUBLIC_STATE.configUrl=value;PUBLIC_STATE.configCustom=true;PUBLIC_STATE.configId='';$('configPicker').value='__custom';}
- $(api?'customApiModal':'customConfigModal').style.display='none';updateCurrent(kind);savePrefs();checkStatus(kind);
+ $(api?'customApiModal':'customConfigModal').style.display='none';updateCurrent(kind);checkStatus(kind);
 }
 function initPublicHome(){
  const ap=$('apiPicker'),cp=$('configPicker');
@@ -1920,8 +1911,7 @@ function initPublicHome(){
  $('editApiCustom')?.addEventListener('click',()=>openCustom('api'));$('editConfigCustom')?.addEventListener('click',()=>openCustom('config'));
  $('cancelApiCustom')?.addEventListener('click',()=>cancelCustom('api'));$('cancelConfigCustom')?.addEventListener('click',()=>cancelCustom('config'));
  $('saveApiCustom')?.addEventListener('click',()=>saveCustom('api'));$('saveConfigCustom')?.addEventListener('click',()=>saveCustom('config'));
- updateCurrent('api');updateCurrent('config');savePrefs();checkStatus('api');checkStatus('config');
- $('noAds')?.addEventListener('input',savePrefs);
+ updateCurrent('api');updateCurrent('config');checkStatus('api');checkStatus('config');
  $('copyDirect')?.addEventListener('click',async()=>{const v=$('direct').textContent.trim();try{await navigator.clipboard.writeText(v);alert('已复制')}catch(e){alert('复制失败，请手动复制')}});
  $('generate')?.addEventListener('click',async()=>{
   const sources=$('sources').value.trim(),a=$('apiPicker'),c=$('configPicker'),apiCustom=a.value==='__custom',configCustom=c.value==='__custom',apiValue=currentValue('api'),configValue=currentValue('config');
@@ -1952,7 +1942,15 @@ function renderAdminPage(url,env,settings){
     
     const esc=x=>escapeHTML(String(x??''));
     const safeJson=x=>JSON.stringify(x).replace(/</g,'\\u003c');
-    const rows=(list,type,empty)=>list.length?list.map(x=>`<div class="link-item provider-item">
+    const defaultApiId=String(settings.defaultSubApiId||'');
+    const defaultConfigId=String(settings.defaultSubConfigId||'');
+    const rows=(list,type,empty)=>list.length?list.map(x=>{
+        const isDefault=(type==='subapi'?defaultApiId:defaultConfigId)===x.id;
+        return `<div class="link-item provider-item">
+        <label class="provider-default" title="设为默认配置">
+            <input type="radio" name="default-${type}" ${isDefault?'checked':''} onchange="setDefaultProvider('${type}','${esc(x.id)}')">
+            <span>默认</span>
+        </label>
         <div class="provider-main">
             <div class="link-label">${esc(x.name)}</div>
             <div class="provider-url link-url">${esc(x.url)}</div>
@@ -1961,13 +1959,14 @@ function renderAdminPage(url,env,settings){
             <button type="button" class="secondary" onclick="showProvider('${type}','${esc(x.id)}')">编辑</button>
             <button type="button" class="danger" onclick="deleteProvider('${type}','${esc(x.id)}')">删除</button>
         </div>
-    </div>`).join(''):`<div class="empty">${empty}</div>`;
+    </div>`;
+    }).join(''):`<div class="empty">${empty}</div>`;
 
     return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(settings.subName||'CF-SUBS')} · 管理后台</title><style>${getToolStyles()}
-.sub-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap}.provider-main{min-width:0;width:100%}.provider-url{display:block;width:100%;margin-bottom:0;word-break:break-all;overflow-wrap:anywhere}.provider-item{position:relative;padding:12px 104px 12px 12px}.admin-row-actions{position:absolute;top:12px;right:12px;display:flex;flex-direction:column;gap:7px;margin-top:0;align-items:stretch}.admin-row-actions button{min-width:68px}.empty{font-size:12px;color:#888}.topbar{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap}.topbar-main{min-width:0;flex:1}.site-title-input{font-size:28px!important;font-weight:700!important;border:0!important;background:transparent!important;padding:0!important;height:auto!important;box-shadow:none!important;color:#1a1a1a!important}.site-title-input:focus{box-shadow:none!important}.top-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}.top-actions .button{min-width:86px}.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.4);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);display:none;align-items:center;justify-content:center;z-index:1000;padding:20px}.modal-content{width:min(460px,100%);background:rgba(255,255,255,.95);border-radius:20px;padding:24px;box-shadow:0 10px 40px rgba(0,0,0,.2);border:1px solid rgba(255,255,255,.5)}.modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}@media(max-width:600px){.top-actions{width:100%;justify-content:stretch}.top-actions .button{flex:1}.provider-item{padding-right:12px}.admin-row-actions{position:absolute;top:12px;right:12px;width:auto;justify-content:flex-start}.admin-row-actions button{flex:none}.modal-content{padding:20px}}@media(prefers-color-scheme:dark){.site-title-input{color:#f5f5f5!important}.modal-content{background:rgba(30,30,30,.96);border-color:rgba(255,255,255,.1)}.empty{color:#aaa}}</style></head><body><main class="page">
+.sub-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap}.sub-head-actions{display:flex;align-items:center;gap:8px}.default-hint{font-size:12px;color:#888;white-space:nowrap}.provider-default{position:absolute;left:12px;top:12px;display:flex;align-items:center;gap:5px;margin:0;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap}.provider-default input{width:16px;height:16px;margin:0;padding:0}.provider-main{min-width:0;width:100%;padding-left:54px}.provider-url{display:block;width:100%;margin-bottom:0;word-break:break-all;overflow-wrap:anywhere}.provider-item{position:relative;padding:12px 104px 12px 12px}.admin-row-actions{position:absolute;top:12px;right:12px;display:flex;flex-direction:column;gap:7px;margin-top:0;align-items:stretch}.admin-row-actions button{min-width:68px}.empty{font-size:12px;color:#888}.topbar{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap}.topbar-main{min-width:0;flex:1}.site-title-input{font-size:28px!important;font-weight:700!important;border:0!important;background:transparent!important;padding:0!important;height:auto!important;box-shadow:none!important;color:#1a1a1a!important}.site-title-input:focus{box-shadow:none!important}.top-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}.top-actions .button{min-width:86px}.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.4);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);display:none;align-items:center;justify-content:center;z-index:1000;padding:20px}.modal-content{width:min(460px,100%);background:rgba(255,255,255,.95);border-radius:20px;padding:24px;box-shadow:0 10px 40px rgba(0,0,0,.2);border:1px solid rgba(255,255,255,.5)}.modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}@media(max-width:600px){.top-actions{width:100%;justify-content:stretch}.top-actions .button{flex:1}.provider-item{padding-right:12px}.admin-row-actions{position:absolute;top:12px;right:12px;width:auto;justify-content:flex-start}.admin-row-actions button{flex:none}.modal-content{padding:20px}}@media(prefers-color-scheme:dark){.site-title-input{color:#f5f5f5!important}.modal-content{background:rgba(30,30,30,.96);border-color:rgba(255,255,255,.1)}.empty{color:#aaa}}</style></head><body><main class="page">
 <header class="header topbar"><div class="topbar-main"><input id="siteName" class="site-title-input" value="${esc(settings.subName||'CF-SUBS')}" aria-label="站点标题"><div class="subtitle">管理订阅转换后端、订阅转换规则和站点安全设置。</div></div><div class="top-actions"><button type="button" class="button secondary" onclick="openModal('securityModal')">安全</button><button type="button" class="button secondary" onclick="openModal('pathModal')">管理员路径</button><a class="button danger" href="/${esc(settings.adminPath||'admin')}/logout">退出</a></div></header>
-<section class="panel"><div class="sub-head"><div><h2 class="section-title">订阅转换后端(SUBAPI)</h2><div class="section-note">订阅转换后端配置。</div></div><button type="button" onclick="showProvider('subapi','')">＋ 添加订阅转换后端</button></div><div class="sub-grid" style="margin-top:12px">${rows(apis,'subapi','暂无订阅转换后端，请手动添加。')}</div></section>
-<section class="panel"><div class="sub-head"><div><h2 class="section-title">订阅转换规则(SUBCONFIG)</h2><div class="section-note">订阅转换规则配置。</div></div><button type="button" onclick="showProvider('subconfig','')">＋ 添加订阅转换规则</button></div><div class="sub-grid" style="margin-top:12px">${rows(configs,'subconfig','暂无订阅转换规则，请手动添加。')}</div></section>
+<section class="panel"><div class="sub-head"><div><h2 class="section-title">订阅转换后端(SUBAPI)</h2><div class="section-note">订阅转换后端配置。</div></div><div class="sub-head-actions"><span class="default-hint">○ 选择默认配置</span><button type="button" onclick="showProvider('subapi','')">＋ 添加订阅转换后端</button></div></div><div class="sub-grid" style="margin-top:12px">${rows(apis,'subapi','暂无订阅转换后端，请手动添加。')}</div></section>
+<section class="panel"><div class="sub-head"><div><h2 class="section-title">订阅转换规则(SUBCONFIG)</h2><div class="section-note">订阅转换规则配置。</div></div><div class="sub-head-actions"><span class="default-hint">○ 选择默认配置</span><button type="button" onclick="showProvider('subconfig','')">＋ 添加订阅转换规则</button></div></div><div class="sub-grid" style="margin-top:12px">${rows(configs,'subconfig','暂无订阅转换规则，请手动添加。')}</div></section>
 </main>
 <div id="providerModal" class="modal-overlay"><div class="modal-content"><h2 class="section-title" id="modalTitle">添加</h2><div class="field"><label for="modalName">备注</label><input id="modalName"></div><div class="field"><label for="modalUrl">URL</label><input id="modalUrl" placeholder="https://..."></div><div class="modal-actions"><button type="button" class="secondary" onclick="hideProvider()">取消</button><button type="button" id="modalSave" onclick="saveProvider()">保存</button></div></div></div>
 <div id="securityModal" class="modal-overlay"><div class="modal-content"><h2 class="section-title">安全</h2><div class="section-note">修改管理员账号和密码。密码留空表示保持原密码。</div><div class="field"><label for="securityUser">管理员账号</label><input id="securityUser" value="${esc(settings.user||'')}" autocomplete="username"></div><div class="field"><label for="securityPass">管理员密码</label><input id="securityPass" type="password" placeholder="留空保持原密码" autocomplete="new-password"></div><div class="modal-actions"><button type="button" class="secondary" onclick="closeModal('securityModal')">取消</button><button type="button" id="saveSecurity" onclick="saveSecurity()">保存</button></div></div></div>
@@ -2006,6 +2005,16 @@ async function post(data){
  if(!d)throw new Error('服务器返回无效数据（HTTP '+r.status+'）');
  if(!r.ok||d.ok===false)throw new Error(d.error||('操作失败（HTTP '+r.status+'）'));
  return d;
+}
+async function setDefaultProvider(type,id){
+ const input=document.querySelector(`input[name=\"default-${type}\"][value=\"${id}\"]`);
+ try{
+  await post({type:type+'_default',id});
+  showToast('默认配置已更新');
+ }catch(e){
+  alert(e.message||'设置默认配置失败');
+  setTimeout(()=>location.reload(),100);
+ }
 }
 async function deleteProvider(type,id){
  if(!confirm('确定删除这个项目？'))return;
