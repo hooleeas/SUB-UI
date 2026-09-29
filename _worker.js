@@ -242,7 +242,22 @@ async function handleRequest(request, env) {
 
         // ==================== 浏览器订阅链接页面 ====================
         if (userAgent.includes('mozilla') && !url.search && !isProxyClientUA && tokenData) {
-            return new Response(renderGuestPage(url, tokenData.url, tokenData.name), {
+            // 订阅链接页面只读取该 URL 生成时保存的 SUBAPI / SUBCONFIG。
+            // 后台之后修改全局配置，也不会改变已经生成的订阅链接。
+            const tokenBackends = await getSelectedBackends(env, tokenData, { });
+            const primaryBackend = tokenBackends[0] || null;
+            let guestStatus = {
+                api: { ok: false, url: '', version: '' },
+                config: { ok: false, url: '' },
+                available: false
+            };
+            if (primaryBackend) {
+                guestStatus = await probeBackend(
+                    `${primaryBackend.protocol}://${primaryBackend.api}`,
+                    primaryBackend.config
+                );
+            }
+            return new Response(renderGuestPage(url, tokenData.url, tokenData.name, primaryBackend, guestStatus), {
                 headers: { 'Content-Type': 'text/html;charset=utf-8', 'Cache-Control': 'no-store' }
             });
         }
@@ -705,13 +720,35 @@ function buildPublicPreferencesCookie(value){
 }
 
 async function getSelectedBackends(env, tokenData, runtime) {
-    if(Array.isArray(tokenData?.backends) && tokenData.backends.length){
-        return tokenData.backends.map(x=>({
-            api:String(x.api||'').replace(/^https?:\/\//i,'').replace(/\/+$/,''),
-            config:String(x.config||'').trim(),
-            protocol:x.protocol==='http'?'http':'https'
-        })).filter(x=>x.api&&x.config);
+    // 新生成的公开 URL：优先、并且固定使用 KV 中保存的实际后端。
+    if (tokenData?.type === 'sub-ui') {
+        if (Array.isArray(tokenData.backends) && tokenData.backends.length) {
+            return tokenData.backends.map(x=>({
+                api:String(x.api||'').replace(/^https?:\/\//i,'').replace(/\/+$/,''),
+                config:String(x.config||'').trim(),
+                protocol:x.protocol==='http'?'http':'https'
+            })).filter(x=>x.api&&x.config);
+        }
+        if (tokenData.backend?.api && tokenData.backend?.config) {
+            const x=tokenData.backend;
+            return [{
+                api:String(x.api).replace(/^https?:\/\//i,'').replace(/\/+$/,''),
+                config:String(x.config).trim(),
+                protocol:x.protocol==='http'?'http':'https'
+            }];
+        }
+        if (tokenData.subApi && tokenData.subConfig) {
+            const raw=String(tokenData.subApi).trim();
+            return [{
+                api:raw.replace(/^https?:\/\//i,'').replace(/\/+$/,''),
+                config:String(tokenData.subConfig).trim(),
+                protocol:/^http:\/\//i.test(raw)?'http':'https'
+            }];
+        }
+        return [];
     }
+
+    // 旧数据兼容：旧 token 没有固定后端时，才从当前 CONFIG.json 解析。
     const cfg=await getConfig(env);
     const apis=normalizeProviderList(cfg.subApis).filter(x=>x.enabled);
     const configs=normalizeProviderList(cfg.subConfigs).filter(x=>x.enabled);
@@ -773,13 +810,27 @@ async function handlePublicGenerate(request,env,requestUrl){
         const noAds=String(data.noAds||'').trim().slice(0,5000);
         const token=await makeRandomToken(env,8);
         const name='订阅链接';
+        // 每个公开 URL 都把本次生成时实际使用的 SUBAPI / SUBCONFIG 固化进自己的 KV JSON。
+        // 以后访问 /token、/token?clash、/token?sb 等入口时，只读取这里保存的值。
+        const primaryBackend=backends[0];
         const item={
-            url:token,name,sources,
+            url:token,
+            path:`/${token}`,
+            subscriptionUrl:`${requestUrl.origin}/${encodeURIComponent(token)}`,
+            name,
+            sources,
             subApiIds:selectedApis.map(x=>x.id),
             subConfigIds:selectedConfigs.map(x=>x.id),
+            subApi:apiEntries[0]?.url||'',
+            subApiName:apiEntries[0]?.name||'',
+            subConfig:configEntries[0]?.url||'',
+            subConfigName:configEntries[0]?.name||'',
+            backend:primaryBackend,
             backends,
-            noAds,target:'auto',
-            createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),
+            noAds,
+            target:'auto',
+            createdAt:new Date().toISOString(),
+            updatedAt:new Date().toISOString(),
             type:'sub-ui'
         };
         await env.KV.put(`${URL_PREFIX}${token}`,JSON.stringify(item));
@@ -1345,18 +1396,6 @@ function getToolStyles() {
     `;
 }
 
-function getSubscriptionLinks(url, token) {
-    const base = "https://" + url.hostname + "/" + token;
-    return [
-        ['自适应订阅地址', base],
-        ['Base64订阅地址', `${base}?b64`],
-        ['Clash订阅地址', `${base}?clash`],
-        ['Sing-box订阅地址', `${base}?sb`],
-        ['Surge订阅地址', `${base}?surge`],
-        ['Loon订阅地址', `${base}?loon`],
-    ];
-}
-
 function renderLinkList(links) {
     return `<div class="link-list">
         ${links.map(([label, value]) => `
@@ -1542,40 +1581,123 @@ ${error ? `<div class="error">${escapeHTML(error)}</div>` : ''}
 </html>`;
 }
 
-function renderGuestPage(url, guest, guestName = '') {
-    const base = url.pathname;
-    return `<!doctype html>
+function getSubscriptionLinks(url, token) {
+    const base = `${url.origin}/${token}`;
+    return [
+        ['自适应订阅地址', base],
+        ['Base64订阅地址', `${base}?b64`],
+        ['Clash订阅地址', `${base}?clash`],
+        ['Sing-box订阅地址', `${base}?sb`],
+        ['Surge订阅地址', `${base}?surge`],
+        ['Loon订阅地址', `${base}?loon`],
+    ];
+}
+
+function renderGuestPage(url, guest, guestName = '', backend = null, status = null) {
+    const links = getSubscriptionLinks(url, guest);
+    const apiUrl = backend ? `${backend.protocol}://${backend.api}` : '';
+    const configUrl = backend?.config || '';
+    const apiOk = Boolean(status?.api?.ok);
+    const configOk = Boolean(status?.config?.ok);
+    const apiVersion = String(status?.api?.version || '').trim();
+    const apiStatus = apiOk
+        ? `✅SUBAPI状态正常${apiVersion ? ` (${escapeHTML(apiVersion)})` : ''}`
+        : '❌SUBAPI状态异常';
+    const configStatus = configOk
+        ? '✅SUBCONFIG状态正常'
+        : '❌SUBCONFIG状态异常';
+    const apiCss = apiOk ? 'status-ok' : 'status-error';
+    const configCss = configOk ? 'status-ok' : 'status-error';
+
+    return `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>订阅链接页面</title>
-<style>${getSubUIStyles()}</style>
+<title>${escapeHTML(guestName || FileName)}访客订阅</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>${getToolStyles()}
+.guest-link-list{display:grid;gap:10px}
+.guest-link-item{padding:12px;background:rgba(255,255,255,.035);border:1px solid rgba(255,255,255,.08);border-radius:12px}
+.guest-link-label{font-weight:700;margin-bottom:8px}
+.guest-link-url{display:block;width:100%;box-sizing:border-box;padding:10px 12px;border:1px solid rgba(255,255,255,.1);border-radius:8px;background:rgba(0,0,0,.28);color:#64b5f6;text-decoration:none;word-break:break-all;overflow-wrap:anywhere}
+.guest-link-url:hover{background:rgba(100,181,246,.08);border-color:#64b5f6}
+.guest-actions{display:flex;gap:8px;margin-top:9px;align-items:center}
+.guest-actions button{min-width:56px}
+.guest-hide{display:none}
+.guest-status{margin-top:10px;padding:10px 12px;border-radius:10px;font-weight:700;word-break:break-all}
+.guest-status.status-ok{background:rgba(129,199,132,.1);color:#81c784;border:1px solid rgba(129,199,132,.2)}
+.guest-status.status-error{background:rgba(229,115,115,.1);color:#e57373;border:1px solid rgba(229,115,115,.2)}
+.guest-current-label{margin-top:12px;margin-bottom:6px;color:#aaa;font-size:13px;font-weight:600}
+.guest-current{display:block;width:100%;box-sizing:border-box;padding:10px 12px;border:1px solid rgba(255,255,255,.1);border-radius:8px;background:rgba(0,0,0,.28);color:#64b5f6;word-break:break-all;overflow-wrap:anywhere}
+#current-qrcode{display:none;background:#fff;border-radius:10px;padding:12px;margin-top:10px;width:max-content;max-width:100%;box-sizing:border-box}
+@media(prefers-color-scheme:light){.guest-link-item{background:rgba(255,255,255,.5);border-color:rgba(229,229,223,.7)}.guest-link-url,.guest-current{background:rgba(250,250,250,.7);border-color:rgba(229,229,223,.8);color:#1f4b99}.guest-current-label{color:#666}.guest-status.status-ok{color:#2e7d32;background:rgba(76,175,80,.08)}.guest-status.status-error{color:#c62828;background:rgba(244,67,54,.08)}}
+</style>
+<script src="https://cdn.jsdelivr.net/npm/@keeex/qrcodejs-kx@1.0.2/qrcode.min.js"></script>
 </head>
 <body>
+<div id="copyNotice" class="toast"></div>
 <main class="page">
 <header class="header">
-    <h1 class="title">订阅链接页面</h1>
-    <div class="subtitle">${escapeHTML(guestName || '你的聚合订阅')}</div>
+<h1 class="title">${escapeHTML(guestName || FileName)} 访客订阅</h1>
+<div class="subtitle">复制订阅链接或生成二维码</div>
 </header>
 <section class="panel">
-    <h2 class="section-title">订阅链接</h2>
-    <div class="section-note">这是你的专属聚合订阅入口，可直接复制到支持的客户端。</div>
-    <div class="result-url" style="margin-top:12px;">${escapeHTML(url.origin + base)}</div>
-    <div class="actions">
-        <button type="button" id="copyGuest">复制订阅链接</button>
-        <a class="button secondary" href="${escapeHTML(base + '?clash')}">Clash</a>
-        <a class="button secondary" href="${escapeHTML(base + '?singbox')}">Sing-box</a>
-        <a class="button secondary" href="${escapeHTML(base + '?surge')}">Surge</a>
-        <a class="button secondary" href="${escapeHTML(base + '?quanx')}">Quantumult X</a>
-        <a class="button secondary" href="${escapeHTML(base + '?loon')}">Loon</a>
-    </div>
+<h2 class="section-title">订阅链接</h2>
+<div class="guest-link-list">
+${links.map(([label,value])=>`<div class="guest-link-item">
+<div class="guest-link-label">${escapeHTML(label)}</div>
+<a class="guest-link-url" href="${escapeHTML(value)}" target="_blank" rel="noopener">${escapeHTML(value)}</a>
+<div class="guest-actions">
+<button type="button" class="copy-btn" data-url="${escapeHTML(value)}" onclick="copyGuest(this)">复制</button>
+<button type="button" class="guest-hide" onclick="hideGuestQr(this)">隐藏二维码</button>
+</div>
+</div>`).join('')}
+</div>
+<div id="current-qrcode"></div>
+</section>
+<section class="panel">
+<h2 class="section-title">订阅转换服务</h2>
+<div class="guest-link-list">
+<div class="guest-link-item">
+<div class="guest-link-label">订阅转换后端 SUBAPI</div>
+<div class="guest-status ${apiCss}">${apiStatus}</div>
+<div class="guest-current-label">当前配置</div>
+<div class="guest-current">${escapeHTML(apiUrl)}</div>
+</div>
+<div class="guest-link-item">
+<div class="guest-link-label">订阅转换规则 SUBCONFIG</div>
+<div class="guest-status ${configCss}">${configStatus}</div>
+<div class="guest-current-label">当前配置</div>
+<div class="guest-current">${escapeHTML(configUrl)}</div>
+</div>
+</div>
 </section>
 </main>
 <script>
-document.getElementById('copyGuest').addEventListener('click',()=>{
- const text=${JSON.stringify(url.origin + base)};
- navigator.clipboard.writeText(text).then(()=>alert('已复制')).catch(()=>alert('复制失败，请手动复制'));
-});
+let guestToastTimer;
+function guestToast(message){
+ const el=document.getElementById('copyNotice');
+ el.textContent=message;el.style.display='block';
+ clearTimeout(guestToastTimer);guestToastTimer=setTimeout(()=>el.style.display='none',1500);
+}
+function copyGuest(button){
+ const value=button.dataset.url||'';
+ const done=()=>{guestToast('已复制到剪贴板');showGuestQr(button);button.style.display='none';const hide=button.parentElement.querySelector('.guest-hide');if(hide)hide.style.display='inline-flex';};
+ if(navigator.clipboard&&navigator.clipboard.writeText) navigator.clipboard.writeText(value).then(done).catch(()=>guestToast('复制失败，请手动复制'));
+ else {const ta=document.createElement('textarea');ta.value=value;document.body.appendChild(ta);ta.select();try{document.execCommand('copy');done();}catch(e){guestToast('复制失败，请手动复制')}ta.remove();}
+}
+function showGuestQr(button){
+ const qr=document.getElementById('current-qrcode');
+ qr.innerHTML='';qr.style.display='block';
+ if(window.QRCode)new QRCode(qr,{text:button.dataset.url,width:220,height:220,colorDark:'#000000',colorLight:'#ffffff',correctLevel:QRCode.CorrectLevel.Q});
+ button.closest('.guest-link-item').appendChild(qr);
+}
+function hideGuestQr(button){
+ const qr=document.getElementById('current-qrcode');
+ qr.style.display='none';qr.innerHTML='';
+ const item=button.closest('.guest-link-item');
+ const copy=item.querySelector('.copy-btn');if(copy)copy.style.display='inline-flex';button.style.display='none';
+}
 </script>
 </body>
 </html>`;
