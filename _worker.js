@@ -162,6 +162,7 @@ function showAggregateResult(value){
  var modal=$('aggregateResultModal');if(modal)modal.style.display='flex';
  writeLocal('CF_SUB_AGG_DISMISSED','');
  writeLocal('CF_SUB_LAST_AGG_URL',value);
+ setTimeout(function(){showAggregateQr(value)},0);
 }
 function closeAggregateResult(){
  var modal=$('aggregateResultModal');
@@ -172,10 +173,14 @@ function closeAggregateResult(){
 function showAggregateQr(value){
  var q=$('aggregateResultQr');
  var modal=$('aggregateResultModal');
- if(!q||!window.QRCode)return;
- q.innerHTML='';
+ if(!q)return;
  q.style.display='block';
  if(modal)modal.classList.add('qr-visible');
+ if(!window.QRCode){
+   q.innerHTML='<div style="font-size:12px;color:#888;padding:8px 4px">二维码加载中…</div>';
+   return;
+ }
+ q.innerHTML='';
  new QRCode(q,{text:value,width:220,height:220,colorDark:'#000000',colorLight:'#ffffff',correctLevel:QRCode.CorrectLevel.Q});
 }
 function restoreLastAggregateResult(){
@@ -192,7 +197,9 @@ function initPublic(){
  e=$('cancelApiCustom');if(e)e.addEventListener('click',function(){cancelCustom('api')});e=$('cancelConfigCustom');if(e)e.addEventListener('click',function(){cancelCustom('config')});
  e=$('saveApiCustom');if(e)e.addEventListener('click',function(){saveCustom('api')});e=$('saveConfigCustom');if(e)e.addEventListener('click',function(){saveCustom('config')});
  updateCurrent('api');updateCurrent('config');checkStatus('api');checkStatus('config');restoreLastAggregateResult();
- e=$('copyDirect');if(e)e.addEventListener('click',function(){var a=$('direct'),v=a?a.textContent.trim():'';if(!v)return;var done=function(){showAggregateQr(v);e.textContent='复制';writeLocal('CF_SUB_LAST_AGG_URL',v);};if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(v).then(done).catch(function(){alert('复制失败，请手动复制')});else{var ta=document.createElement('textarea');ta.value=v;document.body.appendChild(ta);ta.select();try{document.execCommand('copy');done()}catch(err){alert('复制失败，请手动复制')}ta.remove()}});var rm=$('aggregateResultModal');if(rm){rm.addEventListener('click',function(ev){if(ev.target===rm)closeAggregateResult()});document.addEventListener('keydown',function(ev){if(ev.key==='Escape')closeAggregateResult()})}
+ e=$('copyDirect');if(e)e.addEventListener('click',function(){var a=$('direct'),v=a?a.textContent.trim():'';if(!v)return;var done=function(){toast('已复制到剪贴板');writeLocal('CF_SUB_LAST_AGG_URL',v);showAggregateQr(v);};if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(v).then(done).catch(function(){alert('复制失败，请手动复制')});else{var ta=document.createElement('textarea');ta.value=v;document.body.appendChild(ta);ta.select();try{document.execCommand('copy');done()}catch(err){alert('复制失败，请手动复制')}ta.remove()}});
+ var rm=$('aggregateResultModal');if(rm){rm.addEventListener('click',function(ev){if(ev.target===rm)closeAggregateResult()});document.addEventListener('keydown',function(ev){if(ev.key==='Escape')closeAggregateResult()})}
+ e=$('aggregateResultClose');if(e)e.addEventListener('click',function(){closeAggregateResult()});
  e=$('generate');if(e)e.addEventListener('click',function(){
   var existingToken=readLocal('CF_SUB_LAST_AGG_TOKEN')||window.__CF_SUB_LAST_TOKEN||'';
   var existingUrl=readLocal('CF_SUB_LAST_AGG_URL')||window.__CF_SUB_LAST_URL||'';
@@ -624,23 +631,21 @@ async function getSub(env, id) {
 
 async function getToken(env, token) {
     if (!env.KV || !token) return null;
-    try {
-        const item = await env.KV.get(`${URL_PREFIX}${token}`, 'json');
-        if (!item) return null;
-
-        // 新结构：URL 记录只保存链接本身和共享数据引用。
-        // 读取时自动合并共享聚合数据，保持旧逻辑完全兼容。
-        const aggId = String(item.aggId || '').trim();
-        if (aggId) {
-            const shared = await env.KV.get(`${AGG_PREFIX}${aggId}`, 'json');
-            if (shared && typeof shared === 'object') {
-                return { ...shared, ...item, aggId };
+    for (let attempt = 0; attempt < 5; attempt++) {
+        try {
+            const item = await env.KV.get(`${URL_PREFIX}${token}`, 'json');
+            if (item) {
+                const aggId = String(item.aggId || '').trim();
+                if (aggId) {
+                    const shared = await env.KV.get(`${AGG_PREFIX}${aggId}`, 'json');
+                    if (shared && typeof shared === 'object') return { ...shared, ...item, aggId };
+                }
+                return item;
             }
-        }
-        return item;
-    } catch (e) {
-        return null;
+        } catch (e) {}
+        if (attempt < 4) await new Promise(resolve => setTimeout(resolve, 120 * (attempt + 1)));
     }
+    return null;
 }
 
 async function listSubs(env) {
@@ -2111,8 +2116,8 @@ ${getSubUIStyles()}
 .current-api-input{width:100%;height:42px;min-width:0}.current-config-input{width:100%;min-height:70px;line-height:1.5;word-break:break-all;overflow-wrap:anywhere}.current-config-link{display:flex;align-items:center;padding:10px 12px;border:1px solid rgba(229,229,223,.8);border-radius:8px;background:rgba(250,250,250,.7);box-sizing:border-box;color:#1f4b99;text-decoration:none;cursor:pointer}.current-api-input.current-config-link{height:42px;min-height:42px}.current-config-link:hover{text-decoration:none;border-color:#1f4b99;box-shadow:0 0 0 2px rgba(31,75,153,.10);background:rgba(31,75,153,.04)}.current-config-link:empty{color:#888}.current-config-link:focus-visible{text-decoration:none;outline:none;border-color:#1f4b99;box-shadow:0 0 0 3px rgba(31,75,153,.14)}
 .edit-custom{display:none;flex:0 0 auto;min-width:72px}.status-box{margin-top:12px}.status-title{font-size:13px;font-weight:700;margin:0 0 7px}.status-list{display:grid;gap:7px}
 .status-item{padding:8px 10px;border-radius:9px;font-weight:650;word-break:break-all}.status-item.wait{background:rgba(255,152,0,.1);border:1px solid rgba(255,152,0,.2);color:#f57c00}.status-item.ok{background:rgba(76,175,80,.12);border:1px solid rgba(76,175,80,.25);color:#2e7d32}.status-item.bad{background:rgba(244,67,54,.1);border:1px solid rgba(244,67,54,.22);color:#c62828}
-.custom-modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.42);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);display:none;align-items:center;justify-content:center;z-index:1200;padding:20px}.custom-modal{width:min(480px,100%);background:rgba(255,255,255,.96);border:1px solid rgba(229,229,223,.9);border-radius:18px;padding:20px;box-shadow:0 18px 50px rgba(0,0,0,.22)}.custom-modal h3{margin:0;font-size:17px}.custom-modal p{margin:6px 0 14px;color:#888;font-size:12px}.custom-modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}.aggregate-result-overlay{position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.42);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);overflow:auto;padding:20px}.aggregate-result-modal{width:min(620px,calc(100vw - 40px));margin:auto;transition:width .2s ease,transform .2s ease;box-sizing:border-box}.aggregate-result-modal.qr-visible{max-height:calc(100vh - 40px);overflow:auto}.aggregate-result-url{display:block;width:100%;padding:12px 14px;margin:14px 0 0;border:1px solid rgba(229,229,223,.8);border-radius:10px;background:rgba(250,250,250,.7);color:#1f4b99;word-break:break-all;overflow-wrap:anywhere;line-height:1.55;user-select:text;text-decoration:none;box-sizing:border-box}.aggregate-result-url:hover{text-decoration:none;border-color:#1f4b99;box-shadow:0 0 0 2px rgba(31,75,153,.10)}.aggregate-result-modal>#copyDirect{display:flex;width:220px;min-height:40px;margin:14px auto 0}.aggregate-result-modal>#copyDirect:hover{box-shadow:0 0 0 2px rgba(52,58,64,.10)}.aggregate-result-qr{display:none;margin:16px auto 0;padding:12px;width:max-content;max-width:100%;box-sizing:border-box;background:#fff;border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.18)}
-@media(prefers-color-scheme:dark){.native-picker{background:#111;color:#f1f1f1;border-color:rgba(255,255,255,.14)}.native-picker option{background:#1b1b1b;color:#f1f1f1}.current-api-input,.current-config-input{background:rgba(0,0,0,.3);color:#64b5f6;border-color:rgba(255,255,255,.12)}.current-config-link{color:#64b5f6;background:rgba(0,0,0,.3);border-color:rgba(255,255,255,.12)}.current-config-link:hover{color:#64b5f6;text-decoration:none;border-color:#64b5f6;background:rgba(100,181,246,.08);box-shadow:0 0 0 2px rgba(100,181,246,.10)}.status-item.ok{background:rgba(129,199,132,.1);color:#81c784;border-color:rgba(129,199,132,.2)}.status-item.bad{background:rgba(229,115,115,.1);color:#e57373;border-color:rgba(229,115,115,.2)}.status-item.wait{background:rgba(255,183,77,.1);color:#ffb74d;border-color:rgba(255,183,77,.2)}.custom-modal{background:rgba(30,30,30,.97);border-color:rgba(255,255,255,.1)}.aggregate-result-url{background:rgba(0,0,0,.3);border-color:rgba(255,255,255,.12);color:#64b5f6}.aggregate-result-url:hover{color:#64b5f6;border-color:#64b5f6;background:rgba(100,181,246,.08);box-shadow:0 0 0 2px rgba(100,181,246,.10)}.aggregate-result-qr{background:#fff}.aggregate-result-modal>#copyDirect{margin-top:16px}}
+.custom-modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.42);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);display:none;align-items:center;justify-content:center;z-index:1200;padding:20px}.custom-modal{width:min(480px,100%);background:rgba(255,255,255,.96);border:1px solid rgba(229,229,223,.9);border-radius:18px;padding:20px;box-shadow:0 18px 50px rgba(0,0,0,.22)}.custom-modal h3{margin:0;font-size:17px}.custom-modal p{margin:6px 0 14px;color:#888;font-size:12px}.custom-modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}.aggregate-result-overlay{position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.42);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);overflow:auto;padding:20px}.aggregate-result-modal{position:relative;width:min(620px,calc(100vw - 40px));margin:auto;transition:width .2s ease,transform .2s ease;box-sizing:border-box}.aggregate-result-close{position:absolute;top:10px;right:10px;width:32px;height:32px;min-height:32px;padding:0;border:0;border-radius:50%;background:rgba(0,0,0,.06);color:#555;font-size:24px;line-height:30px;cursor:pointer}.aggregate-result-close:hover{background:rgba(0,0,0,.12)}.aggregate-result-modal.qr-visible{max-height:calc(100vh - 40px);overflow:auto}.aggregate-result-url{display:block;width:100%;padding:12px 14px;margin:14px 0 0;border:1px solid rgba(229,229,223,.8);border-radius:10px;background:rgba(250,250,250,.7);color:#1f4b99;word-break:break-all;overflow-wrap:anywhere;line-height:1.55;user-select:text;text-decoration:none;box-sizing:border-box}.aggregate-result-url:hover{text-decoration:none;border-color:#1f4b99;box-shadow:0 0 0 2px rgba(31,75,153,.10)}.aggregate-result-modal>#copyDirect{display:flex;width:220px;min-height:40px;margin:14px auto 0}.aggregate-result-modal>#copyDirect:hover{box-shadow:0 0 0 2px rgba(52,58,64,.10)}.aggregate-result-qr{display:block;margin:16px auto 0;padding:12px;width:max-content;max-width:100%;box-sizing:border-box;background:#fff;border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.18)}
+@media(prefers-color-scheme:dark){.native-picker{background:#111;color:#f1f1f1;border-color:rgba(255,255,255,.14)}.native-picker option{background:#1b1b1b;color:#f1f1f1}.current-api-input,.current-config-input{background:rgba(0,0,0,.3);color:#64b5f6;border-color:rgba(255,255,255,.12)}.current-config-link{color:#64b5f6;background:rgba(0,0,0,.3);border-color:rgba(255,255,255,.12)}.current-config-link:hover{color:#64b5f6;text-decoration:none;border-color:#64b5f6;background:rgba(100,181,246,.08);box-shadow:0 0 0 2px rgba(100,181,246,.10)}.status-item.ok{background:rgba(129,199,132,.1);color:#81c784;border-color:rgba(129,199,132,.2)}.status-item.bad{background:rgba(229,115,115,.1);color:#e57373;border-color:rgba(229,115,115,.2)}.status-item.wait{background:rgba(255,183,77,.1);color:#ffb74d;border-color:rgba(255,183,77,.2)}.custom-modal{background:rgba(30,30,30,.97);border-color:rgba(255,255,255,.1)}.aggregate-result-url{background:rgba(0,0,0,.3);border-color:rgba(255,255,255,.12);color:#64b5f6}.aggregate-result-url:hover{color:#64b5f6;border-color:#64b5f6;background:rgba(100,181,246,.08);box-shadow:0 0 0 2px rgba(100,181,246,.10)}.aggregate-result-qr{background:#fff}.aggregate-result-modal>#copyDirect{margin-top:16px}.aggregate-result-close{background:rgba(255,255,255,.08);color:#ddd}.aggregate-result-close:hover{background:rgba(255,255,255,.16)}}
 </style>
 </head>
 <body>
@@ -2147,7 +2152,7 @@ ${configs.map(x=>`<option value="${esc(x.url)}" data-id="${esc(x.id)}" ${x.id===
 <section class="panel"><h2 class="section-title">排除节点</h2><div class="section-note">公开使用。每行填写一个关键词，包含关键词的节点会被排除。</div><div class="field"><textarea id="noAds" placeholder="例如：t.me&#10;广告&#10;example.com">${esc(noAds)}</textarea></div></section>
 <button class="primary" id="generate" type="button">创建聚合订阅链接</button>
 </main>
-<div id="aggregateResultModal" class="custom-modal-overlay aggregate-result-overlay"><div class="custom-modal aggregate-result-modal"><h3>聚合订阅链接</h3><p>生成成功，复制下面的订阅链接即可使用。</p><a class="aggregate-result-url" id="direct" href="#" target="_blank" rel="noopener noreferrer"></a><button type="button" class="button" id="copyDirect">复制</button><div id="aggregateResultQr" class="aggregate-result-qr"></div></div></div>
+<div id="aggregateResultModal" class="custom-modal-overlay aggregate-result-overlay"><div class="custom-modal aggregate-result-modal"><button type="button" class="aggregate-result-close" id="aggregateResultClose" aria-label="关闭">×</button><h3>聚合订阅链接</h3><p>生成成功，复制下面的订阅链接即可使用。</p><a class="aggregate-result-url" id="direct" href="#" target="_blank" rel="noopener noreferrer"></a><button type="button" class="button" id="copyDirect">复制</button><div id="aggregateResultQr" class="aggregate-result-qr"></div></div></div>
 
 <div id="customApiModal" class="custom-modal-overlay"><div class="custom-modal"><h3>自定义订阅转换后端</h3><p>输入你自己的 SUBAPI 地址。</p><input id="customApiInput" placeholder="https://subapi.example.com"><div class="custom-modal-actions"><button type="button" class="button secondary" id="cancelApiCustom">取消</button><button type="button" class="button" id="saveApiCustom">保存</button></div></div></div>
 <div id="customConfigModal" class="custom-modal-overlay"><div class="custom-modal"><h3>自定义订阅转换规则</h3><p>输入你自己的 SUBCONFIG 地址。</p><input id="customConfigInput" placeholder="https://example.com/config.ini"><div class="custom-modal-actions"><button type="button" class="button secondary" id="cancelConfigCustom">取消</button><button type="button" class="button" id="saveConfigCustom">保存</button></div></div></div>
