@@ -373,7 +373,7 @@ function initGuest(){
 function boot(){
  if($('apiPicker')||$('generate'))initPublic();
  if(document.querySelector('[data-provider-action]')||$('saveSecurity')||$('saveSite'))initAdmin();
- if(document.querySelector('.copy-btn'))initGuest();
+ if(document.querySelector('.guest-copy-btn')||document.querySelector('.guest-head-destroy'))initGuest();
 }
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',boot);else boot();
 })();
