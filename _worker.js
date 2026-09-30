@@ -111,10 +111,18 @@ function statusText(kind,info,ok){
 }
 function checkStatus(kind){
  var api=kind==='api',value=currentValue(kind),id=api?'apiStatus':'configStatus';
+ if(api){var ver=$('apiVersion');if(ver)ver.textContent=value?'正在获取…':'未选择 SUBAPI'}
  if(!value){setStatus(id,'<div class="status-item bad">'+statusText(kind,null,false)+'</div>');return}
  setStatus(id,'<div class="status-item wait">⏳ 状态检测中</div>');
  var query=api?'/api/status?api='+encodeURIComponent(value):'/api/status?config='+encodeURIComponent(value),timer=null;
- fetch(query,{cache:'no-store',headers:{Accept:'application/json'}}).then(function(r){return r.json().then(function(d){return {r:r,d:d}})}).then(function(x){var info=api?x.d.api:x.d.config,ok=Boolean(x.r.ok&&x.d.ok&&info&&info.ok);setStatus(id,'<div class="status-item '+(ok?'ok':'bad')+'">'+statusText(kind,info,ok)+'</div>')}).catch(function(){setStatus(id,'<div class="status-item bad">'+(api?'❌ SUBAPI检测失败':'❌ SUBCONFIG检测失败')+'</div>')});
+ fetch(query,{cache:'no-store',headers:{Accept:'application/json'}}).then(function(r){return r.json().then(function(d){return {r:r,d:d}})}).then(function(x){
+  var info=api?x.d.api:x.d.config,ok=Boolean(x.r.ok&&x.d.ok&&info&&info.ok);
+  if(api){var ver=$('apiVersion');if(ver)ver.textContent=ok&&info&&info.version?String(info.version).trim():'无法获取版本'}
+  setStatus(id,'<div class="status-item '+(ok?'ok':'bad')+'">'+statusText(kind,info,ok)+'</div>')
+ }).catch(function(){
+  if(api){var ver=$('apiVersion');if(ver)ver.textContent='无法获取版本'}
+  setStatus(id,'<div class="status-item bad">'+(api?'❌ SUBAPI检测失败':'❌ SUBCONFIG检测失败')+'</div>')
+ });
 }
 function onPickerChange(kind){
  var api=kind==='api',picker=$(api?'apiPicker':'configPicker');if(!picker)return;
@@ -1983,7 +1991,10 @@ ${getSubUIStyles()}
 </head>
 <body>
 <main class="page">
-<header class="header"><h1 class="title">${esc(cfg.subName||'SUB')}</h1><div class="subtitle">粘贴你的订阅链接，生成属于你的聚合订阅。</div></header>
+<header class="header home-hero">
+<div class="hero-main"><h1 class="title">${esc(cfg.subName||'SUB')}</h1><div class="subtitle">在线订阅转换场景，适配 Clash、Surge、Sing-Box 等常见使用环境。</div></div>
+<div class="backend-version-card"><div class="backend-version-label">后端版本</div><div class="backend-version-value" id="apiVersion">正在获取…</div></div>
+</header>
 
 <section class="panel"><h2 class="section-title">订阅链接</h2><div class="section-note">支持多个订阅地址，每行一个。</div><div class="field"><textarea id="sources" placeholder="https://example.com/subscribe&#10;https://example.com/another"></textarea></div></section>
 
@@ -2019,8 +2030,9 @@ ${configs.map(x=>`<option value="${esc(x.url)}" data-id="${esc(x.id)}" ${x.id===
 </body></html>`;
 }
 function getSubUIStyles(){return getToolStyles()+`
-.page{width:100%;max-width:760px;margin:0 auto;padding:18px 14px 28px}
-.header{margin-bottom:14px}.title{margin:0;font-size:28px;font-weight:700;line-height:1.2}.subtitle{margin-top:8px}
+.page{width:100%;max-width:1240px;margin:0 auto;padding:28px 28px 48px}
+.header{margin-bottom:22px}.home-hero{display:grid;grid-template-columns:minmax(0,1fr) minmax(360px,520px);gap:28px;align-items:start}.hero-main{min-width:0}.title{margin:0;font-size:76px;font-weight:800;line-height:1.08;letter-spacing:-2px}.subtitle{margin-top:24px;font-size:22px;line-height:1.5;color:#687384}.backend-version-card{min-height:132px;padding:28px 34px;border:1px solid rgba(255,255,255,.62);border-radius:28px;background:rgba(255,255,255,.58);box-shadow:0 8px 30px rgba(50,70,90,.06);box-sizing:border-box;display:flex;flex-direction:column;justify-content:center}.backend-version-label{font-size:17px;line-height:1.3;color:#69717d;margin-bottom:14px}.backend-version-value{font-size:25px;line-height:1.25;font-weight:750;word-break:break-word;overflow-wrap:anywhere;color:#111}
+@media(max-width:900px){.page{max-width:760px;padding:22px 18px 36px}.home-hero{grid-template-columns:1fr;gap:18px}.title{font-size:58px;letter-spacing:-1.5px}.subtitle{margin-top:16px;font-size:18px}.backend-version-card{min-height:108px;padding:22px 24px;border-radius:22px}.backend-version-label{font-size:15px;margin-bottom:10px}.backend-version-value{font-size:21px}}
 .panel{margin-top:12px}.row{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px}
 .checks{display:grid;gap:8px}.check{display:grid;grid-template-columns:18px minmax(0,1fr);align-items:center;gap:8px;margin:0;padding:10px;border:1px solid rgba(229,229,223,.6);border-radius:10px;background:rgba(255,255,255,.5);cursor:pointer}
 .check input{width:18px;height:18px;margin:0}.check span{font-weight:600}.check small{grid-column:2;color:#888;font-size:12px;word-break:break-all;overflow-wrap:anywhere}
