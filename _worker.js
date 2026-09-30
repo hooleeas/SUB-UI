@@ -100,7 +100,7 @@ function currentId(kind){
 function updateCurrent(kind){
  var api=kind==='api',picker=$(api?'apiPicker':'configPicker'),current=$(api?'apiCurrent':'configCurrent'),edit=$(api?'editApiCustom':'editConfigCustom');
  if(!picker||!current)return;
- var custom=picker.value==='__custom',value=currentValue(kind);current.value=value;
+ var custom=picker.value==='__custom',value=currentValue(kind);current.textContent=value||('请选择'+(api?'订阅转换后端':'订阅转换规则'));current.href=value||'#';
  if(edit){edit.style.display=custom?'inline-flex':'none';edit.hidden=!custom}
  if(!api){current.style.height='auto';current.style.height=Math.max(70,Math.min(260,current.scrollHeight))+'px'}
 }
@@ -1982,11 +1982,11 @@ ${getSubUIStyles()}
 .native-picker{display:block;width:100%;min-height:42px;padding:8px 12px;border:1px solid rgba(229,229,223,.8);border-radius:10px;background:rgba(250,250,250,.7);color:inherit;font:inherit;cursor:pointer;appearance:auto;-webkit-appearance:auto}
 .native-picker:focus{outline:none;border-color:#287ea8;box-shadow:0 0 0 2px rgba(40,126,168,.15)}
 .current-box{margin-top:12px}.current-title{font-size:13px;font-weight:700;margin:0 0 7px}.current-row{display:flex;align-items:flex-start;gap:8px}
-.current-api-input{width:100%;height:42px;min-width:0}.current-config-input{width:100%;min-height:70px;resize:none;line-height:1.5;word-break:break-all;overflow-wrap:anywhere}
+.current-api-input{width:100%;height:42px;min-width:0}.current-config-input{width:100%;min-height:70px;line-height:1.5;word-break:break-all;overflow-wrap:anywhere}.current-config-link{display:flex;align-items:center;padding:10px 12px;border:1px solid rgba(229,229,223,.8);border-radius:8px;background:rgba(250,250,250,.7);box-sizing:border-box;color:#1f4b99;text-decoration:none;cursor:pointer}.current-api-input.current-config-link{height:42px;min-height:42px}.current-config-link:hover{text-decoration:underline}.current-config-link:empty{color:#888}
 .edit-custom{display:none;flex:0 0 auto;min-width:72px}.status-box{margin-top:12px}.status-title{font-size:13px;font-weight:700;margin:0 0 7px}.status-list{display:grid;gap:7px}
 .status-item{padding:8px 10px;border-radius:9px;font-weight:650;word-break:break-all}.status-item.wait{background:rgba(255,152,0,.1);border:1px solid rgba(255,152,0,.2);color:#f57c00}.status-item.ok{background:rgba(76,175,80,.12);border:1px solid rgba(76,175,80,.25);color:#2e7d32}.status-item.bad{background:rgba(244,67,54,.1);border:1px solid rgba(244,67,54,.22);color:#c62828}
 .custom-modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.42);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);display:none;align-items:center;justify-content:center;z-index:1200;padding:20px}.custom-modal{width:min(480px,100%);background:rgba(255,255,255,.96);border:1px solid rgba(229,229,223,.9);border-radius:18px;padding:20px;box-shadow:0 18px 50px rgba(0,0,0,.22)}.custom-modal h3{margin:0;font-size:17px}.custom-modal p{margin:6px 0 14px;color:#888;font-size:12px}.custom-modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}
-@media(prefers-color-scheme:dark){.native-picker{background:#111;color:#f1f1f1;border-color:rgba(255,255,255,.14)}.native-picker option{background:#1b1b1b;color:#f1f1f1}.current-api-input,.current-config-input{background:rgba(0,0,0,.3);color:#f1f1f1;border-color:rgba(255,255,255,.12)}.status-item.ok{background:rgba(129,199,132,.1);color:#81c784;border-color:rgba(129,199,132,.2)}.status-item.bad{background:rgba(229,115,115,.1);color:#e57373;border-color:rgba(229,115,115,.2)}.status-item.wait{background:rgba(255,183,77,.1);color:#ffb74d;border-color:rgba(255,183,77,.2)}.custom-modal{background:rgba(30,30,30,.97);border-color:rgba(255,255,255,.1)}}
+@media(prefers-color-scheme:dark){.native-picker{background:#111;color:#f1f1f1;border-color:rgba(255,255,255,.14)}.native-picker option{background:#1b1b1b;color:#f1f1f1}.current-api-input,.current-config-input{background:rgba(0,0,0,.3);color:#64b5f6;border-color:rgba(255,255,255,.12)}.current-config-link{color:#64b5f6;background:rgba(0,0,0,.3);border-color:rgba(255,255,255,.12)}.status-item.ok{background:rgba(129,199,132,.1);color:#81c784;border-color:rgba(129,199,132,.2)}.status-item.bad{background:rgba(229,115,115,.1);color:#e57373;border-color:rgba(229,115,115,.2)}.status-item.wait{background:rgba(255,183,77,.1);color:#ffb74d;border-color:rgba(255,183,77,.2)}.custom-modal{background:rgba(30,30,30,.97);border-color:rgba(255,255,255,.1)}}
 </style>
 </head>
 <body>
@@ -2004,7 +2004,7 @@ ${getSubUIStyles()}
 ${apis.map(x=>`<option value="${esc(x.url)}" data-id="${esc(x.id)}" ${x.id===apiId?'selected':''}>${esc(x.name)}</option>`).join('')}
 <option value="__custom">自定义</option>
 </select>
-<div class="current-box"><div class="current-title">当前配置</div><div class="current-row"><input id="apiCurrent" class="current-api-input" readonly value="${esc(apiCurrentValue)}" placeholder="请选择订阅转换后端"><button type="button" class="button secondary edit-custom" id="editApiCustom">编辑</button></div></div>
+<div class="current-box"><div class="current-title">当前配置</div><div class="current-row"><a id="apiCurrent" class="current-api-input current-config-link" href="${esc(apiCurrentValue)}" target="_blank" rel="noopener noreferrer">${esc(apiCurrentValue)||'请选择订阅转换后端'}</a><button type="button" class="button secondary edit-custom" id="editApiCustom">编辑</button></div></div>
 <div class="status-box"><div class="status-title">可用状态</div><div id="apiStatus" class="status-list"><div class="status-item wait">⏳ 状态检测中</div></div></div>
 </section>
 
@@ -2014,7 +2014,7 @@ ${apis.map(x=>`<option value="${esc(x.url)}" data-id="${esc(x.id)}" ${x.id===api
 ${configs.map(x=>`<option value="${esc(x.url)}" data-id="${esc(x.id)}" ${x.id===configId?'selected':''}>${esc(x.name)}</option>`).join('')}
 <option value="__custom">自定义</option>
 </select>
-<div class="current-box"><div class="current-title">当前配置</div><div class="current-row"><textarea id="configCurrent" class="current-config-input" readonly placeholder="请选择订阅转换规则">${esc(configCurrentValue)}</textarea><button type="button" class="button secondary edit-custom" id="editConfigCustom">编辑</button></div></div>
+<div class="current-box"><div class="current-title">当前配置</div><div class="current-row"><a id="configCurrent" class="current-config-input current-config-link" href="${esc(configCurrentValue)}" target="_blank" rel="noopener noreferrer">${esc(configCurrentValue)||'请选择订阅转换规则'}</a><button type="button" class="button secondary edit-custom" id="editConfigCustom">编辑</button></div></div>
 <div class="status-box"><div class="status-title">可用状态</div><div id="configStatus" class="status-list"><div class="status-item wait">⏳ 状态检测中</div></div></div>
 </section>
 
@@ -2031,8 +2031,8 @@ ${configs.map(x=>`<option value="${esc(x.url)}" data-id="${esc(x.id)}" ${x.id===
 }
 function getSubUIStyles(){return getToolStyles()+`
 .page{width:100%;max-width:1240px;margin:0 auto;padding:28px 28px 48px}
-.header{margin-bottom:22px}.home-hero{display:grid;grid-template-columns:minmax(0,1fr) minmax(360px,520px);gap:28px;align-items:start}.hero-main{min-width:0}.title{margin:0;font-size:76px;font-weight:800;line-height:1.08;letter-spacing:-2px}.subtitle{margin-top:24px;font-size:22px;line-height:1.5;color:#687384}.backend-version-card{min-height:132px;padding:28px 34px;border:1px solid rgba(255,255,255,.62);border-radius:28px;background:rgba(255,255,255,.58);box-shadow:0 8px 30px rgba(50,70,90,.06);box-sizing:border-box;display:flex;flex-direction:column;justify-content:center}.backend-version-label{font-size:17px;line-height:1.3;color:#69717d;margin-bottom:14px}.backend-version-value{font-size:25px;line-height:1.25;font-weight:750;word-break:break-word;overflow-wrap:anywhere;color:#111}
-@media(max-width:900px){.page{max-width:760px;padding:22px 18px 36px}.home-hero{grid-template-columns:1fr;gap:18px}.title{font-size:58px;letter-spacing:-1.5px}.subtitle{margin-top:16px;font-size:18px}.backend-version-card{min-height:108px;padding:22px 24px;border-radius:22px}.backend-version-label{font-size:15px;margin-bottom:10px}.backend-version-value{font-size:21px}}
+.header{margin-bottom:22px}.home-hero{display:grid;grid-template-columns:minmax(0,1fr) minmax(360px,520px);gap:28px;align-items:start}.hero-main{min-width:0}.title{margin:0;font-size:62px;font-weight:800;line-height:1.08;letter-spacing:-1.5px}.subtitle{margin-top:24px;font-size:22px;line-height:1.5;color:#687384}.backend-version-card{min-height:132px;padding:28px 34px;border:1px solid rgba(255,255,255,.62);border-radius:28px;background:rgba(255,255,255,.58);box-shadow:0 8px 30px rgba(50,70,90,.06);box-sizing:border-box;display:flex;flex-direction:column;justify-content:center}.backend-version-label{font-size:15px;line-height:1.3;color:#69717d;margin-bottom:10px}.backend-version-value{font-size:21px;line-height:1.25;font-weight:750;word-break:break-word;overflow-wrap:anywhere;color:#111}
+@media(max-width:900px){.page{max-width:760px;padding:22px 18px 36px}.home-hero{grid-template-columns:1fr;gap:18px}.title{font-size:48px;letter-spacing:-1px}.subtitle{margin-top:16px;font-size:18px}.backend-version-card{min-height:108px;padding:22px 24px;border-radius:22px}.backend-version-label{font-size:14px;margin-bottom:8px}.backend-version-value{font-size:18px}}
 .panel{margin-top:12px}.row{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px}
 .checks{display:grid;gap:8px}.check{display:grid;grid-template-columns:18px minmax(0,1fr);align-items:center;gap:8px;margin:0;padding:10px;border:1px solid rgba(229,229,223,.6);border-radius:10px;background:rgba(255,255,255,.5);cursor:pointer}
 .check input{width:18px;height:18px;margin:0}.check span{font-weight:600}.check small{grid-column:2;color:#888;font-size:12px;word-break:break-all;overflow-wrap:anywhere}
@@ -2053,7 +2053,7 @@ function renderAdminPage(url,env,settings){
         <div class="drag-handle" title="拖动排序" aria-label="拖动排序">⠿</div>
         <div class="provider-main">
             <div class="link-label">${esc(x.name)}</div>
-            <div class="provider-url link-url">${esc(x.url)}</div>
+            <a class="provider-url link-url" href="${esc(x.url)}" target="_blank" rel="noopener noreferrer">${esc(x.url)}</a>
         </div>
         <div class="actions admin-row-actions">
             <button type="button" class="secondary" data-provider-action="edit" data-provider-type="${esc(type)}" data-provider-id="${esc(x.id)}" data-provider-name="${esc(x.name)}" data-provider-url="${esc(x.url)}">编辑</button>
