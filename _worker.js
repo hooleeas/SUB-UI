@@ -128,6 +128,20 @@ function renderGeneratedLinks(){
  }).join('');
  listEl.querySelectorAll('[data-destroy-token]').forEach(function(button){button.addEventListener('click',function(){destroyGeneratedLink(String(button.dataset.destroyToken||''),button,false)})});
 }
+function syncGeneratedLinks(){
+ var list=generatedLinks();if(!list.length)return Promise.resolve();
+ var tokens=list.map(function(item){return String(item&&item.token||'').trim()}).filter(Boolean);
+ if(!tokens.length)return Promise.resolve();
+ return fetch('/api/generated-links/check',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},cache:'no-store',body:JSON.stringify({tokens:tokens})})
+ .then(function(r){return r.json().then(function(d){return {r:r,d:d}})})
+ .then(function(x){
+   if(!x.r.ok||!x.d.ok)return;
+   var valid={};(Array.isArray(x.d.tokens)?x.d.tokens:[]).forEach(function(token){valid[String(token||'').trim()]=true});
+   var next=list.filter(function(item){return valid[String(item&&item.token||'').trim()]});
+   if(next.length!==list.length){saveGeneratedLinks(next);renderGeneratedLinks()}
+ })
+ .catch(function(){});
+}
 function closeAggregateResult(){var rm=$('aggregateResultModal');if(rm)rm.style.display='none';resetAggregateResult()}
 function destroyGeneratedLink(token,button,fromModal,key,skipConfirm){
  token=String(token||'').trim();if(!token)return;
@@ -221,6 +235,8 @@ function initPublic(){
  e=$('cancelApiCustom');if(e)e.addEventListener('click',function(){cancelCustom('api')});e=$('cancelConfigCustom');if(e)e.addEventListener('click',function(){cancelCustom('config')});
  e=$('saveApiCustom');if(e)e.addEventListener('click',function(){saveCustom('api')});e=$('saveConfigCustom');if(e)e.addEventListener('click',function(){saveCustom('config')});
  updateCurrent('api');updateCurrent('config');checkStatus('api');checkStatus('config');renderGeneratedLinks();
+ window.addEventListener('focus',syncGeneratedLinks);
+ document.addEventListener('visibilitychange',function(){if(!document.hidden)syncGeneratedLinks()});
  function renderAggregateQr(value){var q=$('aggregateResultQr');if(!q||!value)return;var draw=function(){if(!window.QRCode)return false;q.innerHTML='';q.style.display='block';try{new QRCode(q,{text:value,width:220,height:220,colorDark:'#000000',colorLight:'#ffffff',correctLevel:QRCode.CorrectLevel.Q});return true}catch(err){q.innerHTML='';return false}};if(draw())return;var src='https://cdn.jsdelivr.net/npm/@keeex/qrcodejs-kx@1.0.2/qrcode.min.js';var script=document.querySelector('script[src="'+src+'"]');if(!script){script=document.createElement('script');script.src=src;script.onload=function(){draw()};document.head.appendChild(script)}else{var timer=window.setInterval(function(){if(draw())window.clearInterval(timer)},100);window.setTimeout(function(){window.clearInterval(timer)},5000)}}
 function resetAggregateResult(){var q=$('aggregateResultQr');if(q){q.innerHTML='';q.style.display='block'}var b=$('copyDirect');if(b){b.textContent='复制';b.disabled=false}var d=$('destroyDirect');if(d){d.textContent='销毁';d.disabled=false}var status=$('aggregateCopyStatus');if(status){status.textContent='';status.className='aggregate-copy-status'}}
  e=$('copyDirect');if(e)e.addEventListener('click',function(){var a=$('direct'),v=a?a.textContent.trim():'';var done=function(){e.textContent='已复制';aggregateNotice('已复制');window.setTimeout(function(){if(e)e.textContent='复制'},1600)};var fail=function(){aggregateNotice('复制失败，请手动复制',true)};if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(v).then(done).catch(fail);else{var ta=document.createElement('textarea');ta.value=v;document.body.appendChild(ta);ta.select();try{document.execCommand('copy');done()}catch(err){fail()}ta.remove()}});e=$('destroyDirect');if(e)e.addEventListener('click',function(){var token=tokenFromSubscriptionUrl(($('direct')||{}).href||'');var key=String(CURRENT_DESTROY_KEY||'');destroyGeneratedLink(token,e,true,key,false)});e=$('aggregateResultClose');if(e)e.addEventListener('click',closeAggregateResult);var rm=$('aggregateResultModal');if(rm){rm.addEventListener('click',function(ev){if(ev.target===rm)closeAggregateResult()});document.addEventListener('keydown',function(ev){if(ev.key==='Escape'){closeAggregateResult()}})}
@@ -500,6 +516,20 @@ async function handleRequest(request, env) {
         }
         if (url.pathname === '/api/destroy' && request.method === 'POST') {
             return await handlePublicDestroy(request, env);
+        }
+        if (url.pathname === '/api/generated-links/check' && request.method === 'POST') {
+            try {
+                const data = await request.json();
+                const input = Array.isArray(data?.tokens) ? data.tokens : [];
+                const tokens = [...new Set(input.map(x => String(x || '').trim()).filter(x => /^[A-Za-z0-9]+$/.test(x) && x.length <= 128))].slice(0, 100);
+                const existing = [];
+                for (const token of tokens) {
+                    if (await getToken(env, token)) existing.push(token);
+                }
+                return jsonResponse({ ok: true, tokens: existing });
+            } catch (e) {
+                return jsonResponse({ ok: false, error: e?.message || String(e) }, 400);
+            }
         }
 
         // ==================== 管理后台 API ====================
