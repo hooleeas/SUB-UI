@@ -53,6 +53,7 @@ let fakeCode = '';
 
 const SUB_PREFIX = 'SUB:';
 const URL_PREFIX = 'URL:';
+const AGG_PREFIX = 'AGG:';
 const ID_CHARS = 'ABCDEFGHJKMNPQRSTWXYZabcdefghijkmnpqrstwxyz2345678';
 const DEFAULT_ADMIN_PATH = 'admin';
 
@@ -143,6 +144,44 @@ function saveCustom(kind){
  if(api){PUBLIC_STATE.apiUrl=value;PUBLIC_STATE.apiCustom=true;PUBLIC_STATE.apiId='';$('apiPicker').value='__custom'}else{PUBLIC_STATE.configUrl=value;PUBLIC_STATE.configCustom=true;PUBLIC_STATE.configId='';$('configPicker').value='__custom'}
  var modal=$(api?'customApiModal':'customConfigModal');if(modal)modal.style.display='none';updateCurrent(kind);checkStatus(kind)
 }
+function readLocal(key){try{return localStorage.getItem(key)||''}catch(e){return ''}}
+function writeLocal(key,value){try{localStorage.setItem(key,value||'')}catch(e){}}
+function removeLocal(key){try{localStorage.removeItem(key)}catch(e){}}
+function clearAggregateResult(resetDismissed){
+ var q=$('aggregateResultQr');
+ if(q){q.style.display='none';q.innerHTML=''}
+ var modal=$('aggregateResultModal');
+ if(modal)modal.classList.remove('qr-visible');
+ if(resetDismissed)removeLocal('CF_SUB_AGG_DISMISSED');
+}
+function showAggregateResult(value){
+ value=String(value||'').trim();
+ if(!value)return;
+ var direct=$('direct');if(direct){direct.textContent=value;direct.href=value}
+ clearAggregateResult(true);
+ var modal=$('aggregateResultModal');if(modal)modal.style.display='flex';
+ writeLocal('CF_SUB_LAST_AGG_URL',value);
+}
+function closeAggregateResult(){
+ var modal=$('aggregateResultModal');
+ if(modal)modal.style.display='none';
+ clearAggregateResult(false);
+ writeLocal('CF_SUB_AGG_DISMISSED','1');
+}
+function showAggregateQr(value){
+ var q=$('aggregateResultQr');
+ var modal=$('aggregateResultModal');
+ if(!q||!window.QRCode)return;
+ q.innerHTML='';
+ q.style.display='block';
+ if(modal)modal.classList.add('qr-visible');
+ new QRCode(q,{text:value,width:220,height:220,colorDark:'#000000',colorLight:'#ffffff',correctLevel:QRCode.CorrectLevel.Q});
+}
+function restoreLastAggregateResult(){
+ if(readLocal('CF_SUB_AGG_DISMISSED')==='1')return;
+ var value=readLocal('CF_SUB_LAST_AGG_URL')||window.__CF_SUB_LAST_URL||'';
+ if(value)showAggregateResult(value);
+}
 function initPublic(){
  if(window.__CF_SUBS_PUBLIC_READY)return;window.__CF_SUBS_PUBLIC_READY=true;
  var ap=$('apiPicker'),cp=$('configPicker');
@@ -151,15 +190,15 @@ function initPublic(){
  var e=$('editApiCustom');if(e)e.addEventListener('click',function(){openCustom('api')});e=$('editConfigCustom');if(e)e.addEventListener('click',function(){openCustom('config')});
  e=$('cancelApiCustom');if(e)e.addEventListener('click',function(){cancelCustom('api')});e=$('cancelConfigCustom');if(e)e.addEventListener('click',function(){cancelCustom('config')});
  e=$('saveApiCustom');if(e)e.addEventListener('click',function(){saveCustom('api')});e=$('saveConfigCustom');if(e)e.addEventListener('click',function(){saveCustom('config')});
- updateCurrent('api');updateCurrent('config');checkStatus('api');checkStatus('config');
- e=$('copyDirect');if(e)e.addEventListener('click',function(){var a=$('direct'),v=a?a.textContent.trim():'';var showQr=function(){var q=$('aggregateResultQr'),m=$('aggregateResultModal')&&$('aggregateResultModal').querySelector('.aggregate-result-modal');if(!q)return;if(m)m.classList.add('qr-visible');q.innerHTML='';if(window.QRCode){q.style.display='block';new QRCode(q,{text:v,width:220,height:220,colorDark:'#000000',colorLight:'#ffffff',correctLevel:QRCode.CorrectLevel.Q})}};if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(v).then(showQr).catch(function(){alert('复制失败，请手动复制')});else{var ta=document.createElement('textarea');ta.value=v;document.body.appendChild(ta);ta.select();try{document.execCommand('copy');showQr()}catch(err){alert('复制失败，请手动复制')}ta.remove()}});var resetAggregateResult=function(){var q=$('aggregateResultQr'),m=$('aggregateResultModal')&&$('aggregateResultModal').querySelector('.aggregate-result-modal');if(q){q.style.display='none';q.innerHTML=''}if(m)m.classList.remove('qr-visible');};var rm=$('aggregateResultModal');if(rm){rm.addEventListener('click',function(ev){if(ev.target===rm){rm.style.display='none';resetAggregateResult()}});document.addEventListener('keydown',function(ev){if(ev.key==='Escape'){rm.style.display='none';resetAggregateResult()}})}
+ updateCurrent('api');updateCurrent('config');checkStatus('api');checkStatus('config');restoreLastAggregateResult();
+ e=$('copyDirect');if(e)e.addEventListener('click',function(){var a=$('direct'),v=a?a.textContent.trim():'';if(!v)return;var done=function(){showAggregateQr(v);e.textContent='复制';writeLocal('CF_SUB_LAST_AGG_URL',v);};if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(v).then(done).catch(function(){alert('复制失败，请手动复制')});else{var ta=document.createElement('textarea');ta.value=v;document.body.appendChild(ta);ta.select();try{document.execCommand('copy');done()}catch(err){alert('复制失败，请手动复制')}ta.remove()}});var rm=$('aggregateResultModal');if(rm){document.addEventListener('keydown',function(ev){if(ev.key==='Escape')closeAggregateResult()})}
  e=$('generate');if(e)e.addEventListener('click',function(){
   var sources=$('sources')?$('sources').value.trim():'',a=$('apiPicker'),c=$('configPicker');if(!a||!c)return;
   var apiCustom=a.value==='__custom',configCustom=c.value==='__custom',apiValue=currentValue('api'),configValue=currentValue('config');
   if(!sources)return alert('请输入订阅链接');if(!apiValue)return alert('请选择订阅转换后端');if(!configValue)return alert('请选择订阅转换规则');
-  var body={sources:sources,apiIds:apiCustom?[]:[currentId('api')],apiCustom:apiCustom,apiUrl:apiCustom?apiValue:'',configIds:configCustom?[]:[currentId('config')],configCustom:configCustom,configUrl:configCustom?configValue:'',noAds:($('noAds')?$('noAds').value:'').trim()};
+  var body={sources:sources,apiIds:apiCustom?[]:[currentId('api')],apiCustom:apiCustom,apiUrl:apiCustom?apiValue:'',configIds:configCustom?[]:[currentId('config')],configCustom:configCustom,configUrl:configCustom?configValue:'',noAds:($('noAds')?$('noAds').value:'').trim(),reuseToken:readLocal('CF_SUB_LAST_AGG_TOKEN')||window.__CF_SUB_LAST_TOKEN||''};
   var button=$('generate');button.disabled=true;
-  fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},cache:'no-store',body:JSON.stringify(body)}).then(function(r){return r.json().then(function(d){return {r:r,d:d}})}).then(function(x){if(!x.r.ok||!x.d.ok)throw new Error(x.d.error||'生成失败');$('direct').textContent=x.d.subscription_url;$('direct').href=x.d.subscription_url;var resultModal=$('aggregateResultModal');if(resultModal)resultModal.style.display='flex'}).catch(function(err){alert(err.message||'生成失败')}).finally(function(){button.disabled=false})
+  fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},cache:'no-store',body:JSON.stringify(body)}).then(function(r){return r.json().then(function(d){return {r:r,d:d}})}).then(function(x){if(!x.r.ok||!x.d.ok)throw new Error(x.d.error||'生成失败');writeLocal('CF_SUB_LAST_AGG_TOKEN',x.d.token||((x.d.url&&x.d.url.url)||''));showAggregateResult(x.d.subscription_url);}).catch(function(err){alert(err.message||'生成失败')}).finally(function(){button.disabled=false})
  })
 }
 
@@ -582,7 +621,19 @@ async function getSub(env, id) {
 async function getToken(env, token) {
     if (!env.KV || !token) return null;
     try {
-        return await env.KV.get(`${URL_PREFIX}${token}`, 'json');
+        const item = await env.KV.get(`${URL_PREFIX}${token}`, 'json');
+        if (!item) return null;
+
+        // 新结构：URL 记录只保存链接本身和共享数据引用。
+        // 读取时自动合并共享聚合数据，保持旧逻辑完全兼容。
+        const aggId = String(item.aggId || '').trim();
+        if (aggId) {
+            const shared = await env.KV.get(`${AGG_PREFIX}${aggId}`, 'json');
+            if (shared && typeof shared === 'object') {
+                return { ...shared, ...item, aggId };
+            }
+        }
+        return item;
     } catch (e) {
         return null;
     }
@@ -1001,6 +1052,22 @@ async function getSelectedBackends(env, tokenData, runtime) {
     return pairs;
 }
 
+async function makeAggregateDataId(profile) {
+    const payload = JSON.stringify({
+        v: 1,
+        sources: Array.isArray(profile.sources) ? profile.sources : [],
+        backends: Array.isArray(profile.backends) ? profile.backends : [],
+        noAds: String(profile.noAds || '')
+    });
+    const digest = await crypto.subtle.digest(
+        'SHA-256',
+        new TextEncoder().encode(payload)
+    );
+    return Array.from(new Uint8Array(digest))
+        .map(b => b.toString(16).padStart(2, '0'))
+        .join('');
+}
+
 async function handlePublicGenerate(request,env,requestUrl){
     if(!env.KV) return jsonResponse({ok:false,error:'未绑定 KV'},500);
     try{
@@ -1044,41 +1111,68 @@ async function handlePublicGenerate(request,env,requestUrl){
         if(!backends.length) return jsonResponse({ok:false,error:'没有有效的订阅转换后端与规则组合'},400);
 
         const noAds=String(data.noAds||'').trim().slice(0,5000);
-        const token=await makeRandomToken(env,8);
+        const profile={sources,backends,noAds};
+        const aggId=await makeAggregateDataId(profile);
+
+        // 共享聚合数据只保存一份。不同 URL 只保存各自的 token + aggId。
+        const sharedKey=`${AGG_PREFIX}${aggId}`;
+        const sharedData={
+            type:'sub-ui',
+            sources,
+            backends,
+            noAds,
+            updatedAt:new Date().toISOString()
+        };
+        if(!await env.KV.get(sharedKey)) {
+            await env.KV.put(sharedKey,JSON.stringify(sharedData));
+        }
+
+        // 浏览器带回上一次生成的 token 时，如果配置完全一致，就复用原 URL，
+        // 避免访客误操作后再次生成同一个订阅时产生一堆重复 URL。
+        const reuseToken=normalizeToken(data.reuseToken||'');
+        let existing=null;
+        let token='';
+        if(reuseToken){
+            existing=await getToken(env,reuseToken);
+            if(existing && existing.type==='sub-ui'){
+                let existingAggId=String(existing.aggId||'').trim();
+                if(!existingAggId && Array.isArray(existing.sources) && Array.isArray(existing.backends)){
+                    existingAggId=await makeAggregateDataId({
+                        sources:existing.sources,
+                        backends:existing.backends,
+                        noAds:String(existing.noAds||'')
+                    });
+                }
+                if(existingAggId===aggId) token=reuseToken;
+            }
+        }
+        if(!token) token=await makeRandomToken(env,8);
+
         const name='订阅链接';
-        // 每个公开 URL 都把本次生成时实际使用的 SUBAPI / SUBCONFIG 固化进自己的 KV JSON。
-        // 以后访问 /token、/token?clash、/token?sb 等入口时，只读取这里保存的值。
-        const primaryBackend=backends[0];
+        const subscriptionUrl=`${requestUrl.origin}/${encodeURIComponent(token)}`;
+        const now=new Date().toISOString();
         const item={
             url:token,
             path:`/${token}`,
-            subscriptionUrl:`${requestUrl.origin}/${encodeURIComponent(token)}`,
+            subscriptionUrl,
             name,
-            sources,
-            subApiIds:selectedApis.map(x=>x.id),
-            subConfigIds:selectedConfigs.map(x=>x.id),
-            subApi:apiEntries[0]?.url||'',
-            subApiName:apiEntries[0]?.name||'',
-            subConfig:configEntries[0]?.url||'',
-            subConfigName:configEntries[0]?.name||'',
-            backend:primaryBackend,
-            backends,
-            noAds,
+            aggId,
             target:'auto',
-            createdAt:new Date().toISOString(),
-            updatedAt:new Date().toISOString(),
+            createdAt:existing?.createdAt || now,
+            updatedAt:now,
             type:'sub-ui'
         };
         await env.KV.put(`${URL_PREFIX}${token}`,JSON.stringify(item));
 
         const prefs={
             apiIds:selectedApis.map(x=>x.id),apiCustom,apiUrl:apiCustom?apiUrl:'',
-            configIds:selectedConfigs.map(x=>x.id),configCustom,configUrl:configCustom?configUrl:'',noAds
+            configIds:selectedConfigs.map(x=>x.id),configCustom,configUrl:configCustom?configUrl:'',noAds,
+            lastToken:token,
+            lastSubscriptionUrl:subscriptionUrl
         };
         const cookie=buildPublicPreferencesCookie(prefs);
         const headers=cookie?{'Set-Cookie':cookie}:{ };
-        const subscriptionUrl=`${requestUrl.origin}/${encodeURIComponent(token)}`;
-        return jsonResponse({ok:true,url:item,subscription_url:subscriptionUrl},200,headers);
+        return jsonResponse({ok:true,url:item,token,subscription_url:subscriptionUrl},200,headers);
     }catch(e){return jsonResponse({ok:false,error:e?.message||String(e)},500);}
 }
 async function generateSubscription(request, env, sourceList, runtime, token) {
@@ -1973,7 +2067,11 @@ async function renderSubUIHome(request,url,env){
     const cfg=await getConfig(env);
     const apis=normalizeProviderList(cfg.subApis).filter(x=>x.enabled);
     const configs=normalizeProviderList(cfg.subConfigs).filter(x=>x.enabled);
-    // 主页全部为临时变量：不读取、不写入 Cookie/KV。刷新后始终恢复管理员设置的默认配置，NOADS 默认留空。
+    // 订阅链接本身使用浏览器偏好 Cookie 记住，页面意外关闭后可以恢复上一次结果。
+    const publicPrefs=readPublicPreferences(request)||{};
+    const lastSubscriptionUrl=String(publicPrefs.lastSubscriptionUrl||'').trim();
+    const lastToken=String(publicPrefs.lastToken||'').trim();
+
     const defaultApiId=String(cfg.defaultSubApiId||'');
     const defaultConfigId=String(cfg.defaultSubConfigId||'');
 
@@ -2004,8 +2102,8 @@ ${getSubUIStyles()}
 .current-api-input{width:100%;height:42px;min-width:0}.current-config-input{width:100%;min-height:70px;line-height:1.5;word-break:break-all;overflow-wrap:anywhere}.current-config-link{display:flex;align-items:center;padding:10px 12px;border:1px solid rgba(229,229,223,.8);border-radius:8px;background:rgba(250,250,250,.7);box-sizing:border-box;color:#1f4b99;text-decoration:none;cursor:pointer}.current-api-input.current-config-link{height:42px;min-height:42px}.current-config-link:hover{text-decoration:none;border-color:#1f4b99;box-shadow:0 0 0 2px rgba(31,75,153,.10);background:rgba(31,75,153,.04)}.current-config-link:empty{color:#888}.current-config-link:focus-visible{text-decoration:none;outline:none;border-color:#1f4b99;box-shadow:0 0 0 3px rgba(31,75,153,.14)}
 .edit-custom{display:none;flex:0 0 auto;min-width:72px}.status-box{margin-top:12px}.status-title{font-size:13px;font-weight:700;margin:0 0 7px}.status-list{display:grid;gap:7px}
 .status-item{padding:8px 10px;border-radius:9px;font-weight:650;word-break:break-all}.status-item.wait{background:rgba(255,152,0,.1);border:1px solid rgba(255,152,0,.2);color:#f57c00}.status-item.ok{background:rgba(76,175,80,.12);border:1px solid rgba(76,175,80,.25);color:#2e7d32}.status-item.bad{background:rgba(244,67,54,.1);border:1px solid rgba(244,67,54,.22);color:#c62828}
-.custom-modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.42);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);display:none;align-items:center;justify-content:center;z-index:1200;padding:20px}.custom-modal{width:min(480px,100%);background:rgba(255,255,255,.96);border:1px solid rgba(229,229,223,.9);border-radius:18px;padding:20px;box-shadow:0 18px 50px rgba(0,0,0,.22)}.custom-modal h3{margin:0;font-size:17px}.custom-modal p{margin:6px 0 14px;color:#888;font-size:12px}.custom-modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}.aggregate-result-overlay{position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.42);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);overflow:auto;padding:20px}.aggregate-result-modal{width:min(620px,calc(100vw - 40px));margin:auto;transition:width .2s ease,transform .2s ease}.aggregate-result-modal.qr-visible{width:min(720px,calc(100vw - 32px));padding-bottom:28px}.aggregate-result-url{display:block;width:100%;padding:12px 14px;margin:14px 0 0;border:1px solid rgba(229,229,223,.8);border-radius:10px;background:rgba(250,250,250,.7);color:#1f4b99;word-break:break-all;overflow-wrap:anywhere;line-height:1.55;user-select:text;text-decoration:none;box-sizing:border-box}.aggregate-result-url:hover{text-decoration:none;border-color:#1f4b99;box-shadow:0 0 0 2px rgba(31,75,153,.10)}.aggregate-result-modal>#copyDirect{display:flex;width:220px;min-height:40px;margin:14px auto 0}.aggregate-result-modal>#copyDirect:hover{box-shadow:0 0 0 2px rgba(52,58,64,.10)}.aggregate-result-qr{display:none;margin:16px auto 0;padding:12px;width:max-content;max-width:100%;box-sizing:border-box;background:#fff;border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.18)}
-@media(prefers-color-scheme:dark){.native-picker{background:#111;color:#f1f1f1;border-color:rgba(255,255,255,.14)}.native-picker option{background:#1b1b1b;color:#f1f1f1}.current-api-input,.current-config-input{background:rgba(0,0,0,.3);color:#64b5f6;border-color:rgba(255,255,255,.12)}.current-config-link{color:#64b5f6;background:rgba(0,0,0,.3);border-color:rgba(255,255,255,.12)}.current-config-link:hover{color:#64b5f6;text-decoration:none;border-color:#64b5f6;background:rgba(100,181,246,.08);box-shadow:0 0 0 2px rgba(100,181,246,.10)}.status-item.ok{background:rgba(129,199,132,.1);color:#81c784;border-color:rgba(129,199,132,.2)}.status-item.bad{background:rgba(229,115,115,.1);color:#e57373;border-color:rgba(229,115,115,.2)}.status-item.wait{background:rgba(255,183,77,.1);color:#ffb74d;border-color:rgba(255,183,77,.2)}.custom-modal{background:rgba(30,30,30,.97);border-color:rgba(255,255,255,.1)}.aggregate-result-url{background:rgba(0,0,0,.3);border-color:rgba(255,255,255,.12);color:#64b5f6}.aggregate-result-url:hover{color:#64b5f6;border-color:#64b5f6;background:rgba(100,181,246,.08);box-shadow:0 0 0 2px rgba(100,181,246,.10)}.aggregate-result-qr{background:#fff}.aggregate-result-modal>#copyDirect{margin-top:16px}.aggregate-result-modal.qr-visible{padding-bottom:28px}}
+.custom-modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.42);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);display:none;align-items:center;justify-content:center;z-index:1200;padding:20px}.custom-modal{width:min(480px,100%);background:rgba(255,255,255,.96);border:1px solid rgba(229,229,223,.9);border-radius:18px;padding:20px;box-shadow:0 18px 50px rgba(0,0,0,.22)}.custom-modal h3{margin:0;font-size:17px}.custom-modal p{margin:6px 0 14px;color:#888;font-size:12px}.custom-modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}.aggregate-result-overlay{position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.42);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);overflow:auto;padding:20px}.aggregate-result-modal{width:min(620px,calc(100vw - 40px));margin:auto;transition:width .2s ease,transform .2s ease;box-sizing:border-box}.aggregate-result-modal.qr-visible{max-height:calc(100vh - 40px);overflow:auto}.aggregate-result-url{display:block;width:100%;padding:12px 14px;margin:14px 0 0;border:1px solid rgba(229,229,223,.8);border-radius:10px;background:rgba(250,250,250,.7);color:#1f4b99;word-break:break-all;overflow-wrap:anywhere;line-height:1.55;user-select:text;text-decoration:none;box-sizing:border-box}.aggregate-result-url:hover{text-decoration:none;border-color:#1f4b99;box-shadow:0 0 0 2px rgba(31,75,153,.10)}.aggregate-result-modal>#copyDirect{display:flex;width:220px;min-height:40px;margin:14px auto 0}.aggregate-result-modal>#copyDirect:hover{box-shadow:0 0 0 2px rgba(52,58,64,.10)}.aggregate-result-qr{display:none;margin:16px auto 0;padding:12px;width:max-content;max-width:100%;box-sizing:border-box;background:#fff;border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.18)}
+@media(prefers-color-scheme:dark){.native-picker{background:#111;color:#f1f1f1;border-color:rgba(255,255,255,.14)}.native-picker option{background:#1b1b1b;color:#f1f1f1}.current-api-input,.current-config-input{background:rgba(0,0,0,.3);color:#64b5f6;border-color:rgba(255,255,255,.12)}.current-config-link{color:#64b5f6;background:rgba(0,0,0,.3);border-color:rgba(255,255,255,.12)}.current-config-link:hover{color:#64b5f6;text-decoration:none;border-color:#64b5f6;background:rgba(100,181,246,.08);box-shadow:0 0 0 2px rgba(100,181,246,.10)}.status-item.ok{background:rgba(129,199,132,.1);color:#81c784;border-color:rgba(129,199,132,.2)}.status-item.bad{background:rgba(229,115,115,.1);color:#e57373;border-color:rgba(229,115,115,.2)}.status-item.wait{background:rgba(255,183,77,.1);color:#ffb74d;border-color:rgba(255,183,77,.2)}.custom-modal{background:rgba(30,30,30,.97);border-color:rgba(255,255,255,.1)}.aggregate-result-url{background:rgba(0,0,0,.3);border-color:rgba(255,255,255,.12);color:#64b5f6}.aggregate-result-url:hover{color:#64b5f6;border-color:#64b5f6;background:rgba(100,181,246,.08);box-shadow:0 0 0 2px rgba(100,181,246,.10)}.aggregate-result-qr{background:#fff}.aggregate-result-modal>#copyDirect{margin-top:16px}}
 </style>
 </head>
 <body>
@@ -2045,7 +2143,7 @@ ${configs.map(x=>`<option value="${esc(x.url)}" data-id="${esc(x.id)}" ${x.id===
 <div id="customApiModal" class="custom-modal-overlay"><div class="custom-modal"><h3>自定义订阅转换后端</h3><p>输入你自己的 SUBAPI 地址。</p><input id="customApiInput" placeholder="https://subapi.example.com"><div class="custom-modal-actions"><button type="button" class="button secondary" id="cancelApiCustom">取消</button><button type="button" class="button" id="saveApiCustom">保存</button></div></div></div>
 <div id="customConfigModal" class="custom-modal-overlay"><div class="custom-modal"><h3>自定义订阅转换规则</h3><p>输入你自己的 SUBCONFIG 地址。</p><input id="customConfigInput" placeholder="https://example.com/config.ini"><div class="custom-modal-actions"><button type="button" class="button secondary" id="cancelConfigCustom">取消</button><button type="button" class="button" id="saveConfigCustom">保存</button></div></div></div>
 
-<script src="https://cdn.jsdelivr.net/npm/@keeex/qrcodejs-kx@1.0.2/qrcode.min.js"></script>
+<script>window.__CF_SUB_LAST_URL=${JSON.stringify(lastSubscriptionUrl).replace('</','<\/')};window.__CF_SUB_LAST_TOKEN=${JSON.stringify(lastToken).replace('</','<\/')};</script>
 <script src="/__cfsubs.js" defer></script>
 </body></html>`;
 }
@@ -2059,7 +2157,7 @@ function getSubUIStyles(){return getToolStyles()+`
 .checks{display:grid;gap:8px}.check{display:grid;grid-template-columns:18px minmax(0,1fr);align-items:center;gap:8px;margin:0;padding:10px;border:1px solid rgba(229,229,223,.6);border-radius:10px;background:rgba(255,255,255,.5);cursor:pointer}
 .check input{width:18px;height:18px;margin:0}.check span{font-weight:600}.check small{grid-column:2;color:#888;font-size:12px;word-break:break-all;overflow-wrap:anywhere}
 .primary{width:100%;min-height:42px;margin-top:12px}.result-panel[hidden]{display:none}.result-label{margin-top:12px;margin-bottom:6px;font-size:12px;font-weight:600;color:#666}.result-url{padding:10px;border:1px solid rgba(229,229,223,.8);border-radius:8px;background:rgba(250,250,250,.7);color:#1f4b99;word-break:break-all;overflow-wrap:anywhere}
-@media(max-width:600px){.aggregate-result-modal,.aggregate-result-modal.qr-visible{width:calc(100vw - 28px)}.aggregate-result-modal>#copyDirect{width:190px}.row{grid-template-columns:1fr}.page.app-shell{width:calc(100% - 28px);margin-left:14px;margin-right:14px}}
+@media(max-width:600px){.aggregate-result-modal{width:calc(100vw - 40px)}.aggregate-result-modal>#copyDirect{width:190px}.row{grid-template-columns:1fr}.page.app-shell{width:calc(100% - 28px);margin-left:14px;margin-right:14px}}
 @media(prefers-color-scheme:dark){body{background:#000;background-image:radial-gradient(circle at 0% 28%,rgba(0,188,212,.18),transparent 24%),radial-gradient(circle at 100% 100%,rgba(0,120,70,.22),transparent 32%),linear-gradient(180deg,#000 0%,#020807 58%,#00140b 100%);background-attachment:fixed;color:#f4f7f8}.page.app-shell{background:linear-gradient(135deg,rgba(1,5,6,.98) 0%,rgba(2,10,10,.96) 48%,rgba(0,54,35,.92) 100%);border-color:rgba(255,255,255,.13);box-shadow:0 20px 70px rgba(0,0,0,.55)}.header{border-bottom-color:rgba(255,255,255,.10)}.title{color:#fff}.subtitle{color:#9aa7b5}.backend-version-card{background:linear-gradient(135deg,rgba(4,10,14,.98) 0%,rgba(3,18,20,.98) 48%,rgba(0,65,42,.94) 100%);border-color:rgba(255,255,255,.16);box-shadow:0 12px 36px rgba(0,40,25,.28)}.backend-version-label{color:#91a0ae}.backend-version-value{color:#fff}.panel{background:rgba(8,12,14,.78);border-color:rgba(255,255,255,.10)}.section-note{color:#9aa7b5}.field input,.field textarea,.native-picker,.current-api-input,.current-config-input,.current-config-link{background:rgba(2,6,8,.82);border-color:rgba(255,255,255,.13);color:#f3f6f7}.native-picker option{background:#0b1012;color:#f3f6f7}.check{background:rgba(15,22,24,.7);border-color:rgba(255,255,255,.10)}.check small{color:#8e9aa6}.result-label{color:#aab4be}.result-url{background:rgba(2,6,8,.72);color:#64b5f6;border-color:rgba(255,255,255,.12)}}
 `;}
 
