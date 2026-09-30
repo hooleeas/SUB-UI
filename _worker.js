@@ -196,7 +196,7 @@ function initPublic(){
  var e=$('editApiCustom');if(e)e.addEventListener('click',function(){openCustom('api')});e=$('editConfigCustom');if(e)e.addEventListener('click',function(){openCustom('config')});
  e=$('cancelApiCustom');if(e)e.addEventListener('click',function(){cancelCustom('api')});e=$('cancelConfigCustom');if(e)e.addEventListener('click',function(){cancelCustom('config')});
  e=$('saveApiCustom');if(e)e.addEventListener('click',function(){saveCustom('api')});e=$('saveConfigCustom');if(e)e.addEventListener('click',function(){saveCustom('config')});
- updateCurrent('api');updateCurrent('config');checkStatus('api');checkStatus('config');restoreLastAggregateResult();
+ updateCurrent('api');updateCurrent('config');checkStatus('api');checkStatus('config');
  e=$('copyDirect');if(e)e.addEventListener('click',function(){var a=$('direct'),v=a?a.textContent.trim():'';if(!v)return;var done=function(){toast('已复制到剪贴板');writeLocal('CF_SUB_LAST_AGG_URL',v);showAggregateQr(v);};if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(v).then(done).catch(function(){alert('复制失败，请手动复制')});else{var ta=document.createElement('textarea');ta.value=v;document.body.appendChild(ta);ta.select();try{document.execCommand('copy');done()}catch(err){alert('复制失败，请手动复制')}ta.remove()}});
  var rm=$('aggregateResultModal');if(rm){rm.addEventListener('click',function(ev){if(ev.target===rm)closeAggregateResult()});document.addEventListener('keydown',function(ev){if(ev.key==='Escape')closeAggregateResult()})}
  e=$('aggregateResultClose');if(e)e.addEventListener('click',function(){closeAggregateResult()});
@@ -460,7 +460,10 @@ async function handleRequest(request, env) {
         }
 
         let tokenData = null;
-        if (env.KV && publicToken) tokenData = await getToken(env, publicToken);
+        if (env.KV && publicToken) {
+            tokenData = await getToken(env, publicToken);
+            if (!tokenData) tokenData = await findTokenRecord(env, publicToken);
+        }
 
         // SUBAPI 内部转换入口：允许 fakeToken + sourceToken 访问。
         // 这是订阅转换的中间数据入口，sourceToken 决定实际使用哪一条公开 URL 的配置。
@@ -473,19 +476,26 @@ async function handleRequest(request, env) {
             effectiveTokenData = await getToken(env, conversionSourceToken);
         }
 
-        // 只有真实生成的订阅 token 或内部 fakeToken 才是有效入口；其余路径一律回到公开首页。
-        if (!tokenData && !isFakeTokenRequest && url.pathname !== '/') {
-            return Response.redirect(url.origin + '/', 302);
-        }
-
         // ==================== 公开首页 ====================
-        if (!tokenData && !isFakeTokenRequest && url.pathname === '/') {
+        // 只有真正没有 token 的根路径才显示主页。
+        // 即使 /token 暂时读取不到，也绝不能把它错误重定向成首页，从而形成循环。
+        if (!publicToken && !isFakeTokenRequest && url.pathname === '/') {
             const page = await renderSubUIHome(request, url, env);
-            const html = page;
-            return new Response(html, {
+            return new Response(page, {
                 headers: {
                     'Content-Type': 'text/html; charset=UTF-8',
                     'Cache-Control': 'no-store',
+                }
+            });
+        }
+
+        if (publicToken && !tokenData && !isFakeTokenRequest) {
+            return new Response(`<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>订阅链接加载中</title><meta http-equiv="refresh" content="2"></head><body style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;text-align:center;padding:20vh 20px;color:#555"><h2>订阅链接加载中</h2><p>正在读取聚合订阅，请稍候…</p><p style="font-size:13px;color:#999">${escapeHTML(publicToken)}</p></body></html>`, {
+                status: 503,
+                headers: {
+                    'Content-Type': 'text/html; charset=UTF-8',
+                    'Cache-Control': 'no-store, no-cache, must-revalidate',
+                    'Retry-After': '2'
                 }
             });
         }
@@ -679,6 +689,27 @@ async function getToken(env, token) {
             await new Promise(resolve => setTimeout(resolve, 150 * (attempt + 1)));
         }
     }
+    return null;
+}
+
+async function findTokenRecord(env, token) {
+    if (!env.KV || !token) return null;
+    const cleanToken = String(token).trim().replace(/^\/+|\/+$/g, '');
+    if (!cleanToken) return null;
+    // 直接读取失败时再扫描 URL: 键，避免边缘节点读取延迟或编码差异导致误判成首页。
+    try {
+        let cursor;
+        do {
+            const page = await env.KV.list({
+                prefix: URL_PREFIX,
+                limit: 1000,
+                ...(cursor ? { cursor } : {})
+            });
+            const exact = page.keys.find(k => k.name === `${URL_PREFIX}${cleanToken}`);
+            if (exact) return await getToken(env, cleanToken);
+            cursor = page.list_complete ? undefined : page.cursor;
+        } while (cursor);
+    } catch (e) {}
     return null;
 }
 
