@@ -287,7 +287,88 @@ function initAdmin(){
 function showQrcode(button){var q=document.getElementById('current-qrcode');if(!q||typeof QRCode==='undefined')return;button.closest('.link-item').appendChild(q);q.innerHTML='';q.style.display='block';new QRCode(q,{text:button.dataset.url,width:220,height:220,colorDark:'#000000',colorLight:'#ffffff',correctLevel:QRCode.CorrectLevel.Q})}
 function hideQrcode(button){var q=document.getElementById('current-qrcode');if(q){q.style.display='none';q.innerHTML=''}button.classList.add('hidden');var c=button.closest('.actions').querySelector('.copy-btn');if(c)c.classList.remove('hidden')}
 function copySubscription(button){navigator.clipboard.writeText(button.dataset.url).then(function(){toast('已复制到剪贴板');showQrcode(button);button.classList.add('hidden');var h=button.closest('.actions').querySelector('.hide-btn');if(h)h.classList.remove('hidden')}).catch(function(){toast('复制失败，请手动复制')})}
-function initGuest(){document.querySelectorAll('.copy-btn').forEach(function(b){b.addEventListener('click',function(){copySubscription(b)})});document.querySelectorAll('.hide-btn').forEach(function(b){b.addEventListener('click',function(){hideQrcode(b)})})}
+function guestToast(message){
+ var el=$('copyNotice');
+ if(!el)return;
+ el.textContent=message;
+ el.style.display='block';
+ clearTimeout(window.__cfGuestToastTimer);
+ window.__cfGuestToastTimer=setTimeout(function(){el.style.display='none'},1500);
+}
+function guestCopy(button){
+ var value=button.dataset.url||'';
+ function done(){guestToast('已复制');showGuestQr(button)}
+ function fail(){guestToast('复制失败，请手动复制')}
+ if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(value).then(done).catch(fail);return}
+ var ta=document.createElement('textarea');ta.value=value;ta.style.position='fixed';ta.style.opacity='0';document.body.appendChild(ta);ta.focus();ta.select();
+ try{document.execCommand('copy');done()}catch(e){fail()}finally{ta.remove()}
+}
+function showGuestQr(button){
+ var item=button.closest('.guest-link-item');
+ var qr=item&&item.querySelector('.guest-qrcode');
+ var copy=item&&item.querySelector('.guest-copy-btn');
+ var hide=item&&item.querySelector('.guest-hide-btn');
+ if(!item||!qr)return;
+ document.querySelectorAll('.guest-link-item').forEach(function(other){
+  if(other===item)return;
+  var oq=other.querySelector('.guest-qrcode'),oc=other.querySelector('.guest-copy-btn'),oh=other.querySelector('.guest-hide-btn');
+  if(oq){oq.style.display='none';oq.innerHTML=''}
+  if(oc)oc.style.display='inline-flex';
+  if(oh)oh.style.display='none';
+ });
+ qr.innerHTML='';qr.style.display='block';
+ if(copy)copy.style.display='none';
+ if(hide)hide.style.display='inline-flex';
+ if(window.QRCode){try{new QRCode(qr,{text:button.dataset.url,width:220,height:220,colorDark:'#000000',colorLight:'#ffffff',correctLevel:QRCode.CorrectLevel.Q})}catch(e){}}
+}
+function hideGuestQr(button){
+ var item=button.closest('.guest-link-item');if(!item)return;
+ var qr=item.querySelector('.guest-qrcode'),copy=item.querySelector('.guest-copy-btn'),hide=item.querySelector('.guest-hide-btn');
+ if(qr){qr.style.display='none';qr.innerHTML=''}
+ if(copy)copy.style.display='inline-flex';
+ if(hide)hide.style.display='none';
+}
+function closeGuestDestroyModal(){var m=$('guestDestroyModal');if(m)m.style.display='none';var i=$('guestDestroyKey');if(i)i.value=''}
+function openGuestDestroyModal(){var m=$('guestDestroyModal');if(m)m.style.display='flex';var i=$('guestDestroyKey');if(i){i.value='';setTimeout(function(){i.focus()},0)}}
+function submitGuestDestroy(token,key){
+ var button=document.querySelector('.guest-head-destroy');
+ if(button){button.disabled=true;button.textContent='销毁中…'}
+ fetch('/api/destroy',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},cache:'no-store',body:JSON.stringify({token:token,key:String(key||'')})})
+ .then(function(r){return r.json().then(function(d){return {r:r,d:d}})})
+ .then(function(x){
+  if(!x.r.ok||!x.d.ok)throw new Error(x.d.error||'销毁失败');
+  closeGuestDestroyModal();
+  guestToast('链接已销毁，该链接已失效');
+  setTimeout(function(){location.href='/'},900);
+ })
+ .catch(function(err){
+  if(button){button.disabled=false;button.textContent='销毁本链接'}
+  guestToast(err.message||'销毁失败');
+ });
+}
+function initGuest(){
+ var shell=document.querySelector('.guest-shell');
+ if(!shell)return;
+ var token=String(shell.dataset.token||'').trim();
+ var keyRequired=shell.dataset.keyRequired==='true';
+ document.querySelectorAll('.guest-copy-btn').forEach(function(b){b.addEventListener('click',function(){guestCopy(b)})});
+ document.querySelectorAll('.guest-hide-btn').forEach(function(b){b.addEventListener('click',function(){hideGuestQr(b)})});
+ var destroyButton=document.querySelector('.guest-head-destroy');
+ if(destroyButton){destroyButton.addEventListener('click',function(){
+  if(keyRequired){openGuestDestroyModal();return}
+  if(!confirm('销毁后此聚合订阅链接将立即失效且无法恢复，确定要销毁吗？'))return;
+  submitGuestDestroy(token,'');
+ })}
+ var modal=$('guestDestroyModal');
+ if(modal)modal.addEventListener('click',function(e){if(e.target===modal)closeGuestDestroyModal()});
+ var cancel=$('guestDestroyCancel');if(cancel)cancel.addEventListener('click',closeGuestDestroyModal);
+ var confirmButton=$('guestDestroyConfirm');if(confirmButton)confirmButton.addEventListener('click',function(){
+  var input=$('guestDestroyKey'),key=input?input.value.trim():'';
+  if(!key){guestToast('请输入销毁密钥');if(input)input.focus();return}
+  submitGuestDestroy(token,key);
+ });
+ document.addEventListener('keydown',function(e){if(e.key==='Escape')closeGuestDestroyModal()});
+}
 
 function boot(){
  if($('apiPicker')||$('generate'))initPublic();
@@ -2009,9 +2090,9 @@ function renderGuestPage(url, guest, guestName = '', backend = null, status = nu
 </head>
 <body>
 <div id="copyNotice" class="toast"></div>
-<main class="page app-shell guest-shell">
+<main class="page app-shell guest-shell" data-token="${escapeHTML(String(guest||''))}" data-key-required="${destroyKeyRequired?'true':'false'}">
 <header class="header guest-header">
-<div class="guest-head-row"><div><h1 class="title">聚合订阅链接</h1><div class="subtitle">复制订阅链接可同时生成二维码</div></div><div class="guest-head-copy"><button type="button" class="button guest-head-destroy" onclick="destroyGuestLink()">销毁本链接</button></div></div>
+<div class="guest-head-row"><div><h1 class="title">聚合订阅链接</h1><div class="subtitle">复制订阅链接可同时生成二维码</div></div><div class="guest-head-copy"><button type="button" class="button guest-head-destroy">销毁本链接</button></div></div>
 <div class="guest-destroy-note">销毁后此聚合订阅链接将立即失效且无法恢复。${destroyKeyRequired ? '本链接已设置销毁密钥。' : '本链接未设置销毁密钥，确认后即可销毁。'}</div>
 </header>
 <section class="panel">
@@ -2020,7 +2101,7 @@ function renderGuestPage(url, guest, guestName = '', backend = null, status = nu
 ${links.map(([label,value])=>`<div class="guest-link-item">
 <div class="guest-link-head"><div class="guest-link-label">${escapeHTML(label)}</div></div>
 <a class="guest-link-url" href="${escapeHTML(value)}" target="_blank" rel="noopener">${escapeHTML(value)}</a>
-<div class="guest-actions"><button type="button" class="button guest-copy-btn" data-url="${escapeHTML(value)}" onclick="copyGuest(this)">复制</button><button type="button" class="button secondary guest-hide-btn" onclick="hideGuestQr(this)">隐藏</button></div>
+<div class="guest-actions"><button type="button" class="button guest-copy-btn" data-url="${escapeHTML(value)}" >复制</button><button type="button" class="button secondary guest-hide-btn" >隐藏</button></div>
 <div class="guest-qrcode"></div>
 </div>`).join('')}
 </div>
@@ -2043,82 +2124,11 @@ ${links.map(([label,value])=>`<div class="guest-link-item">
 </div>
 </section>
 </main>
-<div id="guestDestroyModal" class="guest-destroy-modal" onclick="if(event.target===this)closeGuestDestroyModal()"><div class="guest-destroy-dialog"><h3>销毁本链接</h3><p>销毁后此聚合订阅链接将立即失效，原订阅地址及其生成内容都将无法继续使用，且此操作无法恢复。
-请输入本链接的销毁密钥。</p><input id="guestDestroyKey" class="guest-destroy-input" type="password" autocomplete="current-password" placeholder="请输入销毁密钥"><div class="guest-destroy-actions"><button type="button" class="button secondary guest-destroy-cancel" onclick="closeGuestDestroyModal()">取消</button><button type="button" class="button guest-destroy-confirm" onclick="confirmGuestDestroy()">确认销毁</button></div></div></div>
-<script>
-let guestToastTimer;
-const guestDestroyKeyRequired=${destroyKeyRequired?'true':'false'};
-const guestDestroyToken=decodeURIComponent(String(location.pathname||'').replace(/^\/+|\/+$/g,''));
-function closeGuestDestroyModal(){const m=document.getElementById('guestDestroyModal');if(m)m.style.display='none';const i=document.getElementById('guestDestroyKey');if(i)i.value='';}
-function openGuestDestroyModal(){const m=document.getElementById('guestDestroyModal');if(m)m.style.display='flex';const i=document.getElementById('guestDestroyKey');if(i){i.value='';setTimeout(()=>i.focus(),0)}}
-function submitGuestDestroy(key){
- const button=document.querySelector('.guest-head-destroy');if(button){button.disabled=true;button.textContent='销毁中…';}
- fetch('/api/destroy',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},cache:'no-store',body:JSON.stringify({token:guestDestroyToken,key:String(key||'')})})
- .then(r=>r.json().then(d=>({r:r,d:d})))
- .then(x=>{
-   if(!x.r.ok||!x.d.ok)throw new Error(x.d.error||'销毁失败');
-   closeGuestDestroyModal();
-   guestToast('链接已销毁，该链接已失效');
-   setTimeout(()=>{location.href='/';},900);
- })
- .catch(err=>{
-   if(button){button.disabled=false;button.textContent='销毁本链接';}
-   guestToast(err.message||'销毁失败');
- });
-}
-function destroyGuestLink(){
- if(guestDestroyKeyRequired){openGuestDestroyModal();return;}
- if(!confirm('销毁后此聚合订阅链接将立即失效且无法恢复，确定要销毁吗？'))return;
- submitGuestDestroy('');
-}
-function confirmGuestDestroy(){
- const i=document.getElementById('guestDestroyKey');const key=i?i.value.trim():'';
- if(!key){guestToast('请输入销毁密钥');if(i)i.focus();return;}
- submitGuestDestroy(key);
-}
+<div id="guestDestroyModal" class="guest-destroy-modal"><div class="guest-destroy-dialog"><h3>销毁本链接</h3><p>销毁后此聚合订阅链接将立即失效，原订阅地址及其生成内容都将无法继续使用，且此操作无法恢复。
+请输入本链接的销毁密钥。</p><input id="guestDestroyKey" class="guest-destroy-input" type="password" autocomplete="current-password" placeholder="请输入销毁密钥"><div class="guest-destroy-actions"><button id="guestDestroyCancel" type="button" class="button secondary guest-destroy-cancel">取消</button><button id="guestDestroyConfirm" type="button" class="button guest-destroy-confirm">确认销毁</button></div></div></div>
+<script src="https://cdn.jsdelivr.net/npm/@keeex/qrcodejs-kx@1.0.2/qrcode.min.js"></script>
+<script src="/__cfsubs.js" defer></script>
 
-function guestToast(message){
- const el=document.getElementById('copyNotice');
- el.textContent=message;el.style.display='block';
- clearTimeout(guestToastTimer);guestToastTimer=setTimeout(()=>el.style.display='none',1500);
-}
-function copyGuest(button){
- const value=button.dataset.url||'';
- const done=()=>{guestToast('已复制到剪贴板');showGuestQr(button);};
- if(navigator.clipboard&&navigator.clipboard.writeText) navigator.clipboard.writeText(value).then(done).catch(()=>guestToast('复制失败，请手动复制'));
- else {const ta=document.createElement('textarea');ta.value=value;document.body.appendChild(ta);ta.select();try{document.execCommand('copy');done();}catch(e){guestToast('复制失败，请手动复制')}ta.remove();}
-}
-function showGuestQr(button){
- const item=button.closest('.guest-link-item');
- const qr=item?item.querySelector('.guest-qrcode'):null;
- const copy=item?item.querySelector('.guest-copy-btn'):null;
- const hide=item?item.querySelector('.guest-hide-btn'):null;
- if(!item||!qr)return;
- document.querySelectorAll('.guest-link-item').forEach(function(other){
-   if(other===item)return;
-   const oq=other.querySelector('.guest-qrcode');
-   const oc=other.querySelector('.guest-copy-btn');
-   const oh=other.querySelector('.guest-hide-btn');
-   if(oq){oq.style.display='none';oq.innerHTML='';}
-   if(oc)oc.style.display='inline-flex';
-   if(oh)oh.style.display='none';
- });
- qr.innerHTML='';qr.style.display='block';
- if(copy)copy.style.display='none';
- if(hide)hide.style.display='inline-flex';
- if(window.QRCode)new QRCode(qr,{text:button.dataset.url,width:220,height:220,colorDark:'#000000',colorLight:'#ffffff',correctLevel:QRCode.CorrectLevel.Q});
-}
-function hideGuestQr(button){
- const item=button.closest('.guest-link-item');
- if(!item)return;
- const qr=item.querySelector('.guest-qrcode');
- const copy=item.querySelector('.guest-copy-btn');
- const hide=item.querySelector('.guest-hide-btn');
- if(qr){qr.style.display='none';qr.innerHTML='';}
- if(copy)copy.style.display='inline-flex';
- if(hide)hide.style.display='none';
-}
-</script>
 </body>
 </html>`;
 }
