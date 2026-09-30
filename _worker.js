@@ -53,7 +53,6 @@ let fakeCode = '';
 
 const SUB_PREFIX = 'SUB:';
 const URL_PREFIX = 'URL:';
-const AGG_PREFIX = 'AGG:';
 const ID_CHARS = 'ABCDEFGHJKMNPQRSTWXYZabcdefghijkmnpqrstwxyz2345678';
 const DEFAULT_ADMIN_PATH = 'admin';
 
@@ -144,50 +143,6 @@ function saveCustom(kind){
  if(api){PUBLIC_STATE.apiUrl=value;PUBLIC_STATE.apiCustom=true;PUBLIC_STATE.apiId='';$('apiPicker').value='__custom'}else{PUBLIC_STATE.configUrl=value;PUBLIC_STATE.configCustom=true;PUBLIC_STATE.configId='';$('configPicker').value='__custom'}
  var modal=$(api?'customApiModal':'customConfigModal');if(modal)modal.style.display='none';updateCurrent(kind);checkStatus(kind)
 }
-function readLocal(key){try{return localStorage.getItem(key)||''}catch(e){return ''}}
-function writeLocal(key,value){try{localStorage.setItem(key,value||'')}catch(e){}}
-function removeLocal(key){try{localStorage.removeItem(key)}catch(e){}}
-function clearAggregateResult(resetDismissed){
- var q=$('aggregateResultQr');
- if(q){q.style.display='none';q.innerHTML=''}
- var modal=$('aggregateResultModal');
- if(modal)modal.classList.remove('qr-visible');
- if(resetDismissed)removeLocal('CF_SUB_AGG_DISMISSED');
-}
-function showAggregateResult(value){
- value=String(value||'').trim();
- if(!value)return;
- var direct=$('direct');if(direct){direct.textContent=value;direct.href=value}
- clearAggregateResult(true);
- var modal=$('aggregateResultModal');if(modal)modal.style.display='flex';
- writeLocal('CF_SUB_AGG_DISMISSED','');
- writeLocal('CF_SUB_LAST_AGG_URL',value);
- setTimeout(function(){showAggregateQr(value)},0);
-}
-function closeAggregateResult(){
- var modal=$('aggregateResultModal');
- if(modal)modal.style.display='none';
- clearAggregateResult(false);
- writeLocal('CF_SUB_AGG_DISMISSED','1');
-}
-function showAggregateQr(value){
- var q=$('aggregateResultQr');
- var modal=$('aggregateResultModal');
- if(!q)return;
- q.style.display='block';
- if(modal)modal.classList.add('qr-visible');
- if(!window.QRCode){
-   q.innerHTML='<div style="font-size:12px;color:#888;padding:8px 4px">二维码加载中…</div>';
-   return;
- }
- q.innerHTML='';
- new QRCode(q,{text:value,width:220,height:220,colorDark:'#000000',colorLight:'#ffffff',correctLevel:QRCode.CorrectLevel.Q});
-}
-function restoreLastAggregateResult(){
- if(readLocal('CF_SUB_AGG_DISMISSED')==='1')return;
- var value=readLocal('CF_SUB_LAST_AGG_URL')||window.__CF_SUB_LAST_URL||'';
- if(value)showAggregateResult(value);
-}
 function initPublic(){
  if(window.__CF_SUBS_PUBLIC_READY)return;window.__CF_SUBS_PUBLIC_READY=true;
  var ap=$('apiPicker'),cp=$('configPicker');
@@ -197,19 +152,20 @@ function initPublic(){
  e=$('cancelApiCustom');if(e)e.addEventListener('click',function(){cancelCustom('api')});e=$('cancelConfigCustom');if(e)e.addEventListener('click',function(){cancelCustom('config')});
  e=$('saveApiCustom');if(e)e.addEventListener('click',function(){saveCustom('api')});e=$('saveConfigCustom');if(e)e.addEventListener('click',function(){saveCustom('config')});
  updateCurrent('api');updateCurrent('config');checkStatus('api');checkStatus('config');
- e=$('copyDirect');if(e)e.addEventListener('click',function(){var a=$('direct'),v=a?a.textContent.trim():'';if(!v)return;var done=function(){toast('已复制到剪贴板');writeLocal('CF_SUB_LAST_AGG_URL',v);showAggregateQr(v);};if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(v).then(done).catch(function(){alert('复制失败，请手动复制')});else{var ta=document.createElement('textarea');ta.value=v;document.body.appendChild(ta);ta.select();try{document.execCommand('copy');done()}catch(err){alert('复制失败，请手动复制')}ta.remove()}});
- var rm=$('aggregateResultModal');if(rm){rm.addEventListener('click',function(ev){if(ev.target===rm)closeAggregateResult()});document.addEventListener('keydown',function(ev){if(ev.key==='Escape')closeAggregateResult()})}
- e=$('aggregateResultClose');if(e)e.addEventListener('click',function(){closeAggregateResult()});
+ var currentGeneratedUrl='';
+ function resetAggregateModal(){var rm=$('aggregateResultModal'),q=$('aggregateResultQr'),direct=$('direct');if(rm)rm.style.display='none';if(q){q.innerHTML='';q.style.display='none'}if(direct){direct.textContent='';direct.href='#'}}
+ function openAggregateModal(value){var rm=$('aggregateResultModal'),q=$('aggregateResultQr');if(!rm)return;var direct=$('direct');if(direct){direct.textContent=value;direct.href=value}if(q&&window.QRCode){q.innerHTML='';q.style.display='block';new QRCode(q,{text:value,width:220,height:220,colorDark:'#000000',colorLight:'#ffffff',correctLevel:QRCode.CorrectLevel.Q})}rm.style.display='flex'}
+ e=$('copyDirect');if(e)e.addEventListener('click',function(){var a=$('direct'),v=a?a.textContent.trim():'';if(!v)return;var done=function(){toast('已复制')};if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(v).then(done).catch(function(){alert('复制失败，请手动复制')});else{var ta=document.createElement('textarea');ta.value=v;document.body.appendChild(ta);ta.select();try{document.execCommand('copy');done()}catch(err){alert('复制失败，请手动复制')}ta.remove()}});
+ var closeAggregate=$('closeAggregateResult');if(closeAggregate)closeAggregate.addEventListener('click',resetAggregateModal);
+ var rm=$('aggregateResultModal');if(rm){rm.addEventListener('click',function(ev){if(ev.target===rm)resetAggregateModal()});document.addEventListener('keydown',function(ev){if(ev.key==='Escape')resetAggregateModal()})}
  e=$('generate');if(e)e.addEventListener('click',function(){
-  var existingToken=readLocal('CF_SUB_LAST_AGG_TOKEN')||window.__CF_SUB_LAST_TOKEN||'';
-  var existingUrl=readLocal('CF_SUB_LAST_AGG_URL')||window.__CF_SUB_LAST_URL||'';
-  // 同一访客只允许一个聚合订阅 URL。已经生成过就直接打开现有结果，不再次创建。
-  if(existingToken&&existingUrl){showAggregateResult(existingUrl);return}
+  if(currentGeneratedUrl){openAggregateModal(currentGeneratedUrl);return}
   var sources=$('sources')?$('sources').value.trim():'',a=$('apiPicker'),c=$('configPicker');if(!a||!c)return;
-  var apiCustom=a.value==='__custom',configCustom=c.value==='__custom',apiValue=currentValue('api'),configValue=currentValue('config');if(!sources)return alert('请输入订阅链接');if(!apiValue)return alert('请选择订阅转换后端');if(!configValue)return alert('请选择订阅转换规则');
-  var body={sources:sources,apiIds:apiCustom?[]:[currentId('api')],apiCustom:apiCustom,apiUrl:apiCustom?apiValue:'',configIds:configCustom?[]:[currentId('config')],configCustom:configCustom,configUrl:configCustom?configValue:'',noAds:($('noAds')?$('noAds').value:'').trim(),reuseToken:existingToken};
+  var apiCustom=a.value==='__custom',configCustom=c.value==='__custom',apiValue=currentValue('api'),configValue=currentValue('config');
+  if(!sources)return alert('请输入订阅链接');if(!apiValue)return alert('请选择订阅转换后端');if(!configValue)return alert('请选择订阅转换规则');
+  var body={sources:sources,apiIds:apiCustom?[]:[currentId('api')],apiCustom:apiCustom,apiUrl:apiCustom?apiValue:'',configIds:configCustom?[]:[currentId('config')],configCustom:configCustom,configUrl:configCustom?configValue:'',noAds:($('noAds')?$('noAds').value:'').trim()};
   var button=$('generate');button.disabled=true;
-  fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},cache:'no-store',body:JSON.stringify(body)}).then(function(r){return r.json().then(function(d){return {r:r,d:d}})}).then(function(x){if(!x.r.ok||!x.d.ok)throw new Error(x.d.error||'生成失败');writeLocal('CF_SUB_LAST_AGG_TOKEN',x.d.token||((x.d.url&&x.d.url.url)||''));showAggregateResult(x.d.subscription_url);}).catch(function(err){alert(err.message||'生成失败')}).finally(function(){button.disabled=false})
+  fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},cache:'no-store',body:JSON.stringify(body)}).then(function(r){return r.json().then(function(d){return {r:r,d:d}})}).then(function(x){if(!x.r.ok||!x.d.ok)throw new Error(x.d.error||'生成失败');currentGeneratedUrl=x.d.subscription_url;openAggregateModal(currentGeneratedUrl)}).catch(function(err){alert(err.message||'生成失败')}).finally(function(){button.disabled=false})
  })
 }
 
@@ -449,21 +405,11 @@ async function handleRequest(request, env) {
         }
 
         // ==================== 解析公开订阅 URL ====================
-        let publicToken = String(queryToken || '').trim();
-        if (publicToken) {
-            try { publicToken = decodeURIComponent(publicToken); } catch (e) {}
-        }
-        publicToken = publicToken.replace(/^\/+|\/+$/g, '');
-        if (!publicToken && url.pathname !== '/') {
-            try { publicToken = decodeURIComponent(url.pathname); } catch (e) { publicToken = url.pathname; }
-            publicToken = String(publicToken || '').replace(/^\/+|\/+$/g, '');
-        }
+        let publicToken = queryToken;
+        if (!publicToken && url.pathname !== '/') publicToken = decodeURIComponent(url.pathname.slice(1));
 
         let tokenData = null;
-        if (env.KV && publicToken) {
-            tokenData = await getToken(env, publicToken);
-            if (!tokenData) tokenData = await findTokenRecord(env, publicToken);
-        }
+        if (env.KV && publicToken) tokenData = await getToken(env, publicToken);
 
         // SUBAPI 内部转换入口：允许 fakeToken + sourceToken 访问。
         // 这是订阅转换的中间数据入口，sourceToken 决定实际使用哪一条公开 URL 的配置。
@@ -476,26 +422,19 @@ async function handleRequest(request, env) {
             effectiveTokenData = await getToken(env, conversionSourceToken);
         }
 
+        // 只有真实生成的订阅 token 或内部 fakeToken 才是有效入口；其余路径一律回到公开首页。
+        if (!tokenData && !isFakeTokenRequest && url.pathname !== '/') {
+            return Response.redirect(url.origin + '/', 302);
+        }
+
         // ==================== 公开首页 ====================
-        // 只有真正没有 token 的根路径才显示主页。
-        // 即使 /token 暂时读取不到，也绝不能把它错误重定向成首页，从而形成循环。
-        if (!publicToken && !isFakeTokenRequest && url.pathname === '/') {
+        if (!tokenData && !isFakeTokenRequest && url.pathname === '/') {
             const page = await renderSubUIHome(request, url, env);
-            return new Response(page, {
+            const html = page;
+            return new Response(html, {
                 headers: {
                     'Content-Type': 'text/html; charset=UTF-8',
                     'Cache-Control': 'no-store',
-                }
-            });
-        }
-
-        if (publicToken && !tokenData && !isFakeTokenRequest) {
-            return new Response(`<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>订阅链接加载中</title><meta http-equiv="refresh" content="2"></head><body style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;text-align:center;padding:20vh 20px;color:#555"><h2>订阅链接加载中</h2><p>正在读取聚合订阅，请稍候…</p><p style="font-size:13px;color:#999">${escapeHTML(publicToken)}</p></body></html>`, {
-                status: 503,
-                headers: {
-                    'Content-Type': 'text/html; charset=UTF-8',
-                    'Cache-Control': 'no-store, no-cache, must-revalidate',
-                    'Retry-After': '2'
                 }
             });
         }
@@ -648,69 +587,11 @@ async function getSub(env, id) {
 
 async function getToken(env, token) {
     if (!env.KV || !token) return null;
-    const cleanToken = String(token).trim().replace(/^\/+|\/+$/g, '');
-    if (!cleanToken) return null;
-
-    for (let attempt = 0; attempt < 6; attempt++) {
-        let item = null;
-
-        // 先读取 URL 记录本身。不要让共享 AGG 数据读取失败影响 URL 本身。
-        try {
-            const raw = await env.KV.get(`${URL_PREFIX}${cleanToken}`);
-            if (raw) {
-                try {
-                    item = JSON.parse(raw);
-                } catch (e) {
-                    item = null;
-                }
-            }
-        } catch (e) {}
-
-        if (item && typeof item === 'object') {
-            const aggId = String(item.aggId || '').trim();
-            if (aggId) {
-                try {
-                    const rawShared = await env.KV.get(`${AGG_PREFIX}${aggId}`);
-                    if (rawShared) {
-                        try {
-                            const shared = JSON.parse(rawShared);
-                            if (shared && typeof shared === 'object') {
-                                return { ...shared, ...item, aggId };
-                            }
-                        } catch (e) {}
-                    }
-                } catch (e) {}
-            }
-            // 无论 AGG 是否暂时可读，URL 本身都必须继续作为有效入口。
-            return item;
-        }
-
-        if (attempt < 5) {
-            await new Promise(resolve => setTimeout(resolve, 150 * (attempt + 1)));
-        }
-    }
-    return null;
-}
-
-async function findTokenRecord(env, token) {
-    if (!env.KV || !token) return null;
-    const cleanToken = String(token).trim().replace(/^\/+|\/+$/g, '');
-    if (!cleanToken) return null;
-    // 直接读取失败时再扫描 URL: 键，避免边缘节点读取延迟或编码差异导致误判成首页。
     try {
-        let cursor;
-        do {
-            const page = await env.KV.list({
-                prefix: URL_PREFIX,
-                limit: 1000,
-                ...(cursor ? { cursor } : {})
-            });
-            const exact = page.keys.find(k => k.name === `${URL_PREFIX}${cleanToken}`);
-            if (exact) return await getToken(env, cleanToken);
-            cursor = page.list_complete ? undefined : page.cursor;
-        } while (cursor);
-    } catch (e) {}
-    return null;
+        return await env.KV.get(`${URL_PREFIX}${token}`, 'json');
+    } catch (e) {
+        return null;
+    }
 }
 
 async function listSubs(env) {
@@ -1057,29 +938,6 @@ function normalizeProviderList(input) {
     })).filter(x=>x.url);
 }
 
-function getCookieValue(request,name){
-    const cookie=request.headers.get('Cookie')||'';
-    for(const part of cookie.split(';')){
-        const item=part.trim(), i=item.indexOf('=');
-        if(i<0) continue;
-        if(item.slice(0,i)===name) return decodeURIComponent(item.slice(i+1));
-    }
-    return '';
-}
-function readPublicPreferences(request){
-    const raw=getCookieValue(request,'CF_SUB_PREFS');
-    if(!raw) return null;
-    try{
-        const value=JSON.parse(raw);
-        return value && typeof value==='object' ? value : null;
-    }catch(e){ return null; }
-}
-function buildPublicPreferencesCookie(value){
-    const encoded=encodeURIComponent(JSON.stringify(value));
-    if(encoded.length>3600) return '';
-    return `CF_SUB_PREFS=${encoded}; Max-Age=2592000; Path=/; SameSite=Lax; Secure`;
-}
-
 async function getSelectedBackends(env, tokenData, runtime) {
     // 新生成的公开 URL：优先、并且固定使用 KV 中保存的实际后端。
     if (tokenData?.type === 'sub-ui') {
@@ -1126,22 +984,6 @@ async function getSelectedBackends(env, tokenData, runtime) {
     return pairs;
 }
 
-async function makeAggregateDataId(profile) {
-    const payload = JSON.stringify({
-        v: 1,
-        sources: Array.isArray(profile.sources) ? profile.sources : [],
-        backends: Array.isArray(profile.backends) ? profile.backends : [],
-        noAds: String(profile.noAds || '')
-    });
-    const digest = await crypto.subtle.digest(
-        'SHA-256',
-        new TextEncoder().encode(payload)
-    );
-    return Array.from(new Uint8Array(digest))
-        .map(b => b.toString(16).padStart(2, '0'))
-        .join('');
-}
-
 async function handlePublicGenerate(request,env,requestUrl){
     if(!env.KV) return jsonResponse({ok:false,error:'未绑定 KV'},500);
     try{
@@ -1185,68 +1027,35 @@ async function handlePublicGenerate(request,env,requestUrl){
         if(!backends.length) return jsonResponse({ok:false,error:'没有有效的订阅转换后端与规则组合'},400);
 
         const noAds=String(data.noAds||'').trim().slice(0,5000);
-        const profile={sources,backends,noAds};
-        const aggId=await makeAggregateDataId(profile);
-
-        // 同一访客在当前浏览器中始终复用同一个聚合订阅 URL。
-        // 优先读取请求中显式带回的 token，其次读取 CF_SUB_PREFS Cookie 中保存的上一次 token。
-        const publicPrefs=readPublicPreferences(request)||{};
-        const cookieToken=normalizeToken(publicPrefs.lastToken||'');
-
-        // 共享聚合数据只保存一份。不同 URL 只保存各自的 token + aggId。
-        const sharedKey=`${AGG_PREFIX}${aggId}`;
-        const sharedData={
-            type:'sub-ui',
-            sources,
-            backends,
-            noAds,
-            updatedAt:new Date().toISOString()
-        };
-        if(!await env.KV.get(sharedKey)) {
-            await env.KV.put(sharedKey,JSON.stringify(sharedData));
-        }
-
-        // 浏览器带回上一次生成的 token 时，如果配置完全一致，就复用原 URL，
-        // 避免访客误操作后再次生成同一个订阅时产生一堆重复 URL。
-        const requestedReuseToken=normalizeToken(data.reuseToken||'');
-        const reuseToken=requestedReuseToken || cookieToken;
-        let existing=null;
-        let token='';
-        if(reuseToken){
-            existing=await getToken(env,reuseToken);
-            if(existing && existing.type==='sub-ui'){
-                // 访客一旦拥有聚合订阅 URL，后续再次点击创建按钮时直接复用这个 URL。
-                // 只更新它所引用的共享数据，不再创建第二个 URL。
-                token=reuseToken;
-            }
-        }
-        if(!token) token=await makeRandomToken(env,8);
-
+        const token=await makeRandomToken(env,8);
         const name='订阅链接';
-        const subscriptionUrl=`${requestUrl.origin}/${encodeURIComponent(token)}`;
-        const now=new Date().toISOString();
+        // 每个公开 URL 都把本次生成时实际使用的 SUBAPI / SUBCONFIG 固化进自己的 KV JSON。
+        // 以后访问 /token、/token?clash、/token?sb 等入口时，只读取这里保存的值。
+        const primaryBackend=backends[0];
         const item={
             url:token,
             path:`/${token}`,
-            subscriptionUrl,
+            subscriptionUrl:`${requestUrl.origin}/${encodeURIComponent(token)}`,
             name,
-            aggId,
+            sources,
+            subApiIds:selectedApis.map(x=>x.id),
+            subConfigIds:selectedConfigs.map(x=>x.id),
+            subApi:apiEntries[0]?.url||'',
+            subApiName:apiEntries[0]?.name||'',
+            subConfig:configEntries[0]?.url||'',
+            subConfigName:configEntries[0]?.name||'',
+            backend:primaryBackend,
+            backends,
+            noAds,
             target:'auto',
-            createdAt:existing?.createdAt || now,
-            updatedAt:now,
+            createdAt:new Date().toISOString(),
+            updatedAt:new Date().toISOString(),
             type:'sub-ui'
         };
         await env.KV.put(`${URL_PREFIX}${token}`,JSON.stringify(item));
 
-        const prefs={
-            apiIds:selectedApis.map(x=>x.id),apiCustom,apiUrl:apiCustom?apiUrl:'',
-            configIds:selectedConfigs.map(x=>x.id),configCustom,configUrl:configCustom?configUrl:'',noAds,
-            lastToken:token,
-            lastSubscriptionUrl:subscriptionUrl
-        };
-        const cookie=buildPublicPreferencesCookie(prefs);
-        const headers=cookie?{'Set-Cookie':cookie}:{ };
-        return jsonResponse({ok:true,url:item,token,subscription_url:subscriptionUrl},200,headers);
+        const subscriptionUrl=`${requestUrl.origin}/${encodeURIComponent(token)}`;
+        return jsonResponse({ok:true,url:item,subscription_url:subscriptionUrl});
     }catch(e){return jsonResponse({ok:false,error:e?.message||String(e)},500);}
 }
 async function generateSubscription(request, env, sourceList, runtime, token) {
@@ -1318,11 +1127,7 @@ async function generateSubscription(request, env, sourceList, runtime, token) {
     }
 
     const sourceToken = new URL(request.url).searchParams.get('sourceToken') || token || '';
-    // 给 SUBAPI 一个稳定、可直接读取的 Base64 聚合源，避免非 Base64 格式在内部转换时丢失格式上下文。
-    // 外部的 Clash / Sing-box / Surge / Loon 等请求仍由下面的 target 参数决定最终输出格式。
-    const conversionSeed = sourceToken
-        ? `${new URL(request.url).origin}/${encodeURIComponent(sourceToken)}?b64`
-        : `${new URL(request.url).origin}/${await MD5MD5(runtime.fakeToken)}?token=${encodeURIComponent(runtime.fakeToken)}&b64`;
+    const conversionSeed = `${new URL(request.url).origin}/${await MD5MD5(runtime.fakeToken)}?token=${encodeURIComponent(runtime.fakeToken)}${sourceToken ? `&sourceToken=${encodeURIComponent(sourceToken)}` : ''}`;
     let 订阅转换URL = conversionSeed;
     let 追加UA = 'v2rayn';
     const requestUrl = new URL(request.url);
@@ -2145,11 +1950,7 @@ async function renderSubUIHome(request,url,env){
     const cfg=await getConfig(env);
     const apis=normalizeProviderList(cfg.subApis).filter(x=>x.enabled);
     const configs=normalizeProviderList(cfg.subConfigs).filter(x=>x.enabled);
-    // 订阅链接本身使用浏览器偏好 Cookie 记住，页面意外关闭后可以恢复上一次结果。
-    const publicPrefs=readPublicPreferences(request)||{};
-    const lastSubscriptionUrl=String(publicPrefs.lastSubscriptionUrl||'').trim();
-    const lastToken=String(publicPrefs.lastToken||'').trim();
-
+    // 主页全部为临时变量：不读取、不写入 Cookie/KV。刷新后始终恢复管理员设置的默认配置，NOADS 默认留空。
     const defaultApiId=String(cfg.defaultSubApiId||'');
     const defaultConfigId=String(cfg.defaultSubConfigId||'');
 
@@ -2172,7 +1973,6 @@ async function renderSubUIHome(request,url,env){
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${esc(cfg.subName||'SUB')}</title>${cfg.siteLogo?`<link rel="icon" href="${esc(cfg.siteLogo)}">`:''}
-<script src="https://cdn.jsdelivr.net/npm/@keeex/qrcodejs-kx@1.0.2/qrcode.min.js" defer></script>
 <style>
 ${getSubUIStyles()}
 .native-picker{display:block;width:100%;min-height:42px;padding:8px 12px;border:1px solid rgba(229,229,223,.8);border-radius:10px;background:rgba(250,250,250,.7);color:inherit;font:inherit;cursor:pointer;appearance:auto;-webkit-appearance:auto}
@@ -2181,8 +1981,8 @@ ${getSubUIStyles()}
 .current-api-input{width:100%;height:42px;min-width:0}.current-config-input{width:100%;min-height:70px;line-height:1.5;word-break:break-all;overflow-wrap:anywhere}.current-config-link{display:flex;align-items:center;padding:10px 12px;border:1px solid rgba(229,229,223,.8);border-radius:8px;background:rgba(250,250,250,.7);box-sizing:border-box;color:#1f4b99;text-decoration:none;cursor:pointer}.current-api-input.current-config-link{height:42px;min-height:42px}.current-config-link:hover{text-decoration:none;border-color:#1f4b99;box-shadow:0 0 0 2px rgba(31,75,153,.10);background:rgba(31,75,153,.04)}.current-config-link:empty{color:#888}.current-config-link:focus-visible{text-decoration:none;outline:none;border-color:#1f4b99;box-shadow:0 0 0 3px rgba(31,75,153,.14)}
 .edit-custom{display:none;flex:0 0 auto;min-width:72px}.status-box{margin-top:12px}.status-title{font-size:13px;font-weight:700;margin:0 0 7px}.status-list{display:grid;gap:7px}
 .status-item{padding:8px 10px;border-radius:9px;font-weight:650;word-break:break-all}.status-item.wait{background:rgba(255,152,0,.1);border:1px solid rgba(255,152,0,.2);color:#f57c00}.status-item.ok{background:rgba(76,175,80,.12);border:1px solid rgba(76,175,80,.25);color:#2e7d32}.status-item.bad{background:rgba(244,67,54,.1);border:1px solid rgba(244,67,54,.22);color:#c62828}
-.custom-modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.42);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);display:none;align-items:center;justify-content:center;z-index:1200;padding:20px}.custom-modal{width:min(480px,100%);background:rgba(255,255,255,.96);border:1px solid rgba(229,229,223,.9);border-radius:18px;padding:20px;box-shadow:0 18px 50px rgba(0,0,0,.22)}.custom-modal h3{margin:0;font-size:17px}.custom-modal p{margin:6px 0 14px;color:#888;font-size:12px}.custom-modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}.aggregate-result-overlay{position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.42);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);overflow:auto;padding:20px}.aggregate-result-modal{position:relative;width:min(620px,calc(100vw - 40px));margin:auto;transition:width .2s ease,transform .2s ease;box-sizing:border-box}.aggregate-result-close{position:absolute;top:10px;right:10px;width:32px;height:32px;min-height:32px;padding:0;border:0;border-radius:50%;background:rgba(0,0,0,.06);color:#555;font-size:24px;line-height:30px;cursor:pointer}.aggregate-result-close:hover{background:rgba(0,0,0,.12)}.aggregate-result-modal.qr-visible{max-height:calc(100vh - 40px);overflow:auto}.aggregate-result-url{display:block;width:100%;padding:12px 14px;margin:14px 0 0;border:1px solid rgba(229,229,223,.8);border-radius:10px;background:rgba(250,250,250,.7);color:#1f4b99;word-break:break-all;overflow-wrap:anywhere;line-height:1.55;user-select:text;text-decoration:none;box-sizing:border-box}.aggregate-result-url:hover{text-decoration:none;border-color:#1f4b99;box-shadow:0 0 0 2px rgba(31,75,153,.10)}.aggregate-result-modal>#copyDirect{display:flex;width:220px;min-height:40px;margin:14px auto 0}.aggregate-result-modal>#copyDirect:hover{box-shadow:0 0 0 2px rgba(52,58,64,.10)}.aggregate-result-qr{display:block;margin:16px auto 0;padding:12px;width:max-content;max-width:100%;box-sizing:border-box;background:#fff;border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.18)}
-@media(prefers-color-scheme:dark){.native-picker{background:#111;color:#f1f1f1;border-color:rgba(255,255,255,.14)}.native-picker option{background:#1b1b1b;color:#f1f1f1}.current-api-input,.current-config-input{background:rgba(0,0,0,.3);color:#64b5f6;border-color:rgba(255,255,255,.12)}.current-config-link{color:#64b5f6;background:rgba(0,0,0,.3);border-color:rgba(255,255,255,.12)}.current-config-link:hover{color:#64b5f6;text-decoration:none;border-color:#64b5f6;background:rgba(100,181,246,.08);box-shadow:0 0 0 2px rgba(100,181,246,.10)}.status-item.ok{background:rgba(129,199,132,.1);color:#81c784;border-color:rgba(129,199,132,.2)}.status-item.bad{background:rgba(229,115,115,.1);color:#e57373;border-color:rgba(229,115,115,.2)}.status-item.wait{background:rgba(255,183,77,.1);color:#ffb74d;border-color:rgba(255,183,77,.2)}.custom-modal{background:rgba(30,30,30,.97);border-color:rgba(255,255,255,.1)}.aggregate-result-url{background:rgba(0,0,0,.3);border-color:rgba(255,255,255,.12);color:#64b5f6}.aggregate-result-url:hover{color:#64b5f6;border-color:#64b5f6;background:rgba(100,181,246,.08);box-shadow:0 0 0 2px rgba(100,181,246,.10)}.aggregate-result-qr{background:#fff}.aggregate-result-modal>#copyDirect{margin-top:16px}.aggregate-result-close{background:rgba(255,255,255,.08);color:#ddd}.aggregate-result-close:hover{background:rgba(255,255,255,.16)}}
+.custom-modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.42);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);display:none;align-items:center;justify-content:center;z-index:1200;padding:20px}.custom-modal{width:min(480px,100%);background:rgba(255,255,255,.96);border:1px solid rgba(229,229,223,.9);border-radius:18px;padding:20px;box-shadow:0 18px 50px rgba(0,0,0,.22)}.custom-modal h3{margin:0;font-size:17px}.custom-modal p{margin:6px 0 14px;color:#888;font-size:12px}.custom-modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}.aggregate-result-overlay{position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.42);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);overflow:auto;padding:20px}.aggregate-result-modal{width:min(620px,calc(100vw - 40px));margin:auto;transition:height .2s ease,transform .2s ease}.aggregate-result-url{display:block;width:100%;padding:12px 14px;margin:14px 0 0;border:1px solid rgba(229,229,223,.8);border-radius:10px;background:rgba(250,250,250,.7);color:#1f4b99;word-break:break-all;overflow-wrap:anywhere;line-height:1.55;user-select:text;text-decoration:none;box-sizing:border-box}.aggregate-result-url:hover{text-decoration:none;border-color:#1f4b99;box-shadow:0 0 0 2px rgba(31,75,153,.10)}.aggregate-result-modal>#copyDirect{display:flex;width:220px;min-height:40px;margin:14px auto 0}.aggregate-result-modal>#copyDirect:hover{box-shadow:0 0 0 2px rgba(52,58,64,.10)}.aggregate-result-close{position:absolute;top:10px;right:12px;width:32px;height:32px;border:0;background:transparent;color:inherit;font-size:24px;line-height:32px;cursor:pointer;border-radius:8px}.aggregate-result-close:hover{background:rgba(0,0,0,.06)}.aggregate-result-modal{position:relative}.aggregate-result-qr{display:block;margin:16px auto 0;padding:12px;width:max-content;max-width:100%;box-sizing:border-box;background:#fff;border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.18)}
+@media(prefers-color-scheme:dark){.native-picker{background:#111;color:#f1f1f1;border-color:rgba(255,255,255,.14)}.native-picker option{background:#1b1b1b;color:#f1f1f1}.current-api-input,.current-config-input{background:rgba(0,0,0,.3);color:#64b5f6;border-color:rgba(255,255,255,.12)}.current-config-link{color:#64b5f6;background:rgba(0,0,0,.3);border-color:rgba(255,255,255,.12)}.current-config-link:hover{color:#64b5f6;text-decoration:none;border-color:#64b5f6;background:rgba(100,181,246,.08);box-shadow:0 0 0 2px rgba(100,181,246,.10)}.status-item.ok{background:rgba(129,199,132,.1);color:#81c784;border-color:rgba(129,199,132,.2)}.status-item.bad{background:rgba(229,115,115,.1);color:#e57373;border-color:rgba(229,115,115,.2)}.status-item.wait{background:rgba(255,183,77,.1);color:#ffb74d;border-color:rgba(255,183,77,.2)}.custom-modal{background:rgba(30,30,30,.97);border-color:rgba(255,255,255,.1)}.aggregate-result-url{background:rgba(0,0,0,.3);border-color:rgba(255,255,255,.12);color:#64b5f6}.aggregate-result-url:hover{color:#64b5f6;border-color:#64b5f6;background:rgba(100,181,246,.08);box-shadow:0 0 0 2px rgba(100,181,246,.10)}.aggregate-result-qr{background:#fff}.aggregate-result-modal>#copyDirect{margin-top:16px}.aggregate-result-close:hover{background:rgba(255,255,255,.08)}}
 </style>
 </head>
 <body>
@@ -2217,12 +2017,11 @@ ${configs.map(x=>`<option value="${esc(x.url)}" data-id="${esc(x.id)}" ${x.id===
 <section class="panel"><h2 class="section-title">排除节点</h2><div class="section-note">公开使用。每行填写一个关键词，包含关键词的节点会被排除。</div><div class="field"><textarea id="noAds" placeholder="例如：t.me&#10;广告&#10;example.com">${esc(noAds)}</textarea></div></section>
 <button class="primary" id="generate" type="button">创建聚合订阅链接</button>
 </main>
-<div id="aggregateResultModal" class="custom-modal-overlay aggregate-result-overlay"><div class="custom-modal aggregate-result-modal"><button type="button" class="aggregate-result-close" id="aggregateResultClose" aria-label="关闭">×</button><h3>聚合订阅链接</h3><p>生成成功，复制下面的订阅链接即可使用。</p><a class="aggregate-result-url" id="direct" href="#" target="_blank" rel="noopener noreferrer"></a><button type="button" class="button" id="copyDirect">复制</button><div id="aggregateResultQr" class="aggregate-result-qr"></div></div></div>
+<div id="aggregateResultModal" class="custom-modal-overlay aggregate-result-overlay"><div class="custom-modal aggregate-result-modal"><button type="button" class="aggregate-result-close" id="closeAggregateResult" aria-label="关闭">×</button><h3>聚合订阅链接</h3><p>生成成功，复制下面的订阅链接即可使用。</p><a class="aggregate-result-url" id="direct" href="#" target="_blank" rel="noopener noreferrer"></a><div id="aggregateResultQr" class="aggregate-result-qr"></div><button type="button" class="button" id="copyDirect">复制</button></div></div>
 
 <div id="customApiModal" class="custom-modal-overlay"><div class="custom-modal"><h3>自定义订阅转换后端</h3><p>输入你自己的 SUBAPI 地址。</p><input id="customApiInput" placeholder="https://subapi.example.com"><div class="custom-modal-actions"><button type="button" class="button secondary" id="cancelApiCustom">取消</button><button type="button" class="button" id="saveApiCustom">保存</button></div></div></div>
 <div id="customConfigModal" class="custom-modal-overlay"><div class="custom-modal"><h3>自定义订阅转换规则</h3><p>输入你自己的 SUBCONFIG 地址。</p><input id="customConfigInput" placeholder="https://example.com/config.ini"><div class="custom-modal-actions"><button type="button" class="button secondary" id="cancelConfigCustom">取消</button><button type="button" class="button" id="saveConfigCustom">保存</button></div></div></div>
 
-<script>window.__CF_SUB_LAST_URL=${JSON.stringify(lastSubscriptionUrl).replace('</','<\/')};window.__CF_SUB_LAST_TOKEN=${JSON.stringify(lastToken).replace('</','<\/')};</script>
 <script src="/__cfsubs.js" defer></script>
 </body></html>`;
 }
