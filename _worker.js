@@ -55,7 +55,6 @@ const SUB_PREFIX = 'SUB:';
 const URL_PREFIX = 'URL:';
 const ID_CHARS = 'ABCDEFGHJKMNPQRSTWXYZabcdefghijkmnpqrstwxyz2345678';
 const DEFAULT_ADMIN_PATH = 'admin';
-const GENERATE_DEDUP_PREFIX = 'GEN:';
 
 export default {
     async fetch(request, env) {
@@ -1048,52 +1047,6 @@ async function handlePublicGenerate(request,env,requestUrl){
 
         const noAds=String(data.noAds||'').trim().slice(0,5000);
 
-        // 生成去重：所有实际生效参数完全一致时，直接复用之前生成的 URL。
-        // 只使用生成逻辑真正依赖的参数，避免无关字段导致同一配置被重复生成。
-        const dedupePayload={
-            version:1,
-            sources,
-            apiIds,
-            apiCustom,
-            apiUrl:apiCustom?apiUrl:'',
-            configIds,
-            configCustom,
-            configUrl:configCustom?configUrl:'',
-            noAds
-        };
-        const dedupeHash=md5Hex(JSON.stringify(dedupePayload));
-        const dedupeKey=`${GENERATE_DEDUP_PREFIX}${dedupeHash}`;
-        const existingToken=await env.KV.get(dedupeKey);
-
-        if(existingToken){
-            const existingRaw=await env.KV.get(`${URL_PREFIX}${existingToken}`);
-            if(existingRaw){
-                try{
-                    const existingItem=JSON.parse(existingRaw);
-                    const prefs={
-                        apiIds,
-                        apiCustom,
-                        apiUrl:apiCustom?apiUrl:'',
-                        configIds,
-                        configCustom,
-                        configUrl:configCustom?configUrl:'',
-                        noAds
-                    };
-                    const cookie=buildPublicPreferencesCookie(prefs);
-                    const headers=cookie?{'Set-Cookie':cookie}:{};
-                    const existingSubscriptionUrl=existingItem.subscriptionUrl||`${requestUrl.origin}/${encodeURIComponent(existingToken)}`;
-                    return jsonResponse({
-                        ok:true,
-                        url:existingItem,
-                        subscription_url:existingSubscriptionUrl
-                    },200,headers);
-                }catch(e){
-                    // 旧记录损坏时清理去重索引，继续正常生成。
-                }
-            }
-            await env.KV.delete(dedupeKey);
-        }
-
         const token=await makeRandomToken(env,8);
         const name='订阅链接';
         // 每个公开 URL 都把本次生成时实际使用的 SUBAPI / SUBCONFIG 固化进自己的 KV JSON。
@@ -1120,7 +1073,6 @@ async function handlePublicGenerate(request,env,requestUrl){
             type:'sub-ui'
         };
         await env.KV.put(`${URL_PREFIX}${token}`,JSON.stringify(item));
-        await env.KV.put(dedupeKey,token);
 
         const prefs={
             apiIds:selectedApis.map(x=>x.id),apiCustom,apiUrl:apiCustom?apiUrl:'',
