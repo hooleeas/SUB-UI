@@ -87,6 +87,7 @@ function toast(message){
 /* ---------- SUB-UI public homepage ---------- */
 var PUBLIC_STATE={apiId:'',configId:'',apiCustom:false,configCustom:false,apiUrl:'',configUrl:''};
 var GENERATED_LINKS_KEY='SUB_UI_GENERATED_LINKS_V1';
+var CURRENT_DESTROY_KEY='';
 function generatedLinks(){
  try{var data=JSON.parse(localStorage.getItem(GENERATED_LINKS_KEY)||'[]');return Array.isArray(data)?data:[]}
  catch(e){return []}
@@ -128,14 +129,23 @@ function renderGeneratedLinks(){
  listEl.querySelectorAll('[data-destroy-token]').forEach(function(button){button.addEventListener('click',function(){destroyGeneratedLink(String(button.dataset.destroyToken||''),button,false)})});
 }
 function closeAggregateResult(){var rm=$('aggregateResultModal');if(rm)rm.style.display='none';resetAggregateResult()}
-function destroyGeneratedLink(token,button,fromModal){
+function destroyGeneratedLink(token,button,fromModal,key,skipConfirm){
  token=String(token||'').trim();if(!token)return;
- if(!confirm('销毁后链接将立即失效，确定要销毁吗？'))return;
+ key=String(key||'');
+ if(!skipConfirm&&!confirm('销毁后链接将立即失效且无法恢复，确定要销毁吗？'))return;
  if(button){button.disabled=true;button.textContent='销毁中…'}
- fetch('/api/destroy',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},cache:'no-store',body:JSON.stringify({token:token})})
+ fetch('/api/destroy',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},cache:'no-store',body:JSON.stringify({token:token,key:key})})
  .then(function(r){return r.json().then(function(d){return {r:r,d:d}})})
  .then(function(x){
-   if(!x.r.ok||!x.d.ok)throw new Error(x.d.error||'销毁失败');
+   if(!x.r.ok||!x.d.ok){
+     if(x.d&&x.d.requireKey&&!key){
+       var entered=prompt('该链接设置了销毁密钥，请输入密钥：');
+       if(entered===null){if(button){button.disabled=false;button.textContent='销毁'};return}
+       destroyGeneratedLink(token,button,fromModal,entered,true);
+       return;
+     }
+     throw new Error(x.d.error||'销毁失败');
+   }
    forgetGeneratedLink(token);
    if(fromModal)closeAggregateResult();
    aggregateNotice('链接已销毁，该链接已失效');
@@ -213,12 +223,12 @@ function initPublic(){
  updateCurrent('api');updateCurrent('config');checkStatus('api');checkStatus('config');renderGeneratedLinks();
  function renderAggregateQr(value){var q=$('aggregateResultQr');if(!q||!value)return;var draw=function(){if(!window.QRCode)return false;q.innerHTML='';q.style.display='block';try{new QRCode(q,{text:value,width:220,height:220,colorDark:'#000000',colorLight:'#ffffff',correctLevel:QRCode.CorrectLevel.Q});return true}catch(err){q.innerHTML='';return false}};if(draw())return;var src='https://cdn.jsdelivr.net/npm/@keeex/qrcodejs-kx@1.0.2/qrcode.min.js';var script=document.querySelector('script[src="'+src+'"]');if(!script){script=document.createElement('script');script.src=src;script.onload=function(){draw()};document.head.appendChild(script)}else{var timer=window.setInterval(function(){if(draw())window.clearInterval(timer)},100);window.setTimeout(function(){window.clearInterval(timer)},5000)}}
 function resetAggregateResult(){var q=$('aggregateResultQr');if(q){q.innerHTML='';q.style.display='block'}var b=$('copyDirect');if(b){b.textContent='复制';b.disabled=false}var d=$('destroyDirect');if(d){d.textContent='销毁';d.disabled=false}var status=$('aggregateCopyStatus');if(status){status.textContent='';status.className='aggregate-copy-status'}}
- e=$('copyDirect');if(e)e.addEventListener('click',function(){var a=$('direct'),v=a?a.textContent.trim():'';var done=function(){e.textContent='已复制';aggregateNotice('已复制');window.setTimeout(function(){if(e)e.textContent='复制'},1600)};var fail=function(){aggregateNotice('复制失败，请手动复制',true)};if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(v).then(done).catch(fail);else{var ta=document.createElement('textarea');ta.value=v;document.body.appendChild(ta);ta.select();try{document.execCommand('copy');done()}catch(err){fail()}ta.remove()}});e=$('destroyDirect');if(e)e.addEventListener('click',function(){var token=tokenFromSubscriptionUrl(($('direct')||{}).href||'');destroyGeneratedLink(token,e,true)});e=$('aggregateResultClose');if(e)e.addEventListener('click',closeAggregateResult);var rm=$('aggregateResultModal');if(rm){rm.addEventListener('click',function(ev){if(ev.target===rm)closeAggregateResult()});document.addEventListener('keydown',function(ev){if(ev.key==='Escape'){closeAggregateResult()}})}
+ e=$('copyDirect');if(e)e.addEventListener('click',function(){var a=$('direct'),v=a?a.textContent.trim():'';var done=function(){e.textContent='已复制';aggregateNotice('已复制');window.setTimeout(function(){if(e)e.textContent='复制'},1600)};var fail=function(){aggregateNotice('复制失败，请手动复制',true)};if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(v).then(done).catch(fail);else{var ta=document.createElement('textarea');ta.value=v;document.body.appendChild(ta);ta.select();try{document.execCommand('copy');done()}catch(err){fail()}ta.remove()}});e=$('destroyDirect');if(e)e.addEventListener('click',function(){var token=tokenFromSubscriptionUrl(($('direct')||{}).href||'');var key=String(CURRENT_DESTROY_KEY||'');destroyGeneratedLink(token,e,true,key,false)});e=$('aggregateResultClose');if(e)e.addEventListener('click',closeAggregateResult);var rm=$('aggregateResultModal');if(rm){rm.addEventListener('click',function(ev){if(ev.target===rm)closeAggregateResult()});document.addEventListener('keydown',function(ev){if(ev.key==='Escape'){closeAggregateResult()}})}
  e=$('generate');if(e)e.addEventListener('click',function(){
   var sources=$('sources')?$('sources').value.trim():'',a=$('apiPicker'),c=$('configPicker');if(!a||!c)return;
   var apiCustom=a.value==='__custom',configCustom=c.value==='__custom',apiValue=currentValue('api'),configValue=currentValue('config');
   if(!sources)return alert('请输入订阅链接');if(!apiValue)return alert('请选择订阅转换后端');if(!configValue)return alert('请选择订阅转换规则');
-  var body={sources:sources,apiIds:apiCustom?[]:[currentId('api')],apiCustom:apiCustom,apiUrl:apiCustom?apiValue:'',configIds:configCustom?[]:[currentId('config')],configCustom:configCustom,configUrl:configCustom?configValue:'',noAds:($('noAds')?$('noAds').value:'').trim()};
+  var destroyKey=($('destroyKey')?$('destroyKey').value:'').trim();CURRENT_DESTROY_KEY=destroyKey;var body={sources:sources,apiIds:apiCustom?[]:[currentId('api')],apiCustom:apiCustom,apiUrl:apiCustom?apiValue:'',configIds:configCustom?[]:[currentId('config')],configCustom:configCustom,configUrl:configCustom?configValue:'',noAds:($('noAds')?$('noAds').value:'').trim(),destroyKey:destroyKey};
   var button=$('generate');button.disabled=true;button.textContent='生成聚合订阅链接';
   fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},cache:'no-store',body:JSON.stringify(body)}).then(function(r){return r.json().then(function(d){return {r:r,d:d}})}).then(function(x){if(!x.r.ok||!x.d.ok)throw new Error(x.d.error||'生成失败');rememberGeneratedLink(x.d.subscription_url);$('direct').textContent=x.d.subscription_url;$('direct').href=x.d.subscription_url;var resultModal=$('aggregateResultModal');if(resultModal){resultModal.style.display='flex';var copyButton=$('copyDirect');if(copyButton)copyButton.textContent='复制';var destroyButton=$('destroyDirect');if(destroyButton){destroyButton.textContent='销毁';destroyButton.disabled=false}var status=$('aggregateCopyStatus');if(status){status.textContent='';status.className='aggregate-copy-status'}renderAggregateQr(x.d.subscription_url)}}).catch(function(err){alert(err.message||'生成失败')}).finally(function(){button.disabled=false;button.textContent='生成聚合订阅链接'})
  })
@@ -524,7 +534,7 @@ async function handleRequest(request, env) {
                     primaryBackend.config
                 );
             }
-            return new Response(renderGuestPage(url, tokenData.url, tokenData.name, primaryBackend, guestStatus), {
+            return new Response(renderGuestPage(url, tokenData.url, tokenData.name, primaryBackend, guestStatus, Boolean(tokenData.destroyKeyHash)), {
                 headers: { 'Content-Type': 'text/html;charset=utf-8', 'Cache-Control': 'no-store' }
             });
         }
@@ -1108,8 +1118,10 @@ async function handlePublicGenerate(request,env,requestUrl){
         if(!backends.length) return jsonResponse({ok:false,error:'没有有效的订阅转换后端与规则组合'},400);
 
         const noAds=String(data.noAds||'').trim().slice(0,5000);
+        const destroyKey=String(data.destroyKey||'').trim().slice(0,256);
 
         const token=await makeRandomToken(env,8);
+        const destroyKeyHash=destroyKey?await sha256Hex(`${token}:${destroyKey}`):'';
         const name='订阅链接';
         // 每个公开 URL 都把本次生成时实际使用的 SUBAPI / SUBCONFIG 固化进自己的 KV JSON。
         // 以后访问 /token、/token?clash、/token?sb 等入口时，只读取这里保存的值。
@@ -1132,7 +1144,8 @@ async function handlePublicGenerate(request,env,requestUrl){
             target:'auto',
             createdAt:new Date().toISOString(),
             updatedAt:new Date().toISOString(),
-            type:'sub-ui'
+            type:'sub-ui',
+            destroyKeyHash
         };
         await env.KV.put(`${URL_PREFIX}${token}`,JSON.stringify(item));
 
@@ -1143,7 +1156,8 @@ async function handlePublicGenerate(request,env,requestUrl){
         const cookie=buildPublicPreferencesCookie(prefs);
         const headers=cookie?{'Set-Cookie':cookie}:{ };
         const subscriptionUrl=`${requestUrl.origin}/${encodeURIComponent(token)}`;
-        return jsonResponse({ok:true,url:item,subscription_url:subscriptionUrl},200,headers);
+        const responseItem={...item};delete responseItem.destroyKeyHash;
+        return jsonResponse({ok:true,url:responseItem,subscription_url:subscriptionUrl},200,headers);
     }catch(e){return jsonResponse({ok:false,error:e?.message||String(e)},500);}
 }
 async function handlePublicDestroy(request,env){
@@ -1151,6 +1165,7 @@ async function handlePublicDestroy(request,env){
     try{
         const data=await request.json();
         let token=String(data.token||'').trim();
+        const suppliedKey=String(data.key||'');
         if(!token){
             const rawUrl=String(data.url||'').trim();
             if(rawUrl){
@@ -1160,12 +1175,25 @@ async function handlePublicDestroy(request,env){
         token=String(token||'').trim().replace(/^\/+|\/+$/g,'');
         if(!token) return jsonResponse({ok:false,error:'缺少订阅链接标识'},400);
         if(!/^[A-Za-z0-9]+$/.test(token)||token.length>128) return jsonResponse({ok:false,error:'订阅链接标识无效'},400);
+
+        const raw=await env.KV.get(`${URL_PREFIX}${token}`);
+        if(!raw) return jsonResponse({ok:false,error:'链接不存在或已经被销毁'},404);
+        let item=null;
+        try{item=JSON.parse(raw)}catch(e){item=null}
+        const storedHash=String(item?.destroyKeyHash||'');
+        if(storedHash){
+            if(!suppliedKey) return jsonResponse({ok:false,error:'需要提供销毁密钥',requireKey:true},403);
+            const suppliedHash=await sha256Hex(`${token}:${suppliedKey}`);
+            if(suppliedHash!==storedHash) return jsonResponse({ok:false,error:'销毁密钥错误',requireKey:true},403);
+        }
+
         await env.KV.delete(`${URL_PREFIX}${token}`);
         return jsonResponse({ok:true,token});
     }catch(e){
         return jsonResponse({ok:false,error:e?.message||String(e)},500);
     }
 }
+
 async function generateSubscription(request, env, sourceList, runtime, token) {
     let allSources = [...new Set((sourceList || []).map(x => String(x).trim()).filter(Boolean))];
 
@@ -1413,6 +1441,12 @@ function base64Decode(str) {
 }
 
 // Cloudflare Workers 不保证 WebCrypto 支持 MD5。
+async function sha256Hex(input){
+    const bytes=new TextEncoder().encode(String(input));
+    const hash=await crypto.subtle.digest('SHA-256',bytes);
+    return Array.from(new Uint8Array(hash)).map(b=>b.toString(16).padStart(2,'0')).join('');
+}
+
 // 使用纯 JS MD5，避免 crypto.subtle.digest('MD5') 触发 Worker 1101。
 function md5Hex(input) {
     const data = new TextEncoder().encode(String(input));
@@ -1927,7 +1961,7 @@ function getSubscriptionLinks(url, token) {
     ];
 }
 
-function renderGuestPage(url, guest, guestName = '', backend = null, status = null) {
+function renderGuestPage(url, guest, guestName = '', backend = null, status = null, destroyKeyRequired = false) {
     const links = getSubscriptionLinks(url, guest);
     const apiUrl = backend ? `${backend.protocol}://${backend.api}` : '';
     const configUrl = backend?.config || '';
@@ -1956,6 +1990,7 @@ function renderGuestPage(url, guest, guestName = '', backend = null, status = nu
 .guest-link-url{display:block;width:100%;box-sizing:border-box;padding:10px 12px;margin-top:14px;border:1px solid rgba(255,255,255,.1);border-radius:8px;background:rgba(0,0,0,.28);color:#64b5f6;text-decoration:none;word-break:break-all;overflow-wrap:anywhere}
 .guest-link-url:hover,.guest-current-link:hover{background:rgba(100,181,246,.08);border-color:#64b5f6;text-decoration:none}
 .guest-actions{position:absolute;top:12px;right:12px;display:flex;gap:8px;align-items:center;justify-content:flex-end}.guest-actions button{margin:0}.guest-link-head{display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:30px;margin-bottom:14px}.guest-link-head .guest-link-label{margin:0}.guest-copy-btn,.guest-hide-btn{min-width:56px;width:auto;height:30px;min-height:30px;padding:0 10px;flex:0 0 auto;font-size:16px;line-height:30px}.guest-hide-btn{display:none}.guest-qrcode{display:none;background:#fff;border-radius:12px;padding:12px;margin:14px auto 0;width:max-content;max-width:100%;box-sizing:border-box;box-shadow:0 8px 24px rgba(0,0,0,.08)}
+.guest-head-destroy{margin:0;min-width:104px;height:34px;min-height:34px;padding:0 12px;background:#d93025;color:#fff;border-color:#d93025}.guest-head-destroy:hover{background:#b91c1c;color:#fff;box-shadow:0 0 0 2px rgba(217,48,37,.12)}.guest-destroy-note{margin-top:6px;color:#999;font-size:12px;line-height:1.5}.guest-destroy-modal{position:fixed;inset:0;z-index:99999;display:none;align-items:center;justify-content:center;padding:20px;background:rgba(0,0,0,.44);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px)}.guest-destroy-dialog{width:min(440px,100%);padding:22px;border-radius:18px;background:rgba(255,255,255,.97);border:1px solid rgba(229,229,223,.9);box-shadow:0 20px 60px rgba(0,0,0,.24)}.guest-destroy-dialog h3{margin:0;font-size:18px}.guest-destroy-dialog p{margin:7px 0 14px;color:#888;font-size:12px;line-height:1.6}.guest-destroy-input{width:100%;box-sizing:border-box;padding:11px 12px;border:1px solid rgba(229,229,223,.9);border-radius:10px;background:rgba(250,250,250,.8);color:inherit;font:inherit}.guest-destroy-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}.guest-destroy-confirm{background:#d93025;color:#fff;border-color:#d93025}.guest-destroy-confirm:hover{background:#b91c1c;color:#fff}.guest-destroy-cancel{background:transparent}
 .guest-actions button{min-width:56px;height:30px;min-height:30px;padding:0 10px;font-size:16px;line-height:30px}
 .guest-hide{display:none}
 .guest-status{margin-top:10px;padding:10px 12px;border-radius:10px;font-weight:700;word-break:break-all}
@@ -1965,9 +2000,10 @@ function renderGuestPage(url, guest, guestName = '', backend = null, status = nu
 .guest-current{display:block;width:100%;box-sizing:border-box;text-decoration:none;padding:10px 12px;border:1px solid rgba(255,255,255,.1);border-radius:8px;background:rgba(0,0,0,.28);color:#64b5f6;word-break:break-all;overflow-wrap:anywhere}
 #current-qrcode{display:none;background:#fff;border-radius:12px;padding:12px;margin:18px auto 0;width:max-content;max-width:100%;box-sizing:border-box;box-shadow:0 8px 24px rgba(0,0,0,.08)}
 .guest-shell{max-width:1100px;padding-top:24px}.guest-header{margin:0 -28px 18px;padding:28px 28px 24px;border-bottom:1px solid rgba(120,130,140,.18)}.guest-head-row{display:flex;align-items:flex-start;justify-content:space-between;gap:18px}.guest-head-copy{flex:0 0 auto;white-space:nowrap;margin-top:2px}.guest-header .subtitle{word-break:keep-all;overflow-wrap:normal;hyphens:none}
+@media(prefers-color-scheme:dark){.guest-destroy-dialog{background:rgba(30,30,30,.97);border-color:rgba(255,255,255,.1)}.guest-destroy-dialog p{color:#9aa7b5}.guest-destroy-input{background:rgba(0,0,0,.35);border-color:rgba(255,255,255,.12);color:#f3f6f7}.guest-head-destroy{background:#c62828;border-color:#c62828}.guest-head-destroy:hover{background:#a61f1f}.guest-destroy-confirm{background:#c62828;border-color:#c62828}.guest-destroy-confirm:hover{background:#a61f1f}}
 @media(prefers-color-scheme:dark){body{background:#000;background-image:radial-gradient(circle at 0% 28%,rgba(0,188,212,.14),transparent 24%),radial-gradient(circle at 100% 100%,rgba(0,120,70,.18),transparent 32%),linear-gradient(180deg,#000 0%,#020807 58%,#00140b 100%);background-attachment:fixed;color:#f4f7f8}.guest-shell{background:linear-gradient(135deg,rgba(1,5,6,.98) 0%,rgba(2,10,10,.96) 48%,rgba(0,54,35,.92) 100%);border-color:rgba(255,255,255,.13)}.guest-header{border-bottom-color:rgba(255,255,255,.10)}.guest-head-copy{background:#3f4650;color:#fff;border-color:#69717c}}
 @media(prefers-color-scheme:light){.guest-shell{background:linear-gradient(135deg,rgba(255,255,255,.95) 0%,rgba(250,255,252,.93) 55%,rgba(226,247,237,.9) 100%);border-color:rgba(120,150,135,.18)}.guest-link-item{background:rgba(255,255,255,.5);border-color:rgba(229,229,223,.7)}.guest-link-url,.guest-current{background:rgba(250,250,250,.7);border-color:rgba(229,229,223,.8);color:#1f4b99}.guest-current-label{color:#666}.guest-status.status-ok{color:#2e7d32;background:rgba(76,175,80,.08)}.guest-status.status-error{color:#c62828;background:rgba(244,67,54,.08)}}
-@media(max-width:640px){.guest-shell{width:calc(100% - 28px);margin:14px 14px 28px;padding:18px 18px 28px;border-radius:22px}.guest-header{margin:0 -18px 16px;padding:22px 18px 20px}.guest-head-row{align-items:flex-start;gap:12px}.guest-head-row .title{font-size:40px}.guest-head-row .subtitle{font-size:12px}.guest-head-copy{font-size:12px;padding:6px 10px;min-height:32px}}
+@media(max-width:640px){.guest-shell{width:calc(100% - 28px);margin:14px 14px 28px;padding:18px 18px 28px;border-radius:22px}.guest-header{margin:0 -18px 16px;padding:22px 18px 20px}.guest-head-row{align-items:flex-start;gap:12px}.guest-head-row .title{font-size:40px}.guest-head-row .subtitle{font-size:12px}.guest-head-copy{font-size:12px;padding:0;background:transparent;border:0}.guest-head-destroy{min-width:92px;padding:0 10px}.guest-destroy-dialog{padding:18px}.guest-destroy-actions{gap:7px}}
 </style>
 <script src="https://cdn.jsdelivr.net/npm/@keeex/qrcodejs-kx@1.0.2/qrcode.min.js"></script>
 </head>
@@ -1975,7 +2011,8 @@ function renderGuestPage(url, guest, guestName = '', backend = null, status = nu
 <div id="copyNotice" class="toast"></div>
 <main class="page app-shell guest-shell">
 <header class="header guest-header">
-<div><h1 class="title">聚合订阅链接</h1><div class="subtitle">复制订阅链接可同时生成二维码</div></div>
+<div class="guest-head-row"><div><h1 class="title">聚合订阅链接</h1><div class="subtitle">复制订阅链接可同时生成二维码</div></div><div class="guest-head-copy"><button type="button" class="button guest-head-destroy" onclick="destroyGuestLink()">销毁本链接</button></div></div>
+<div class="guest-destroy-note">销毁后此聚合订阅链接将立即失效且无法恢复。${destroyKeyRequired ? '本链接已设置销毁密钥。' : '本链接未设置销毁密钥，确认后即可销毁。'}</div>
 </header>
 <section class="panel">
 <h2 class="section-title">订阅链接</h2>
@@ -2006,8 +2043,40 @@ ${links.map(([label,value])=>`<div class="guest-link-item">
 </div>
 </section>
 </main>
+<div id="guestDestroyModal" class="guest-destroy-modal" onclick="if(event.target===this)closeGuestDestroyModal()"><div class="guest-destroy-dialog"><h3>销毁本链接</h3><p>销毁后此聚合订阅链接将立即失效，原订阅地址及其生成内容都将无法继续使用，且此操作无法恢复。
+请输入本链接的销毁密钥。</p><input id="guestDestroyKey" class="guest-destroy-input" type="password" autocomplete="current-password" placeholder="请输入销毁密钥"><div class="guest-destroy-actions"><button type="button" class="button secondary guest-destroy-cancel" onclick="closeGuestDestroyModal()">取消</button><button type="button" class="button guest-destroy-confirm" onclick="confirmGuestDestroy()">确认销毁</button></div></div></div>
 <script>
 let guestToastTimer;
+const guestDestroyKeyRequired=${destroyKeyRequired?'true':'false'};
+const guestDestroyToken=decodeURIComponent(String(location.pathname||'').replace(/^\/+|\/+$/g,''));
+function closeGuestDestroyModal(){const m=document.getElementById('guestDestroyModal');if(m)m.style.display='none';const i=document.getElementById('guestDestroyKey');if(i)i.value='';}
+function openGuestDestroyModal(){const m=document.getElementById('guestDestroyModal');if(m)m.style.display='flex';const i=document.getElementById('guestDestroyKey');if(i){i.value='';setTimeout(()=>i.focus(),0)}}
+function submitGuestDestroy(key){
+ const button=document.querySelector('.guest-head-destroy');if(button){button.disabled=true;button.textContent='销毁中…';}
+ fetch('/api/destroy',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},cache:'no-store',body:JSON.stringify({token:guestDestroyToken,key:String(key||'')})})
+ .then(r=>r.json().then(d=>({r:r,d:d})))
+ .then(x=>{
+   if(!x.r.ok||!x.d.ok)throw new Error(x.d.error||'销毁失败');
+   closeGuestDestroyModal();
+   guestToast('链接已销毁，该链接已失效');
+   setTimeout(()=>{location.href='/';},900);
+ })
+ .catch(err=>{
+   if(button){button.disabled=false;button.textContent='销毁本链接';}
+   guestToast(err.message||'销毁失败');
+ });
+}
+function destroyGuestLink(){
+ if(guestDestroyKeyRequired){openGuestDestroyModal();return;}
+ if(!confirm('销毁后此聚合订阅链接将立即失效且无法恢复，确定要销毁吗？'))return;
+ submitGuestDestroy('');
+}
+function confirmGuestDestroy(){
+ const i=document.getElementById('guestDestroyKey');const key=i?i.value.trim():'';
+ if(!key){guestToast('请输入销毁密钥');if(i)i.focus();return;}
+ submitGuestDestroy(key);
+}
+
 function guestToast(message){
  const el=document.getElementById('copyNotice');
  el.textContent=message;el.style.display='block';
@@ -2123,6 +2192,7 @@ ${configs.map(x=>`<option value="${esc(x.url)}" data-id="${esc(x.id)}" ${x.id===
 </section>
 
 <section class="panel"><h2 class="section-title">排除节点</h2><div class="section-note">公开使用。每行填写一个关键词，包含关键词的节点会被排除。</div><div class="field"><textarea id="noAds" placeholder="例如：t.me&#10;广告&#10;example.com">${esc(noAds)}</textarea></div></section>
+<section class="panel"><h2 class="section-title">密钥</h2><div class="section-note">可选。用于在聚合订阅页面销毁本链接。填写后，销毁本链接时需要提供此密钥。</div><div class="field"><input id="destroyKey" type="password" autocomplete="new-password" placeholder="可选，设置用于销毁本链接的密钥"></div></section>
 <button class="primary" id="generate" type="button">生成聚合订阅链接</button>
 <section class="panel generated-links-panel" id="generatedLinksPanel" style="display:none"><h2 class="section-title">已生成的聚合订阅链接</h2><div class="section-note">根据本机浏览器缓存显示你生成过的链接。链接框可直接打开，销毁后链接将会失效。</div><div id="generatedLinksList" class="generated-links-list"></div></section>
 </main>
