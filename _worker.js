@@ -160,6 +160,7 @@ function showAggregateResult(value){
  var direct=$('direct');if(direct){direct.textContent=value;direct.href=value}
  clearAggregateResult(true);
  var modal=$('aggregateResultModal');if(modal)modal.style.display='flex';
+ writeLocal('CF_SUB_AGG_DISMISSED','');
  writeLocal('CF_SUB_LAST_AGG_URL',value);
 }
 function closeAggregateResult(){
@@ -191,12 +192,15 @@ function initPublic(){
  e=$('cancelApiCustom');if(e)e.addEventListener('click',function(){cancelCustom('api')});e=$('cancelConfigCustom');if(e)e.addEventListener('click',function(){cancelCustom('config')});
  e=$('saveApiCustom');if(e)e.addEventListener('click',function(){saveCustom('api')});e=$('saveConfigCustom');if(e)e.addEventListener('click',function(){saveCustom('config')});
  updateCurrent('api');updateCurrent('config');checkStatus('api');checkStatus('config');restoreLastAggregateResult();
- e=$('copyDirect');if(e)e.addEventListener('click',function(){var a=$('direct'),v=a?a.textContent.trim():'';if(!v)return;var done=function(){showAggregateQr(v);e.textContent='复制';writeLocal('CF_SUB_LAST_AGG_URL',v);};if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(v).then(done).catch(function(){alert('复制失败，请手动复制')});else{var ta=document.createElement('textarea');ta.value=v;document.body.appendChild(ta);ta.select();try{document.execCommand('copy');done()}catch(err){alert('复制失败，请手动复制')}ta.remove()}});var rm=$('aggregateResultModal');if(rm){document.addEventListener('keydown',function(ev){if(ev.key==='Escape')closeAggregateResult()})}
+ e=$('copyDirect');if(e)e.addEventListener('click',function(){var a=$('direct'),v=a?a.textContent.trim():'';if(!v)return;var done=function(){showAggregateQr(v);e.textContent='复制';writeLocal('CF_SUB_LAST_AGG_URL',v);};if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(v).then(done).catch(function(){alert('复制失败，请手动复制')});else{var ta=document.createElement('textarea');ta.value=v;document.body.appendChild(ta);ta.select();try{document.execCommand('copy');done()}catch(err){alert('复制失败，请手动复制')}ta.remove()}});var rm=$('aggregateResultModal');if(rm){rm.addEventListener('click',function(ev){if(ev.target===rm)closeAggregateResult()});document.addEventListener('keydown',function(ev){if(ev.key==='Escape')closeAggregateResult()})}
  e=$('generate');if(e)e.addEventListener('click',function(){
+  var existingToken=readLocal('CF_SUB_LAST_AGG_TOKEN')||window.__CF_SUB_LAST_TOKEN||'';
+  var existingUrl=readLocal('CF_SUB_LAST_AGG_URL')||window.__CF_SUB_LAST_URL||'';
+  // 同一访客只允许一个聚合订阅 URL。已经生成过就直接打开现有结果，不再次创建。
+  if(existingToken&&existingUrl){showAggregateResult(existingUrl);return}
   var sources=$('sources')?$('sources').value.trim():'',a=$('apiPicker'),c=$('configPicker');if(!a||!c)return;
-  var apiCustom=a.value==='__custom',configCustom=c.value==='__custom',apiValue=currentValue('api'),configValue=currentValue('config');
-  if(!sources)return alert('请输入订阅链接');if(!apiValue)return alert('请选择订阅转换后端');if(!configValue)return alert('请选择订阅转换规则');
-  var body={sources:sources,apiIds:apiCustom?[]:[currentId('api')],apiCustom:apiCustom,apiUrl:apiCustom?apiValue:'',configIds:configCustom?[]:[currentId('config')],configCustom:configCustom,configUrl:configCustom?configValue:'',noAds:($('noAds')?$('noAds').value:'').trim(),reuseToken:readLocal('CF_SUB_LAST_AGG_TOKEN')||window.__CF_SUB_LAST_TOKEN||''};
+  var apiCustom=a.value==='__custom',configCustom=c.value==='__custom',apiValue=currentValue('api'),configValue=currentValue('config');if(!sources)return alert('请输入订阅链接');if(!apiValue)return alert('请选择订阅转换后端');if(!configValue)return alert('请选择订阅转换规则');
+  var body={sources:sources,apiIds:apiCustom?[]:[currentId('api')],apiCustom:apiCustom,apiUrl:apiCustom?apiValue:'',configIds:configCustom?[]:[currentId('config')],configCustom:configCustom,configUrl:configCustom?configValue:'',noAds:($('noAds')?$('noAds').value:'').trim(),reuseToken:existingToken};
   var button=$('generate');button.disabled=true;
   fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},cache:'no-store',body:JSON.stringify(body)}).then(function(r){return r.json().then(function(d){return {r:r,d:d}})}).then(function(x){if(!x.r.ok||!x.d.ok)throw new Error(x.d.error||'生成失败');writeLocal('CF_SUB_LAST_AGG_TOKEN',x.d.token||((x.d.url&&x.d.url.url)||''));showAggregateResult(x.d.subscription_url);}).catch(function(err){alert(err.message||'生成失败')}).finally(function(){button.disabled=false})
  })
@@ -1114,6 +1118,11 @@ async function handlePublicGenerate(request,env,requestUrl){
         const profile={sources,backends,noAds};
         const aggId=await makeAggregateDataId(profile);
 
+        // 同一访客在当前浏览器中始终复用同一个聚合订阅 URL。
+        // 优先读取请求中显式带回的 token，其次读取 CF_SUB_PREFS Cookie 中保存的上一次 token。
+        const publicPrefs=readPublicPreferences(request)||{};
+        const cookieToken=normalizeToken(publicPrefs.lastToken||'');
+
         // 共享聚合数据只保存一份。不同 URL 只保存各自的 token + aggId。
         const sharedKey=`${AGG_PREFIX}${aggId}`;
         const sharedData={
@@ -1129,21 +1138,16 @@ async function handlePublicGenerate(request,env,requestUrl){
 
         // 浏览器带回上一次生成的 token 时，如果配置完全一致，就复用原 URL，
         // 避免访客误操作后再次生成同一个订阅时产生一堆重复 URL。
-        const reuseToken=normalizeToken(data.reuseToken||'');
+        const requestedReuseToken=normalizeToken(data.reuseToken||'');
+        const reuseToken=requestedReuseToken || cookieToken;
         let existing=null;
         let token='';
         if(reuseToken){
             existing=await getToken(env,reuseToken);
             if(existing && existing.type==='sub-ui'){
-                let existingAggId=String(existing.aggId||'').trim();
-                if(!existingAggId && Array.isArray(existing.sources) && Array.isArray(existing.backends)){
-                    existingAggId=await makeAggregateDataId({
-                        sources:existing.sources,
-                        backends:existing.backends,
-                        noAds:String(existing.noAds||'')
-                    });
-                }
-                if(existingAggId===aggId) token=reuseToken;
+                // 访客一旦拥有聚合订阅 URL，后续再次点击创建按钮时直接复用这个 URL。
+                // 只更新它所引用的共享数据，不再创建第二个 URL。
+                token=reuseToken;
             }
         }
         if(!token) token=await makeRandomToken(env,8);
@@ -1244,7 +1248,11 @@ async function generateSubscription(request, env, sourceList, runtime, token) {
     }
 
     const sourceToken = new URL(request.url).searchParams.get('sourceToken') || token || '';
-    const conversionSeed = `${new URL(request.url).origin}/${await MD5MD5(runtime.fakeToken)}?token=${encodeURIComponent(runtime.fakeToken)}${sourceToken ? `&sourceToken=${encodeURIComponent(sourceToken)}` : ''}`;
+    // 给 SUBAPI 一个稳定、可直接读取的 Base64 聚合源，避免非 Base64 格式在内部转换时丢失格式上下文。
+    // 外部的 Clash / Sing-box / Surge / Loon 等请求仍由下面的 target 参数决定最终输出格式。
+    const conversionSeed = sourceToken
+        ? `${new URL(request.url).origin}/${encodeURIComponent(sourceToken)}?b64`
+        : `${new URL(request.url).origin}/${await MD5MD5(runtime.fakeToken)}?token=${encodeURIComponent(runtime.fakeToken)}&b64`;
     let 订阅转换URL = conversionSeed;
     let 追加UA = 'v2rayn';
     const requestUrl = new URL(request.url);
@@ -2094,6 +2102,7 @@ async function renderSubUIHome(request,url,env){
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${esc(cfg.subName||'SUB')}</title>${cfg.siteLogo?`<link rel="icon" href="${esc(cfg.siteLogo)}">`:''}
+<script src="https://cdn.jsdelivr.net/npm/@keeex/qrcodejs-kx@1.0.2/qrcode.min.js" defer></script>
 <style>
 ${getSubUIStyles()}
 .native-picker{display:block;width:100%;min-height:42px;padding:8px 12px;border:1px solid rgba(229,229,223,.8);border-radius:10px;background:rgba(250,250,250,.7);color:inherit;font:inherit;cursor:pointer;appearance:auto;-webkit-appearance:auto}
