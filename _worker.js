@@ -86,6 +86,65 @@ function toast(message){
 
 /* ---------- SUB-UI public homepage ---------- */
 var PUBLIC_STATE={apiId:'',configId:'',apiCustom:false,configCustom:false,apiUrl:'',configUrl:''};
+var GENERATED_LINKS_KEY='SUB_UI_GENERATED_LINKS_V1';
+function generatedLinks(){
+ try{var data=JSON.parse(localStorage.getItem(GENERATED_LINKS_KEY)||'[]');return Array.isArray(data)?data:[]}
+ catch(e){return []}
+}
+function saveGeneratedLinks(list){
+ try{localStorage.setItem(GENERATED_LINKS_KEY,JSON.stringify(list))}catch(e){}
+}
+function tokenFromSubscriptionUrl(value){
+ try{var u=new URL(String(value||''),location.origin);var token=decodeURIComponent(String(u.pathname||'').replace(/^\/+|\/+$/g,''));return token||''}
+ catch(e){return ''}
+}
+function rememberGeneratedLink(value){
+ var url=String(value||'').trim(),token=tokenFromSubscriptionUrl(url);if(!url||!token)return;
+ var list=generatedLinks().filter(function(x){return x&&String(x.token||'')!==token});
+ list.unshift({token:token,url:url,createdAt:new Date().toISOString()});
+ saveGeneratedLinks(list);renderGeneratedLinks();
+}
+function forgetGeneratedLink(token){
+ token=String(token||'').trim();if(!token)return;
+ saveGeneratedLinks(generatedLinks().filter(function(x){return !x||String(x.token||'')!==token}));
+ renderGeneratedLinks();
+}
+function aggregateNotice(message,isError){
+ var notice=$('aggregateCopyNotice');if(!notice)return;
+ notice.textContent=message;notice.style.display='block';notice.className='toast '+(isError?'error':'');
+ window.clearTimeout(window.__aggregateCopyNoticeTimer);
+ window.__aggregateCopyNoticeTimer=window.setTimeout(function(){notice.style.display='none';notice.className='toast'},1800);
+}
+function renderGeneratedLinks(){
+ var wrap=$('generatedLinksPanel'),listEl=$('generatedLinksList');if(!wrap||!listEl)return;
+ var list=generatedLinks();
+ if(!list.length){wrap.style.display='none';listEl.innerHTML='';return}
+ wrap.style.display='block';
+ listEl.innerHTML=list.map(function(item){
+   var token=String(item&&item.token||'').trim(),url=String(item&&item.url||'').trim();
+   if(!token||!url)return '';
+   return '<div class="generated-link-row" data-token="'+esc(token)+'"><a class="generated-link-url" href="'+esc(url)+'" target="_blank" rel="noopener noreferrer" title="打开订阅链接">'+esc(url)+'</a><button type="button" class="button generated-link-destroy" data-destroy-token="'+esc(token)+'">销毁</button></div>';
+ }).join('');
+ listEl.querySelectorAll('[data-destroy-token]').forEach(function(button){button.addEventListener('click',function(){destroyGeneratedLink(String(button.dataset.destroyToken||''),button,false)})});
+}
+function closeAggregateResult(){var rm=$('aggregateResultModal');if(rm)rm.style.display='none';resetAggregateResult()}
+function destroyGeneratedLink(token,button,fromModal){
+ token=String(token||'').trim();if(!token)return;
+ if(!confirm('销毁后链接将立即失效，确定要销毁吗？'))return;
+ if(button){button.disabled=true;button.textContent='销毁中…'}
+ fetch('/api/destroy',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},cache:'no-store',body:JSON.stringify({token:token})})
+ .then(function(r){return r.json().then(function(d){return {r:r,d:d}})})
+ .then(function(x){
+   if(!x.r.ok||!x.d.ok)throw new Error(x.d.error||'销毁失败');
+   forgetGeneratedLink(token);
+   if(fromModal)closeAggregateResult();
+   aggregateNotice('链接已销毁，该链接已失效');
+ })
+ .catch(function(err){
+   if(button){button.disabled=false;button.textContent='销毁'}
+   aggregateNotice(err.message||'销毁失败',true);
+ });
+}
 function currentValue(kind){
  var api=kind==='api',picker=$(api?'apiPicker':'configPicker');
  if(!picker)return '';
@@ -151,17 +210,17 @@ function initPublic(){
  var e=$('editApiCustom');if(e)e.addEventListener('click',function(){openCustom('api')});e=$('editConfigCustom');if(e)e.addEventListener('click',function(){openCustom('config')});
  e=$('cancelApiCustom');if(e)e.addEventListener('click',function(){cancelCustom('api')});e=$('cancelConfigCustom');if(e)e.addEventListener('click',function(){cancelCustom('config')});
  e=$('saveApiCustom');if(e)e.addEventListener('click',function(){saveCustom('api')});e=$('saveConfigCustom');if(e)e.addEventListener('click',function(){saveCustom('config')});
- updateCurrent('api');updateCurrent('config');checkStatus('api');checkStatus('config');
+ updateCurrent('api');updateCurrent('config');checkStatus('api');checkStatus('config');renderGeneratedLinks();
  function renderAggregateQr(value){var q=$('aggregateResultQr');if(!q||!value)return;var draw=function(){if(!window.QRCode)return false;q.innerHTML='';q.style.display='block';try{new QRCode(q,{text:value,width:220,height:220,colorDark:'#000000',colorLight:'#ffffff',correctLevel:QRCode.CorrectLevel.Q});return true}catch(err){q.innerHTML='';return false}};if(draw())return;var src='https://cdn.jsdelivr.net/npm/@keeex/qrcodejs-kx@1.0.2/qrcode.min.js';var script=document.querySelector('script[src="'+src+'"]');if(!script){script=document.createElement('script');script.src=src;script.onload=function(){draw()};document.head.appendChild(script)}else{var timer=window.setInterval(function(){if(draw())window.clearInterval(timer)},100);window.setTimeout(function(){window.clearInterval(timer)},5000)}}
-function resetAggregateResult(){var q=$('aggregateResultQr');if(q){q.innerHTML='';q.style.display='block'}var b=$('copyDirect');if(b){b.textContent='复制';b.disabled=false}var status=$('aggregateCopyStatus');if(status){status.textContent='';status.className='aggregate-copy-status'}}
- e=$('copyDirect');if(e)e.addEventListener('click',function(){var a=$('direct'),v=a?a.textContent.trim():'';var status=$('aggregateCopyStatus');var notice=$('aggregateCopyNotice');var done=function(){e.textContent='已复制';if(status){status.textContent='';status.className='aggregate-copy-status';}if(notice){notice.textContent='已复制';notice.style.display='block';window.clearTimeout(window.__aggregateCopyNoticeTimer);window.__aggregateCopyNoticeTimer=window.setTimeout(function(){notice.style.display='none'},1500)}window.setTimeout(function(){if(e)e.textContent='复制'},1600)};var fail=function(){if(notice){notice.textContent='复制失败，请手动复制';notice.style.display='block';window.clearTimeout(window.__aggregateCopyNoticeTimer);window.__aggregateCopyNoticeTimer=window.setTimeout(function(){notice.style.display='none'},1800)}};if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(v).then(done).catch(fail);else{var ta=document.createElement('textarea');ta.value=v;document.body.appendChild(ta);ta.select();try{document.execCommand('copy');done()}catch(err){fail()}ta.remove()}});var rm=$('aggregateResultModal');if(rm){rm.addEventListener('click',function(ev){if(ev.target===rm){rm.style.display='none';resetAggregateResult()}});document.addEventListener('keydown',function(ev){if(ev.key==='Escape'){rm.style.display='none';resetAggregateResult()}})}
+function resetAggregateResult(){var q=$('aggregateResultQr');if(q){q.innerHTML='';q.style.display='block'}var b=$('copyDirect');if(b){b.textContent='复制';b.disabled=false}var d=$('destroyDirect');if(d){d.textContent='销毁';d.disabled=false}var status=$('aggregateCopyStatus');if(status){status.textContent='';status.className='aggregate-copy-status'}}
+ e=$('copyDirect');if(e)e.addEventListener('click',function(){var a=$('direct'),v=a?a.textContent.trim():'';var done=function(){e.textContent='已复制';aggregateNotice('已复制');window.setTimeout(function(){if(e)e.textContent='复制'},1600)};var fail=function(){aggregateNotice('复制失败，请手动复制',true)};if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(v).then(done).catch(fail);else{var ta=document.createElement('textarea');ta.value=v;document.body.appendChild(ta);ta.select();try{document.execCommand('copy');done()}catch(err){fail()}ta.remove()}});e=$('destroyDirect');if(e)e.addEventListener('click',function(){var token=tokenFromSubscriptionUrl(($('direct')||{}).href||'');destroyGeneratedLink(token,e,true)});e=$('aggregateResultClose');if(e)e.addEventListener('click',closeAggregateResult);var rm=$('aggregateResultModal');if(rm){rm.addEventListener('click',function(ev){if(ev.target===rm)closeAggregateResult()});document.addEventListener('keydown',function(ev){if(ev.key==='Escape'){closeAggregateResult()}})}
  e=$('generate');if(e)e.addEventListener('click',function(){
   var sources=$('sources')?$('sources').value.trim():'',a=$('apiPicker'),c=$('configPicker');if(!a||!c)return;
   var apiCustom=a.value==='__custom',configCustom=c.value==='__custom',apiValue=currentValue('api'),configValue=currentValue('config');
   if(!sources)return alert('请输入订阅链接');if(!apiValue)return alert('请选择订阅转换后端');if(!configValue)return alert('请选择订阅转换规则');
   var body={sources:sources,apiIds:apiCustom?[]:[currentId('api')],apiCustom:apiCustom,apiUrl:apiCustom?apiValue:'',configIds:configCustom?[]:[currentId('config')],configCustom:configCustom,configUrl:configCustom?configValue:'',noAds:($('noAds')?$('noAds').value:'').trim()};
   var button=$('generate');button.disabled=true;button.textContent='生成聚合订阅链接';
-  fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},cache:'no-store',body:JSON.stringify(body)}).then(function(r){return r.json().then(function(d){return {r:r,d:d}})}).then(function(x){if(!x.r.ok||!x.d.ok)throw new Error(x.d.error||'生成失败');$('direct').textContent=x.d.subscription_url;$('direct').href=x.d.subscription_url;var resultModal=$('aggregateResultModal');if(resultModal){resultModal.style.display='flex';var copyButton=$('copyDirect');if(copyButton)copyButton.textContent='复制';var status=$('aggregateCopyStatus');if(status){status.textContent='';status.className='aggregate-copy-status'}renderAggregateQr(x.d.subscription_url)}}).catch(function(err){alert(err.message||'生成失败')}).finally(function(){button.disabled=false;button.textContent='生成聚合订阅链接'})
+  fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},cache:'no-store',body:JSON.stringify(body)}).then(function(r){return r.json().then(function(d){return {r:r,d:d}})}).then(function(x){if(!x.r.ok||!x.d.ok)throw new Error(x.d.error||'生成失败');rememberGeneratedLink(x.d.subscription_url);$('direct').textContent=x.d.subscription_url;$('direct').href=x.d.subscription_url;var resultModal=$('aggregateResultModal');if(resultModal){resultModal.style.display='flex';var copyButton=$('copyDirect');if(copyButton)copyButton.textContent='复制';var destroyButton=$('destroyDirect');if(destroyButton){destroyButton.textContent='销毁';destroyButton.disabled=false}var status=$('aggregateCopyStatus');if(status){status.textContent='';status.className='aggregate-copy-status'}renderAggregateQr(x.d.subscription_url)}}).catch(function(err){alert(err.message||'生成失败')}).finally(function(){button.disabled=false;button.textContent='生成聚合订阅链接'})
  })
 }
 
@@ -347,6 +406,9 @@ async function handleRequest(request, env) {
         }
         if (url.pathname === '/api/generate' && request.method === 'POST') {
             return await handlePublicGenerate(request, env, url);
+        }
+        if (url.pathname === '/api/destroy' && request.method === 'POST') {
+            return await handlePublicDestroy(request, env);
         }
 
         // ==================== 管理后台 API ====================
@@ -1083,6 +1145,26 @@ async function handlePublicGenerate(request,env,requestUrl){
         const subscriptionUrl=`${requestUrl.origin}/${encodeURIComponent(token)}`;
         return jsonResponse({ok:true,url:item,subscription_url:subscriptionUrl},200,headers);
     }catch(e){return jsonResponse({ok:false,error:e?.message||String(e)},500);}
+}
+async function handlePublicDestroy(request,env){
+    if(!env.KV) return jsonResponse({ok:false,error:'未绑定 KV'},500);
+    try{
+        const data=await request.json();
+        let token=String(data.token||'').trim();
+        if(!token){
+            const rawUrl=String(data.url||'').trim();
+            if(rawUrl){
+                try{ token=decodeURIComponent(new URL(rawUrl).pathname.replace(/^\/+/,'')); }catch(e){}
+            }
+        }
+        token=String(token||'').trim().replace(/^\/+|\/+$/g,'');
+        if(!token) return jsonResponse({ok:false,error:'缺少订阅链接标识'},400);
+        if(!/^[A-Za-z0-9]+$/.test(token)||token.length>128) return jsonResponse({ok:false,error:'订阅链接标识无效'},400);
+        await env.KV.delete(`${URL_PREFIX}${token}`);
+        return jsonResponse({ok:true,token});
+    }catch(e){
+        return jsonResponse({ok:false,error:e?.message||String(e)},500);
+    }
 }
 async function generateSubscription(request, env, sourceList, runtime, token) {
     let allSources = [...new Set((sourceList || []).map(x => String(x).trim()).filter(Boolean))];
@@ -2007,8 +2089,8 @@ ${getSubUIStyles()}
 .current-api-input{width:100%;height:42px;min-width:0}.current-config-input{width:100%;min-height:70px;line-height:1.5;word-break:break-all;overflow-wrap:anywhere}.current-config-link{display:flex;align-items:center;padding:10px 12px;border:1px solid rgba(229,229,223,.8);border-radius:8px;background:rgba(250,250,250,.7);box-sizing:border-box;color:#1f4b99;text-decoration:none;cursor:pointer}.current-api-input.current-config-link{height:42px;min-height:42px}.current-config-link:hover{text-decoration:none;border-color:#1f4b99;box-shadow:0 0 0 2px rgba(31,75,153,.10);background:rgba(31,75,153,.04)}.current-config-link:empty{color:#888}.current-config-link:focus-visible{text-decoration:none;outline:none;border-color:#1f4b99;box-shadow:0 0 0 3px rgba(31,75,153,.14)}
 .edit-custom{display:none;flex:0 0 auto;min-width:72px}.status-box{margin-top:12px}.status-title{font-size:13px;font-weight:700;margin:0 0 7px}.status-list{display:grid;gap:7px}
 .status-item{padding:8px 10px;border-radius:9px;font-weight:650;word-break:break-all}.status-item.wait{background:rgba(255,152,0,.1);border:1px solid rgba(255,152,0,.2);color:#f57c00}.status-item.ok{background:rgba(76,175,80,.12);border:1px solid rgba(76,175,80,.25);color:#2e7d32}.status-item.bad{background:rgba(244,67,54,.1);border:1px solid rgba(244,67,54,.22);color:#c62828}
-.custom-modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.42);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);display:none;align-items:center;justify-content:center;z-index:1200;padding:20px}.custom-modal{width:min(480px,100%);background:rgba(255,255,255,.96);border:1px solid rgba(229,229,223,.9);border-radius:18px;padding:20px;box-shadow:0 18px 50px rgba(0,0,0,.22)}.custom-modal h3{margin:0;font-size:17px}.custom-modal p{margin:6px 0 14px;color:#888;font-size:12px}.custom-modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}.aggregate-result-overlay{position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.42);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);overflow:auto;padding:20px}.aggregate-result-modal{width:min(620px,calc(100vw - 40px));margin:auto;transition:height .2s ease,transform .2s ease}.aggregate-result-url{display:block;width:100%;padding:12px 14px;margin:14px 0 0;border:1px solid rgba(229,229,223,.8);border-radius:10px;background:rgba(250,250,250,.7);color:#1f4b99;word-break:break-all;overflow-wrap:anywhere;line-height:1.55;user-select:text;text-decoration:none;box-sizing:border-box}.aggregate-result-url:hover{text-decoration:none;border-color:#1f4b99;box-shadow:0 0 0 2px rgba(31,75,153,.10)}.aggregate-result-modal>#copyDirect{display:flex;width:220px;min-height:40px;margin:14px auto 0}.aggregate-result-modal>#copyDirect:hover{box-shadow:0 0 0 2px rgba(52,58,64,.10)}.aggregate-result-qr{display:block;margin:16px auto 0;padding:12px;width:max-content;max-width:100%;box-sizing:border-box;background:#fff;border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.18)}.aggregate-copy-status{min-height:18px;margin:8px 0 0;text-align:center;font-size:13px;font-weight:700;color:transparent}.aggregate-copy-status.success{color:#2e7d32}.aggregate-copy-status.error{color:#c62828}
-@media(prefers-color-scheme:dark){.native-picker{background:#111;color:#f1f1f1;border-color:rgba(255,255,255,.14)}.native-picker option{background:#1b1b1b;color:#f1f1f1}.current-api-input,.current-config-input{background:rgba(0,0,0,.3);color:#64b5f6;border-color:rgba(255,255,255,.12)}.current-config-link{color:#64b5f6;background:rgba(0,0,0,.3);border-color:rgba(255,255,255,.12)}.current-config-link:hover{color:#64b5f6;text-decoration:none;border-color:#64b5f6;background:rgba(100,181,246,.08);box-shadow:0 0 0 2px rgba(100,181,246,.10)}.status-item.ok{background:rgba(129,199,132,.1);color:#81c784;border-color:rgba(129,199,132,.2)}.status-item.bad{background:rgba(229,115,115,.1);color:#e57373;border-color:rgba(229,115,115,.2)}.status-item.wait{background:rgba(255,183,77,.1);color:#ffb74d;border-color:rgba(255,183,77,.2)}.custom-modal{background:rgba(30,30,30,.97);border-color:rgba(255,255,255,.1)}.aggregate-result-url{background:rgba(0,0,0,.3);border-color:rgba(255,255,255,.12);color:#64b5f6}.aggregate-result-url:hover{color:#64b5f6;border-color:#64b5f6;background:rgba(100,181,246,.08);box-shadow:0 0 0 2px rgba(100,181,246,.10)}.aggregate-result-qr{background:#fff}.aggregate-result-modal>#copyDirect{margin-top:16px}.aggregate-copy-status.success{color:#81c784}.aggregate-copy-status.error{color:#e57373}}
+.custom-modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.42);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);display:none;align-items:center;justify-content:center;z-index:1200;padding:20px}.custom-modal{width:min(480px,100%);background:rgba(255,255,255,.96);border:1px solid rgba(229,229,223,.9);border-radius:18px;padding:20px;box-shadow:0 18px 50px rgba(0,0,0,.22)}.custom-modal h3{margin:0;font-size:17px}.custom-modal p{margin:6px 0 14px;color:#888;font-size:12px}.custom-modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}.aggregate-result-overlay{position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.42);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);overflow:auto;padding:20px}.aggregate-result-modal{position:relative;width:min(620px,calc(100vw - 40px));margin:auto;transition:height .2s ease,transform .2s ease}.aggregate-result-close{position:absolute;top:10px;right:10px;width:32px;height:32px;border:0;border-radius:50%;background:transparent;color:#777;font-size:24px;line-height:32px;text-align:center;cursor:pointer}.aggregate-result-close:hover{background:rgba(0,0,0,.07);color:#222}.aggregate-result-url{display:block;width:100%;padding:12px 14px;margin:14px 0 0;border:1px solid rgba(229,229,223,.8);border-radius:10px;background:rgba(250,250,250,.7);color:#1f4b99;word-break:break-all;overflow-wrap:anywhere;line-height:1.55;user-select:text;text-decoration:none;box-sizing:border-box}.aggregate-result-url:hover{text-decoration:none;border-color:#1f4b99;box-shadow:0 0 0 2px rgba(31,75,153,.10)}.aggregate-result-actions{display:flex;justify-content:center;gap:10px;margin:14px auto 0}.aggregate-result-actions .button{width:160px;min-height:40px}.aggregate-result-actions .aggregate-destroy-btn{background:#d93025;color:#fff;border-color:#d93025}.aggregate-result-actions .aggregate-destroy-btn:hover{background:#b91c1c;color:#fff;box-shadow:0 0 0 2px rgba(217,48,37,.12)}.aggregate-result-qr{display:block;margin:16px auto 0;padding:12px;width:max-content;max-width:100%;box-sizing:border-box;background:#fff;border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.18)}.aggregate-copy-status{min-height:18px;margin:8px 0 0;text-align:center;font-size:13px;font-weight:700;color:transparent}.aggregate-copy-status.success{color:#2e7d32}.aggregate-copy-status.error{color:#c62828}.generated-links-panel{margin-top:14px}.generated-links-list{display:grid;gap:10px;margin-top:10px}.generated-link-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:center}.generated-link-url{display:block;min-width:0;padding:11px 13px;border:1px solid rgba(229,229,223,.8);border-radius:10px;background:rgba(250,250,250,.7);color:#1f4b99;word-break:break-all;overflow-wrap:anywhere;line-height:1.45;text-decoration:none;box-sizing:border-box}.generated-link-url:hover{text-decoration:none;border-color:#1f4b99;box-shadow:0 0 0 2px rgba(31,75,153,.10)}.generated-link-destroy{width:84px;min-height:40px;background:#d93025!important;color:#fff!important;border-color:#d93025!important}.generated-link-destroy:hover{background:#b91c1c!important;box-shadow:0 0 0 2px rgba(217,48,37,.12)}
+@media(prefers-color-scheme:dark){.native-picker{background:#111;color:#f1f1f1;border-color:rgba(255,255,255,.14)}.native-picker option{background:#1b1b1b;color:#f1f1f1}.current-api-input,.current-config-input{background:rgba(0,0,0,.3);color:#64b5f6;border-color:rgba(255,255,255,.12)}.current-config-link{color:#64b5f6;background:rgba(0,0,0,.3);border-color:rgba(255,255,255,.12)}.current-config-link:hover{color:#64b5f6;text-decoration:none;border-color:#64b5f6;background:rgba(100,181,246,.08);box-shadow:0 0 0 2px rgba(100,181,246,.10)}.status-item.ok{background:rgba(129,199,132,.1);color:#81c784;border-color:rgba(129,199,132,.2)}.status-item.bad{background:rgba(229,115,115,.1);color:#e57373;border-color:rgba(229,115,115,.2)}.status-item.wait{background:rgba(255,183,77,.1);color:#ffb74d;border-color:rgba(255,183,77,.2)}.custom-modal{background:rgba(30,30,30,.97);border-color:rgba(255,255,255,.1)}.aggregate-result-url{background:rgba(0,0,0,.3);border-color:rgba(255,255,255,.12);color:#64b5f6}.aggregate-result-url:hover{color:#64b5f6;border-color:#64b5f6;background:rgba(100,181,246,.08);box-shadow:0 0 0 2px rgba(100,181,246,.10)}.aggregate-result-qr{background:#fff}.aggregate-result-close{color:#aaa}.aggregate-result-close:hover{background:rgba(255,255,255,.08);color:#fff}.aggregate-result-actions .aggregate-destroy-btn{background:#c62828;color:#fff;border-color:#c62828}.aggregate-result-actions .aggregate-destroy-btn:hover{background:#a61f1f}.aggregate-result-modal>#copyDirect{margin-top:16px}.aggregate-copy-status.success{color:#81c784}.aggregate-copy-status.error{color:#e57373}.generated-link-url{background:rgba(0,0,0,.3);color:#64b5f6;border-color:rgba(255,255,255,.12)}.generated-link-url:hover{color:#64b5f6;border-color:#64b5f6;background:rgba(100,181,246,.08);box-shadow:0 0 0 2px rgba(100,181,246,.10)}}
 </style>
 </head>
 <body>
@@ -2042,8 +2124,9 @@ ${configs.map(x=>`<option value="${esc(x.url)}" data-id="${esc(x.id)}" ${x.id===
 
 <section class="panel"><h2 class="section-title">排除节点</h2><div class="section-note">公开使用。每行填写一个关键词，包含关键词的节点会被排除。</div><div class="field"><textarea id="noAds" placeholder="例如：t.me&#10;广告&#10;example.com">${esc(noAds)}</textarea></div></section>
 <button class="primary" id="generate" type="button">生成聚合订阅链接</button>
+<section class="panel generated-links-panel" id="generatedLinksPanel" style="display:none"><h2 class="section-title">已生成的聚合订阅链接</h2><div class="section-note">根据本机浏览器缓存显示你生成过的链接。链接框可直接打开，销毁后链接将会失效。</div><div id="generatedLinksList" class="generated-links-list"></div></section>
 </main>
-<div id="aggregateResultModal" class="custom-modal-overlay aggregate-result-overlay"><div class="custom-modal aggregate-result-modal"><h3>聚合订阅链接</h3><p>二维码可直接扫码使用，复制下方订阅链接即可使用。</p><a class="aggregate-result-url" id="direct" href="#" target="_blank" rel="noopener noreferrer"></a><div id="aggregateResultQr" class="aggregate-result-qr"></div><button type="button" class="button" id="copyDirect">复制</button><div id="aggregateCopyStatus" class="aggregate-copy-status" aria-live="polite"></div></div></div><div id="aggregateCopyNotice" class="toast"></div>
+<div id="aggregateResultModal" class="custom-modal-overlay aggregate-result-overlay"><div class="custom-modal aggregate-result-modal"><button type="button" class="aggregate-result-close" id="aggregateResultClose" aria-label="关闭">×</button><h3>聚合订阅链接</h3><p>二维码可直接扫码使用，复制下方订阅链接即可使用。销毁后链接将会失效。</p><a class="aggregate-result-url" id="direct" href="#" target="_blank" rel="noopener noreferrer"></a><div id="aggregateResultQr" class="aggregate-result-qr"></div><div class="aggregate-result-actions"><button type="button" class="button" id="copyDirect">复制</button><button type="button" class="button aggregate-destroy-btn" id="destroyDirect">销毁</button></div><div id="aggregateCopyStatus" class="aggregate-copy-status" aria-live="polite"></div></div></div><div id="aggregateCopyNotice" class="toast"></div>
 
 <div id="customApiModal" class="custom-modal-overlay"><div class="custom-modal"><h3>自定义订阅转换后端</h3><p>输入你自己的 SUBAPI 地址。</p><input id="customApiInput" placeholder="https://subapi.example.com"><div class="custom-modal-actions"><button type="button" class="button secondary" id="cancelApiCustom">取消</button><button type="button" class="button" id="saveApiCustom">保存</button></div></div></div>
 <div id="customConfigModal" class="custom-modal-overlay"><div class="custom-modal"><h3>自定义订阅转换规则</h3><p>输入你自己的 SUBCONFIG 地址。</p><input id="customConfigInput" placeholder="https://example.com/config.ini"><div class="custom-modal-actions"><button type="button" class="button secondary" id="cancelConfigCustom">取消</button><button type="button" class="button" id="saveConfigCustom">保存</button></div></div></div>
@@ -2062,7 +2145,7 @@ function getSubUIStyles(){return getToolStyles()+`
 .checks{display:grid;gap:8px}.check{display:grid;grid-template-columns:18px minmax(0,1fr);align-items:center;gap:8px;margin:0;padding:10px;border:1px solid rgba(229,229,223,.6);border-radius:10px;background:rgba(255,255,255,.5);cursor:pointer}
 .check input{width:18px;height:18px;margin:0}.check span{font-weight:600}.check small{grid-column:2;color:#888;font-size:12px;word-break:break-all;overflow-wrap:anywhere}
 .primary{width:100%;min-height:42px;margin-top:12px}.result-panel[hidden]{display:none}.result-label{margin-top:12px;margin-bottom:6px;font-size:12px;font-weight:600;color:#666}.result-url{padding:10px;border:1px solid rgba(229,229,223,.8);border-radius:8px;background:rgba(250,250,250,.7);color:#1f4b99;word-break:break-all;overflow-wrap:anywhere}
-@media(max-width:600px){.aggregate-result-modal{width:calc(100vw - 40px)}.aggregate-result-modal>#copyDirect{width:190px}.row{grid-template-columns:1fr}.page.app-shell{width:calc(100% - 28px);margin-left:14px;margin-right:14px}}
+@media(max-width:600px){.aggregate-result-modal{width:calc(100vw - 40px)}.aggregate-result-actions{gap:8px}.aggregate-result-actions .button{width:calc(50% - 4px)}.row{grid-template-columns:1fr}.generated-link-row{grid-template-columns:minmax(0,1fr) 76px}.generated-link-destroy{width:76px;padding-left:8px;padding-right:8px}.page.app-shell{width:calc(100% - 28px);margin-left:14px;margin-right:14px}}
 @media(prefers-color-scheme:dark){body{background:#000;background-image:radial-gradient(circle at 0% 28%,rgba(0,188,212,.18),transparent 24%),radial-gradient(circle at 100% 100%,rgba(0,120,70,.22),transparent 32%),linear-gradient(180deg,#000 0%,#020807 58%,#00140b 100%);background-attachment:fixed;color:#f4f7f8}.page.app-shell{background:linear-gradient(135deg,rgba(1,5,6,.98) 0%,rgba(2,10,10,.96) 48%,rgba(0,54,35,.92) 100%);border-color:rgba(255,255,255,.13);box-shadow:0 20px 70px rgba(0,0,0,.55)}.header{border-bottom-color:rgba(255,255,255,.10)}.title{color:#fff}.subtitle{color:#9aa7b5}.backend-version-card{background:linear-gradient(135deg,rgba(4,10,14,.98) 0%,rgba(3,18,20,.98) 48%,rgba(0,65,42,.94) 100%);border-color:rgba(255,255,255,.16);box-shadow:0 12px 36px rgba(0,40,25,.28)}.backend-version-label{color:#91a0ae}.backend-version-value{color:#fff}.panel{background:rgba(8,12,14,.78);border-color:rgba(255,255,255,.10)}.section-note{color:#9aa7b5}.field input,.field textarea,.native-picker,.current-api-input,.current-config-input,.current-config-link{background:rgba(2,6,8,.82);border-color:rgba(255,255,255,.13);color:#f3f6f7}.native-picker option{background:#0b1012;color:#f3f6f7}.check{background:rgba(15,22,24,.7);border-color:rgba(255,255,255,.10)}.check small{color:#8e9aa6}.result-label{color:#aab4be}.result-url{background:rgba(2,6,8,.72);color:#64b5f6;border-color:rgba(255,255,255,.12)}}
 `;}
 
