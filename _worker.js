@@ -449,8 +449,15 @@ async function handleRequest(request, env) {
         }
 
         // ==================== 解析公开订阅 URL ====================
-        let publicToken = queryToken;
-        if (!publicToken && url.pathname !== '/') publicToken = decodeURIComponent(url.pathname.slice(1));
+        let publicToken = String(queryToken || '').trim();
+        if (publicToken) {
+            try { publicToken = decodeURIComponent(publicToken); } catch (e) {}
+        }
+        publicToken = publicToken.replace(/^\/+|\/+$/g, '');
+        if (!publicToken && url.pathname !== '/') {
+            try { publicToken = decodeURIComponent(url.pathname); } catch (e) { publicToken = url.pathname; }
+            publicToken = String(publicToken || '').replace(/^\/+|\/+$/g, '');
+        }
 
         let tokenData = null;
         if (env.KV && publicToken) tokenData = await getToken(env, publicToken);
@@ -631,19 +638,46 @@ async function getSub(env, id) {
 
 async function getToken(env, token) {
     if (!env.KV || !token) return null;
-    for (let attempt = 0; attempt < 5; attempt++) {
+    const cleanToken = String(token).trim().replace(/^\/+|\/+$/g, '');
+    if (!cleanToken) return null;
+
+    for (let attempt = 0; attempt < 6; attempt++) {
+        let item = null;
+
+        // 先读取 URL 记录本身。不要让共享 AGG 数据读取失败影响 URL 本身。
         try {
-            const item = await env.KV.get(`${URL_PREFIX}${token}`, 'json');
-            if (item) {
-                const aggId = String(item.aggId || '').trim();
-                if (aggId) {
-                    const shared = await env.KV.get(`${AGG_PREFIX}${aggId}`, 'json');
-                    if (shared && typeof shared === 'object') return { ...shared, ...item, aggId };
+            const raw = await env.KV.get(`${URL_PREFIX}${cleanToken}`);
+            if (raw) {
+                try {
+                    item = JSON.parse(raw);
+                } catch (e) {
+                    item = null;
                 }
-                return item;
             }
         } catch (e) {}
-        if (attempt < 4) await new Promise(resolve => setTimeout(resolve, 120 * (attempt + 1)));
+
+        if (item && typeof item === 'object') {
+            const aggId = String(item.aggId || '').trim();
+            if (aggId) {
+                try {
+                    const rawShared = await env.KV.get(`${AGG_PREFIX}${aggId}`);
+                    if (rawShared) {
+                        try {
+                            const shared = JSON.parse(rawShared);
+                            if (shared && typeof shared === 'object') {
+                                return { ...shared, ...item, aggId };
+                            }
+                        } catch (e) {}
+                    }
+                } catch (e) {}
+            }
+            // 无论 AGG 是否暂时可读，URL 本身都必须继续作为有效入口。
+            return item;
+        }
+
+        if (attempt < 5) {
+            await new Promise(resolve => setTimeout(resolve, 150 * (attempt + 1)));
+        }
     }
     return null;
 }
