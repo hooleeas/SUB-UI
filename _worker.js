@@ -1586,37 +1586,21 @@ async function nginx(titleName) {
 <head>
 <title>${escapeHTML(titleName)}</title>
 <style>
-/* SUB-UI mobile SUBAPI / SUBCONFIG toolbar layout */
+/* SUB-UI mobile SUBAPI/SUBCONFIG layout */
 @media (max-width: 768px) {
-    /* 管理后台顶部选择框区域 */
-    select,
-    button {
-        max-width: 100%;
-    }
-
-    /* 兼容不同版本 class 命名 */
-    .toolbar,
-    .admin-toolbar,
-    .provider-actions,
-    .backend-actions,
-    .config-actions,
-    .selector-row,
-    .action-row {
+    .sub-head-actions {
+        display: flex !important;
         flex-direction: column !important;
         align-items: stretch !important;
         width: 100% !important;
         gap: 12px !important;
     }
 
-    .toolbar > *,
-    .admin-toolbar > *,
-    .provider-actions > *,
-    .backend-actions > *,
-    .config-actions > *,
-    .selector-row > *,
-    .action-row > * {
+    .sub-head-actions .default-provider-select,
+    .sub-head-actions > button {
         width: 100% !important;
-        flex: none !important;
+        min-width: 0 !important;
+        height: 44px;
     }
 }
 
@@ -2448,3 +2432,4 @@ function renderAdminPage(url,env,settings){
 <div id="securityModal" class="modal-overlay"><div class="modal-content"><h2 class="section-title">安全</h2><div class="section-note">修改管理员账号和密码。修改密码时必须输入两次；两次留空表示保持原密码。</div><div class="field"><label for="securityUser">管理员账号</label><input id="securityUser" value="${esc(settings.user||'')}" autocomplete="username"></div><div class="field"><label for="securityPass">管理员密码</label><input id="securityPass" type="password" placeholder="留空保持原密码" autocomplete="new-password"></div><div class="field"><label for="securityPass2">确认管理员密码</label><input id="securityPass2" type="password" placeholder="再次输入新密码" autocomplete="new-password"></div><div class="modal-actions"><button type="button" class="secondary" data-close-modal="securityModal">取消</button><button type="button" id="saveSecurity">保存</button></div></div></div>
 <div id="siteModal" class="modal-overlay"><div class="modal-content"><h2 class="section-title">站点</h2><div class="field"><label for="siteName">站点标题</label><input id="siteName" value="${esc(settings.subName||'SUB')}" placeholder="SUB"></div><div class="field"><label for="sitePath">管理员路径</label><input id="sitePath" value="${esc(settings.adminPath||'admin')}" placeholder="admin"></div><div class="field"><label for="siteLogo">全站 Logo 地址</label><input id="siteLogo" value="${esc(settings.siteLogo||'')}" placeholder="https://example.com/favicon.png" type="url"><div class="section-note">支持 http:// 或 https:// 直链；留空则不设置。此 Logo 会用于全站标签栏。</div></div><div class="modal-actions"><button type="button" class="secondary" data-close-modal="siteModal">取消</button><button type="button" id="saveSite">保存</button></div></div></div>
 <script>document.addEventListener('DOMContentLoaded',function(){fetch('/api/admin',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','Accept':'application/json'},body:JSON.stringify({type:'json_list',query:''})}).then(function(r){return r.json()}).then(function(d){var e=document.getElementById('jsonCountValue');if(e)e.textContent=d&&d.ok?String(d.count||0)+' 个':'读取失败'}).catch(function(){var e=document.getElementById('jsonCountValue');if(e)e.textContent='读取失败'})});</script><script src="/__cfsubs.js" defer></script></body></html>`;
+}
