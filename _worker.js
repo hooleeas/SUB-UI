@@ -2,25 +2,20 @@ var __defProp = Object.defineProperty;
 var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
 
 // _worker.js
-var mytoken = "SUB-UI";
-var FileName = "SUB";
-var SiteLogo = "";
-var SUBUpdateTime = 6;
-var total = 99;
-var timestamp = 41023296e5;
-var subConverter = "";
-var subConfig = "";
-var subProtocol = "https";
-var config_noAds = "";
-var fakeMode = "";
-var fakeUrl = "";
-var fakeUrl302 = "";
-var fakeCode = "";
+var MYTOKEN = "SUB-UI";
+var FILENAME = "SUB";
+var SITELOGO = "";
+var DEFAULT_UPDATE_MINUTES = 60;
+var TOTAL = 99;
+var TIMESTAMP = 41023296e5;
 var SUB_PREFIX = "SUB:";
 var URL_PREFIX = "URL:";
-var ID_CHARS = "ABCDEFGHJKMNPQRSTWXYZabcdefghijkmnpqrstwxyz2345678";
+var ID_CHARS = "ABCDEFGHJKMNPQRSTWXYZ2345678";
 var DEFAULT_ADMIN_PATH = "admin";
-var worker_default = {
+function normalizeUpdateEnabled(value) {
+  return value !== false && value !== 0 && value !== "false" && value !== "0";
+}
+var WORKER_DEFAULT = {
   async fetch(request, env) {
     try {
       return await handleRequest(request, env);
@@ -200,12 +195,17 @@ function randomLinkPath(){
  try{if(crypto&&crypto.randomUUID)return crypto.randomUUID()}catch(e){}
  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g,function(c){var r=Math.random()*16|0,v=c==='x'?r:(r&3|8);return v.toString(16)})
 }
+function focusUnlessMobile(input){if(input&&!(window.matchMedia&&window.matchMedia('(max-width: 600px)').matches))input.focus()}
 function initPublic(){
  if(window.__CF_SUBS_PUBLIC_READY)return;window.__CF_SUBS_PUBLIC_READY=true;
  var ap=$('apiPicker'),cp=$('configPicker');
- var editNoAds=$('editNoAds'),noAdsField=$('noAdsField');
- if(editNoAds&&noAdsField)editNoAds.addEventListener('click',function(){var expanded=noAdsField.style.display!=='none';noAdsField.style.display=expanded?'none':'block';editNoAds.textContent=expanded?'编辑':'隐藏';if(!expanded){var input=$('noAds');if(input)input.focus()}});
- var randomPath=$('randomLinkPath'),pathInput=$('linkPath');if(randomPath&&pathInput)randomPath.addEventListener('click',function(){pathInput.value=randomLinkPath();pathInput.focus()});
+ var advancedToggle=$('advancedFeaturesToggle'),advancedContent=$('advancedFeaturesContent');
+ var noAdsInput=$('noAds'),noAdsCount=$('noAdsCount');
+ function updateNoAdsCount(){if(noAdsCount)noAdsCount.textContent='\u5C4F\u853D\u89C4\u5219\u6570 '+(noAdsInput?noAdsInput.value.split(/\r?\n/).filter(function(line){return line.trim()}).length:0)}
+ if(noAdsInput)noAdsInput.addEventListener('input',updateNoAdsCount);
+ updateNoAdsCount();
+ if(advancedToggle&&advancedContent)advancedToggle.addEventListener('click',function(){var expanded=advancedToggle.getAttribute('aria-expanded')==='true';advancedToggle.setAttribute('aria-expanded',String(!expanded));advancedContent.hidden=expanded});
+ var randomPath=$('randomLinkPath'),pathInput=$('linkPath');if(randomPath&&pathInput)randomPath.addEventListener('click',function(){pathInput.value=randomLinkPath();focusUnlessMobile(pathInput)});
  if(ap){PUBLIC_STATE.apiId=currentId('api');ap.addEventListener('change',function(){onPickerChange('api')})}
  if(cp){PUBLIC_STATE.configId=currentId('config');cp.addEventListener('change',function(){onPickerChange('config')})}
  var e=$('editApiCustom');if(e)e.addEventListener('click',function(){openCustom('api')});e=$('editConfigCustom');if(e)e.addEventListener('click',function(){openCustom('config')});
@@ -221,7 +221,7 @@ function resetAggregateResult(){var q=$('aggregateResultQr');if(q){q.innerHTML='
   var sources=$('sources')?$('sources').value.trim():'',a=$('apiPicker'),c=$('configPicker');if(!a||!c)return;
   var apiCustom=a.value==='__custom',configCustom=c.value==='__custom',apiValue=currentValue('api'),configValue=currentValue('config');
   if(!sources)return alert('请输入订阅链接');if(!apiValue)return alert('请选择订阅转换后端');if(!configValue)return alert('请选择订阅转换规则');
-  var path=($('linkPath')?$('linkPath').value:'').trim();if(path.length<3)return alert('链接路径至少需要 3 个字符');var destroyKey=($('destroyKey')?$('destroyKey').value:'').trim();CURRENT_DESTROY_KEY=destroyKey;var body={path:path,sources:sources,apiIds:apiCustom?[]:[currentId('api')],apiCustom:apiCustom,apiUrl:apiCustom?apiValue:'',configIds:configCustom?[]:[currentId('config')],configCustom:configCustom,configUrl:configCustom?configValue:'',noAds:($('noAds')?$('noAds').value:'').trim(),destroyKey:destroyKey};
+  var pathInput=$('linkPath'),path=pathInput?pathInput.value.trim():'';if(!path){path=randomLinkPath();if(pathInput)pathInput.value=path}if(path.length<3)return alert('自定义链接路径至少需要 3 个字符');var updateInput=$('recommendedUpdateMinutes'),updateMinutes=Number(updateInput?updateInput.value:DEFAULT_UPDATE_MINUTES);if(!Number.isSafeInteger(updateMinutes)||updateMinutes<0||updateMinutes>525600)return alert('推荐更新时间必须是 0 到 525600 之间的整数分钟');var destroyKey=($('destroyKey')?$('destroyKey').value:'').trim();CURRENT_DESTROY_KEY=destroyKey;var body={path:path,sources:sources,apiIds:apiCustom?[]:[currentId('api')],apiCustom:apiCustom,apiUrl:apiCustom?apiValue:'',configIds:configCustom?[]:[currentId('config')],configCustom:configCustom,configUrl:configCustom?configValue:'',noAds:($('noAds')?$('noAds').value:'').trim(),update:updateMinutes,updateEnable:$('recommendedUpdateEnable')?$('recommendedUpdateEnable').checked:true,destroyKey:destroyKey};
   var button=$('generate');button.disabled=true;button.textContent='生成聚合订阅链接';
   fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},cache:'no-store',body:JSON.stringify(body)}).then(function(r){return r.json().then(function(d){return {r:r,d:d}})}).then(function(x){if(!x.r.ok||!x.d.ok)throw new Error(x.d.error||'生成失败');rememberGeneratedLink(x.d.subscription_url);$('direct').textContent=x.d.subscription_url;$('direct').href=x.d.subscription_url;var resultModal=$('aggregateResultModal');if(resultModal){resultModal.style.display='flex';var copyButton=$('copyDirect');if(copyButton)copyButton.textContent='复制';var destroyButton=$('destroyDirect');if(destroyButton){destroyButton.textContent='销毁';destroyButton.disabled=false}var status=$('aggregateCopyStatus');if(status){status.textContent='';status.className='aggregate-copy-status'}renderAggregateQr(x.d.subscription_url)}}).catch(function(err){alert(err.message||'生成失败')}).finally(function(){button.disabled=false;button.textContent='生成聚合订阅链接'})
  })
@@ -380,49 +380,26 @@ async function handleRequest(request, env) {
   let adminUser = "";
   let adminPass = "";
   let adminPath = DEFAULT_ADMIN_PATH;
-  fakeUrl = "";
-  fakeUrl302 = "";
-  fakeCode = "";
-  SiteLogo = "";
+  SITELOGO = "";
   if (env.KV) {
     try {
-      const kvConfigStr = await env.KV.get("CONFIG.JSON");
-      if (kvConfigStr) {
-        const kvConfig = JSON.parse(kvConfigStr);
-        FileName = kvConfig.subName || "SUB";
-        subConverter = "";
-        subConfig = "";
-        config_noAds = "";
-        adminUser = kvConfig.user || adminUser;
-        adminPass = kvConfig.pass || adminPass;
-        adminPath = normalizeAdminPath(kvConfig.adminPath) || DEFAULT_ADMIN_PATH;
-        fakeMode = kvConfig.fakeMode !== void 0 ? kvConfig.fakeMode : "";
-        fakeUrl = kvConfig.fakeUrl !== void 0 ? kvConfig.fakeUrl : fakeUrl;
-        fakeUrl302 = kvConfig.fakeUrl302 !== void 0 ? kvConfig.fakeUrl302 : fakeUrl302;
-        fakeCode = kvConfig.fakeCode !== void 0 ? kvConfig.fakeCode : fakeCode;
-        SiteLogo = String(kvConfig.siteLogo || "");
-      }
+      const kvConfig = await getConfig(env);
+      FILENAME = kvConfig.subName || "SUB";
+      adminUser = kvConfig.user || adminUser;
+      adminPass = kvConfig.pass || adminPass;
+      adminPath = normalizeAdminPath(kvConfig.adminPath) || DEFAULT_ADMIN_PATH;
+      SITELOGO = String(kvConfig.siteLogo || "");
     } catch (e) {
       console.error("\u89E3\u6790 KV \u914D\u7F6E\u5931\u8D25", e);
     }
   }
-  const customSubApi = String(subConverter || "").trim();
-  const customSubConfig = String(subConfig || "").trim();
-  const hasCustomApi = !!customSubApi;
-  const hasCustomConfig = !!customSubConfig;
-  subConverter = customSubApi;
-  subConfig = customSubConfig;
-  subProtocol = /^http:\/\//i.test(customSubApi) ? "http" : "https";
-  const effectiveSubConverter = customSubApi.replace(/^https?:\/\//i, "").replace(/\/+$/, "");
-  const effectiveSubProtocol = customSubApi ? subProtocol : "https";
-  const effectiveSubConfig = customSubConfig;
   const currentDate = /* @__PURE__ */ new Date();
   currentDate.setHours(0, 0, 0, 0);
   const timeTemp = Math.ceil(currentDate.getTime() / 1e3);
-  const fakeToken = await MD5MD5(`${mytoken}${timeTemp}`);
-  let UD = Math.floor((timestamp - Date.now()) / timestamp * total * 1099511627776 / 2);
-  total = total * 1099511627776;
-  let expire = Math.floor(timestamp / 1e3);
+  const fakeToken = await MD5MD5(`${MYTOKEN}${timeTemp}`);
+  let UD = Math.floor((TIMESTAMP - Date.now()) / TIMESTAMP * TOTAL * 1099511627776 / 2);
+  TOTAL = TOTAL * 1099511627776;
+  let expire = Math.floor(TIMESTAMP / 1e3);
   const isProxyClientUA = [
     "clash",
     "meta",
@@ -494,25 +471,20 @@ async function handleRequest(request, env) {
   }
   if (url.pathname === "/api/admin" && request.method === "POST") {
     if (isAdminLoginEnabled(adminUser, adminPass)) {
-      const isLoggedIn = await isAdminLoggedIn(request, mytoken, adminUser, adminPass);
+      const isLoggedIn = await isAdminLoggedIn(request, MYTOKEN, adminUser, adminPass);
       if (!isLoggedIn) return jsonResponse({ ok: false, error: "\u672A\u767B\u5F55\u6216\u767B\u5F55\u5DF2\u8FC7\u671F" }, 401);
     }
     return await handleAdmin(request, env, {
       adminUser,
       adminPass,
-      effectiveSubConverter,
-      effectiveSubConfig,
-      effectiveSubProtocol,
-      hasCustomApi,
-      hasCustomConfig,
       adminPath,
-      mytoken,
+      mytoken: MYTOKEN,
       url
     });
   }
   if (url.pathname === `/${adminPath}/json`) {
     if (isAdminLoginEnabled(adminUser, adminPass)) {
-      const isLoggedIn = await isAdminLoggedIn(request, mytoken, adminUser, adminPass);
+      const isLoggedIn = await isAdminLoggedIn(request, MYTOKEN, adminUser, adminPass);
       if (!isLoggedIn) {
         return new Response(renderLoginPage(url), {
           headers: {
@@ -522,7 +494,10 @@ async function handleRequest(request, env) {
         });
       }
     }
-    return new Response(renderJsonManagerPage(url, env, adminPath), {
+    if (request.method === "POST") return await handleAdmin(request, env, { adminPath });
+    if (request.method !== "GET") return new Response("Method Not Allowed", { status: 405 });
+    const entries = await listKVEntries(env);
+    return new Response(renderJsonManagerPage(url, adminPath, entries), {
       headers: {
         "Content-Type": "text/html;charset=utf-8",
         "Cache-Control": "no-store"
@@ -531,10 +506,10 @@ async function handleRequest(request, env) {
   }
   if (url.pathname === `/${adminPath}`) {
     if (isAdminLoginEnabled(adminUser, adminPass)) {
-      const isLoggedIn = await isAdminLoggedIn(request, mytoken, adminUser, adminPass);
+      const isLoggedIn = await isAdminLoggedIn(request, MYTOKEN, adminUser, adminPass);
       if (!isLoggedIn) {
         if (request.method === "POST") {
-          return await handleAdminLogin(request, url, mytoken, adminUser, adminPass);
+          return await handleAdminLogin(request, url, MYTOKEN, adminUser, adminPass);
         }
         return new Response(renderLoginPage(url), {
           headers: {
@@ -547,11 +522,6 @@ async function handleRequest(request, env) {
     return await handleAdmin(request, env, {
       adminUser,
       adminPass,
-      effectiveSubConverter,
-      effectiveSubConfig,
-      effectiveSubProtocol,
-      hasCustomApi,
-      hasCustomConfig,
       adminPath
     });
   }
@@ -604,15 +574,12 @@ async function handleRequest(request, env) {
     env,
     selectedSources,
     {
-      mytoken,
+      mytoken: MYTOKEN,
       fakeToken,
-      effectiveSubConverter,
-      effectiveSubConfig,
-      effectiveSubProtocol,
       userAgent,
       userAgentHeader,
       config_noAds: String(effectiveTokenData?.noAds || ""),
-      FileName,
+      FileName: FILENAME,
       UD,
       expire,
       tokenData: effectiveTokenData
@@ -695,11 +662,44 @@ function upperCaseObject(value) {
   return result;
 }
 __name(upperCaseObject, "upperCaseObject");
+function normalizeConfigData(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const normalized = upperCaseObject(value);
+  const map = {
+    SUBNAME: "subName",
+    SUBAPIS: "subApis",
+    SUBCONFIGS: "subConfigs",
+    DEFAULTSUBAPIID: "defaultSubApiId",
+    DEFAULTSUBCONFIGID: "defaultSubConfigId",
+    USER: "user",
+    PASS: "pass",
+    ADMINPATH: "adminPath",
+    SITELOGO: "siteLogo"
+  };
+  for (const [key, internal] of Object.entries(map)) {
+    if (Object.prototype.hasOwnProperty.call(normalized, key)) {
+      normalized[internal] = normalized[key];
+      delete normalized[key];
+    }
+  }
+  return normalized;
+}
+__name(normalizeConfigData, "normalizeConfigData");
 function normalizeTokenData(value) {
   if (!value || typeof value !== "object") return null;
-  const map = { URL: "url", PATH: "path", SUBSCRIPTIONURL: "subscriptionUrl", NAME: "name", SOURCES: "sources", SUBAPIIDS: "subApiIds", SUBCONFIGIDS: "subConfigIds", SUBAPI: "subApi", SUBAPINAME: "subApiName", SUBCONFIG: "subConfig", SUBCONFIGNAME: "subConfigName", BACKEND: "backend", BACKENDS: "backends", NOADS: "noAds", TARGET: "target", CREATEDAT: "createdAt", UPDATEDAT: "updatedAt", TYPE: "type", DESTROYKEYHASH: "destroyKeyHash" };
+  const map = { URL: "url", PATH: "path", SUBSCRIPTIONURL: "subscriptionUrl", NAME: "name", SOURCES: "sources", SUBAPIID: "subApiId", SUBCONFIGID: "subConfigId", CUSTOMSUBAPI: "customSubApi", CUSTOMSUBCONFIG: "customSubConfig", SUBAPIIDS: "subApiIds", SUBCONFIGIDS: "subConfigIds", SUBAPI: "subApi", SUBAPINAME: "subApiName", SUBCONFIG: "subConfig", SUBCONFIGNAME: "subConfigName", BACKEND: "backend", BACKENDS: "backends", NOADS: "noAds", TARGET: "target", UPDATE: "update", UPDATE_ENABLE: "updateEnable", UPDATEENABLE: "updateEnable", CREATEDAT: "createdAt", UPDATEDAT: "updatedAt", TYPE: "type", DESTROYKEYHASH: "destroyKeyHash" };
   const output = { ...value };
   for (const [key, internal] of Object.entries(map)) if (Object.prototype.hasOwnProperty.call(value, key)) output[internal] = value[key];
+  if (Array.isArray(output.subApiIds)) output.subApiIds = output.subApiIds.map((id) => String(id).toUpperCase());
+  if (Array.isArray(output.subConfigIds)) output.subConfigIds = output.subConfigIds.map((id) => String(id).toUpperCase());
+  const normalizeProviderReferences = (items) => items.map((item) => {
+    const id = String(item?.ID || item?.id || "").trim().toUpperCase();
+    if (id) return { ID: id };
+    const url = String(item?.URL || item?.url || "").trim();
+    return url ? { URL: url } : null;
+  }).filter(Boolean);
+  if (Array.isArray(output.subApi)) output.subApi = normalizeProviderReferences(output.subApi);
+  if (Array.isArray(output.subConfig)) output.subConfig = normalizeProviderReferences(output.subConfig);
   if (output.BACKEND && typeof output.BACKEND === "object") output.backend = { api: output.BACKEND.API, config: output.BACKEND.CONFIG, protocol: output.BACKEND.PROTOCOL };
   if (Array.isArray(output.BACKENDS)) output.backends = output.BACKENDS.map((x) => ({ api: x.API, config: x.CONFIG, protocol: x.PROTOCOL }));
   return output;
@@ -707,15 +707,26 @@ function normalizeTokenData(value) {
 __name(normalizeTokenData, "normalizeTokenData");
 async function getToken(env, token) {
   if (!env.KV || !token) return null;
+  let raw;
   try {
-    const raw = await env.KV.get(`${URL_PREFIX}${token}`);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw), normalized = upperCaseObject(parsed), normalizedRaw = JSON.stringify(normalized);
-    if (normalizedRaw !== raw) await env.KV.put(`${URL_PREFIX}${token}`, normalizedRaw);
-    return normalizeTokenData(normalized);
+    raw = await env.KV.get(`${URL_PREFIX}${token}`);
   } catch (e) {
     return null;
   }
+  if (!raw) return null;
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  const normalized = upperCaseObject(parsed);
+  for (const key of ["SUBAPIIDS", "SUBCONFIGIDS"]) {
+    if (Array.isArray(normalized[key])) normalized[key] = normalized[key].map((id) => String(id).toUpperCase());
+  }
+  const normalizedRaw = JSON.stringify(normalized);
+  if (normalizedRaw !== raw) await env.KV.put(`${URL_PREFIX}${token}`, normalizedRaw);
+  return normalizeTokenData(normalized);
 }
 __name(getToken, "getToken");
 async function listSubs(env) {
@@ -790,6 +801,45 @@ async function handleAdmin(request, env, runtime) {
     }
     try {
       const data = await request.json();
+      if (data.type === "import_all_json") {
+        const payload = data.payload;
+        if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+          return jsonResponse({ ok: false, error: "\u5BFC\u5165\u5185\u5BB9\u5FC5\u987B\u662F\u4E00\u4E2A JSON \u5BF9\u8C61" }, 400);
+        }
+        const entries = Object.entries(payload);
+        const encoder = new TextEncoder();
+        const normalizedEntries = [];
+        for (const [key, value] of entries) {
+          if (!key || encoder.encode(key).length > 512) {
+            return jsonResponse({ ok: false, error: "\u5BFC\u5165\u6587\u4EF6\u4E2D\u5305\u542B\u65E0\u6548\u6216\u8FC7\u957F\u7684 KV \u952E" }, 400);
+          }
+          let text;
+          if (typeof value === "string") {
+            text = value;
+            try {
+              text = JSON.stringify(upperCaseObject(JSON.parse(value)));
+            } catch {
+            }
+          } else {
+            text = JSON.stringify(upperCaseObject(value));
+          }
+          if (encoder.encode(text).length > 25 * 1024 * 1024) {
+            return jsonResponse({ ok: false, error: `KV \u503C\u8D85\u8FC7\u5927\u5C0F\u9650\u5236: ${key}` }, 400);
+          }
+          normalizedEntries.push([key, text]);
+        }
+        let imported = 0;
+        try {
+          for (const [key, value] of normalizedEntries) {
+            await env.KV.put(key, value);
+            imported++;
+          }
+        } catch (error) {
+          console.error("KV backup import failed after partial restore:", error);
+          return jsonResponse({ ok: false, error: `\u5BFC\u5165\u5931\u8D25\uFF0C\u5DF2\u5BFC\u5165 ${imported} \u9879\uFF1A${error?.message || String(error)}` }, 500);
+        }
+        return jsonResponse({ ok: true, count: imported });
+      }
       if (data.type === "json_list") {
         const query = String(data.query || "").trim().slice(0, 500);
         const items = await listJsonManagerItems(env, query);
@@ -826,36 +876,31 @@ async function handleAdmin(request, env, runtime) {
           subName: normalizeName(data.settings?.subName ?? old.subName) || "SUB",
           subApis: normalizeProviderList(data.settings?.subApis ?? old.subApis),
           subConfigs: normalizeProviderList(data.settings?.subConfigs ?? old.subConfigs),
-          defaultSubApiId: String(data.settings?.defaultSubApiId ?? old.defaultSubApiId ?? ""),
-          defaultSubConfigId: String(data.settings?.defaultSubConfigId ?? old.defaultSubConfigId ?? ""),
+          defaultSubApiId: String(data.settings?.defaultSubApiId ?? old.defaultSubApiId ?? "").toUpperCase(),
+          defaultSubConfigId: String(data.settings?.defaultSubConfigId ?? old.defaultSubConfigId ?? "").toUpperCase(),
           user: String(data.settings?.user ?? old.user ?? ""),
           pass: data.settings?.pass ? String(data.settings.pass) : String(old.pass || ""),
           adminPath: normalizeAdminPath(data.settings?.adminPath ?? old.adminPath) || DEFAULT_ADMIN_PATH,
-          noAds: "",
-          fakeMode: String(data.settings?.fakeMode ?? old.fakeMode ?? ""),
-          fakeUrl: String(data.settings?.fakeUrl ?? old.fakeUrl ?? ""),
-          fakeUrl302: String(data.settings?.fakeUrl302 ?? old.fakeUrl302 ?? ""),
-          fakeCode: String(data.settings?.fakeCode ?? old.fakeCode ?? ""),
           siteLogo: String(data.settings?.siteLogo ?? old.siteLogo ?? "")
         };
-        await env.KV.put("CONFIG.JSON", JSON.stringify(next));
+        await putConfig(env, next);
         return jsonResponse({ ok: true, adminPath: next.adminPath });
       }
       if (data.type === "security") {
         const old = await getConfig(env), user = String(data.user || "").trim();
         if (!user) return jsonResponse({ ok: false, error: "\u7BA1\u7406\u5458\u8D26\u53F7\u4E0D\u80FD\u4E3A\u7A7A" }, 400);
-        await env.KV.put("CONFIG.JSON", JSON.stringify({ ...old, user, pass: data.pass ? String(data.pass) : String(old.pass || "") }));
+        await putConfig(env, { ...old, user, pass: data.pass ? String(data.pass) : String(old.pass || "") });
         return jsonResponse({ ok: true });
       }
       if (data.type === "admin_path") {
         const old = await getConfig(env), adminPath = normalizeAdminPath(data.adminPath);
         if (!adminPath) return jsonResponse({ ok: false, error: "\u7BA1\u7406\u5458\u8DEF\u5F84\u65E0\u6548" }, 400);
-        await env.KV.put("CONFIG.JSON", JSON.stringify({ ...old, adminPath }));
+        await putConfig(env, { ...old, adminPath });
         return jsonResponse({ ok: true, adminPath });
       }
       if (data.type === "site_name") {
         const old = await getConfig(env), subName = normalizeName(data.subName) || "SUB";
-        await env.KV.put("CONFIG.JSON", JSON.stringify({ ...old, subName }));
+        await putConfig(env, { ...old, subName });
         return jsonResponse({ ok: true, subName });
       }
       if (data.type === "site_settings") {
@@ -865,7 +910,7 @@ async function handleAdmin(request, env, runtime) {
         const siteLogo = String(data.siteLogo || "").trim();
         if (siteLogo && !/^https?:\/\//i.test(siteLogo)) return jsonResponse({ ok: false, error: "\u7AD9\u70B9\u6807\u7B7E\u680F Logo \u5FC5\u987B\u662F http:// \u6216 https:// URL" }, 400);
         const next = { ...old, subName, adminPath, siteLogo };
-        await env.KV.put("CONFIG.JSON", JSON.stringify(next));
+        await putConfig(env, next);
         return jsonResponse({ ok: true, subName, adminPath, siteLogo });
       }
       if (["subapi_create", "subapi_update", "subapi_delete", "subapi_default", "subapi_reorder", "subconfig_create", "subconfig_update", "subconfig_delete", "subconfig_default", "subconfig_reorder"].includes(data.type)) {
@@ -875,21 +920,21 @@ async function handleAdmin(request, env, runtime) {
         const defaultKey = isApi ? "defaultSubApiId" : "defaultSubConfigId";
         const list = normalizeProviderList(cfg[key]);
         const action = data.type.split("_")[1];
-        const id = String(data.id || "").trim();
+        const id = String(data.id || "").trim().toUpperCase();
         if (action === "reorder") {
-          const order = Array.isArray(data.order) ? data.order.map((x) => String(x || "").trim()).filter(Boolean) : [];
+          const order = Array.isArray(data.order) ? data.order.map((x) => String(x || "").trim().toUpperCase()).filter(Boolean) : [];
           if (order.length !== list.length || new Set(order).size !== list.length || order.some((x) => !list.some((item) => item.id === x))) {
             return jsonResponse({ ok: false, error: "\u6392\u5E8F\u6570\u636E\u65E0\u6548" }, 400);
           }
           const map = new Map(list.map((item) => [item.id, item]));
           cfg[key] = order.map((x) => map.get(x));
-          await env.KV.put("CONFIG.JSON", JSON.stringify(cfg));
+          await putConfig(env, cfg);
           return jsonResponse({ ok: true, items: normalizeProviderList(cfg[key]), defaultId: String(cfg[defaultKey] || "") });
         }
         if (action === "default") {
           if (!list.some((x) => x.id === id)) return jsonResponse({ ok: false, error: "\u9879\u76EE\u4E0D\u5B58\u5728" }, 404);
           cfg[defaultKey] = id;
-          await env.KV.put("CONFIG.JSON", JSON.stringify(cfg));
+          await putConfig(env, cfg);
           return jsonResponse({ ok: true, items: normalizeProviderList(cfg[key]), defaultId: String(cfg[defaultKey] || "") });
         }
         if (action === "delete") {
@@ -902,7 +947,7 @@ async function handleAdmin(request, env, runtime) {
           if (isApi && !/^https?:\/\//i.test(value)) value = "https://" + value;
           if (!validName(name)) return jsonResponse({ ok: false, error: "\u5907\u6CE8\u4E0D\u80FD\u4E3A\u7A7A\u4E14\u4E0D\u80FD\u8D85\u8FC7 80 \u4E2A\u5B57\u7B26" }, 400);
           if (!/^https?:\/\//i.test(value)) return jsonResponse({ ok: false, error: "URL \u5FC5\u987B\u4EE5 http:// \u6216 https:// \u5F00\u5934" }, 400);
-          const itemId = id || makeSubId(), item = { id: itemId, name, url: value, enabled: true };
+          const itemId = id || makeSubId(), item = { id: itemId, name, url: value };
           if (action === "create") list.push(item);
           else {
             const index = list.findIndex((x) => x.id === id);
@@ -910,10 +955,9 @@ async function handleAdmin(request, env, runtime) {
             list[index] = { ...list[index], ...item, id };
           }
           if (!String(cfg[defaultKey] || "") && list.length) cfg[defaultKey] = list[0].id;
-          if (item.enabled === false && String(cfg[defaultKey] || "") === itemId) cfg[defaultKey] = "";
           cfg[key] = list;
         }
-        await env.KV.put("CONFIG.JSON", JSON.stringify(cfg));
+        await putConfig(env, cfg);
         return jsonResponse({ ok: true, items: normalizeProviderList(cfg[key]), defaultId: String(cfg[defaultKey] || "") });
       }
       return new Response("\u4E0D\u652F\u6301\u7684\u6570\u636E\u7C7B\u578B", { status: 400 });
@@ -943,42 +987,79 @@ __name(handleAdmin, "handleAdmin");
 async function getConfig(env) {
   const defaults = {
     subName: "SUB",
-    subApi: "",
-    subConfig: "",
     subApis: [],
     subConfigs: [],
     defaultSubApiId: "",
     defaultSubConfigId: "",
-    noAds: "",
     user: "",
     pass: "",
     adminPath: DEFAULT_ADMIN_PATH,
-    siteLogo: "",
-    fakeMode: "",
-    fakeUrl: "",
-    fakeUrl302: "",
-    fakeCode: ""
+    siteLogo: ""
   };
   if (!env.KV) return defaults;
+  let raw;
   try {
-    const raw = await env.KV.get("CONFIG.JSON");
-    if (!raw) return defaults;
-    const parsed = { ...defaults, ...JSON.parse(raw) };
-    if (parsed.subName === "SUB-UI") parsed.subName = "SUB";
-    return parsed;
+    raw = await env.KV.get("CONFIG.JSON");
   } catch (e) {
     return defaults;
   }
+  if (!raw) return defaults;
+  let stored;
+  try {
+    stored = JSON.parse(raw);
+  } catch {
+    return defaults;
+  }
+  const parsed = { ...defaults, ...normalizeConfigData(stored) };
+  if (parsed.subName === "SUB-UI") parsed.subName = "SUB";
+  const subApis = normalizeProviderList(parsed.subApis);
+  const subConfigs = normalizeProviderList(parsed.subConfigs);
+  const defaultSubApiId = String(parsed.defaultSubApiId || "").toUpperCase();
+  const defaultSubConfigId = String(parsed.defaultSubConfigId || "").toUpperCase();
+  const normalizedStored = upperCaseObject(stored);
+  for (const key of ["FAKEMODE", "FAKEURL", "FAKEURL302", "FAKECODE", "NOADS", "SUBAPI", "SUBCONFIG"]) delete normalizedStored[key];
+  const uppercaseProviderIds = (original, normalized) => {
+    if (!Array.isArray(normalizedStored[original])) return;
+    let index = 0;
+    return (normalizedStored[original] || []).map((item) => {
+      const url = String(item?.URL || "").trim();
+      if (!item || typeof item !== "object" || !url) return item;
+      const id = normalized[index++].id;
+      return item.ID === id ? item : { ...item, ID: id };
+    });
+  };
+  if (Array.isArray(normalizedStored.SUBAPIS)) normalizedStored.SUBAPIS = uppercaseProviderIds("SUBAPIS", subApis).map((item) => {
+    if (!item || typeof item !== "object") return item;
+    const { ENABLED, ...provider } = item;
+    return provider;
+  });
+  if (Array.isArray(normalizedStored.SUBCONFIGS)) normalizedStored.SUBCONFIGS = uppercaseProviderIds("SUBCONFIGS", subConfigs).map((item) => {
+    if (!item || typeof item !== "object") return item;
+    const { ENABLED, ...provider } = item;
+    return provider;
+  });
+  if (Object.prototype.hasOwnProperty.call(normalizedStored, "DEFAULTSUBAPIID")) normalizedStored.DEFAULTSUBAPIID = defaultSubApiId;
+  if (Object.prototype.hasOwnProperty.call(normalizedStored, "DEFAULTSUBCONFIGID")) normalizedStored.DEFAULTSUBCONFIGID = defaultSubConfigId;
+  const idsChanged = JSON.stringify(JSON.parse(raw)) !== JSON.stringify(normalizedStored);
+  parsed.subApis = subApis;
+  parsed.subConfigs = subConfigs;
+  parsed.defaultSubApiId = defaultSubApiId;
+  parsed.defaultSubConfigId = defaultSubConfigId;
+  if (idsChanged) await env.KV.put("CONFIG.JSON", JSON.stringify(normalizedStored));
+  return parsed;
 }
 __name(getConfig, "getConfig");
+async function putConfig(env, value) {
+  await env.KV.put("CONFIG.JSON", JSON.stringify(upperCaseObject(value)));
+}
+__name(putConfig, "putConfig");
 function normalizeProviderList(input) {
   if (!Array.isArray(input)) return [];
   return input.map((x) => ({
-    id: String(x?.id || makeSubId()),
-    name: normalizeName(x?.name || "\u672A\u547D\u540D"),
-    url: String(x?.url || "").trim(),
-    enabled: x?.enabled !== false,
-    ...x?.providerType ? { providerType: String(x.providerType) } : {}
+    id: String(x?.id || x?.ID || makeSubId()).toUpperCase(),
+    name: normalizeName(x?.name || x?.NAME || "\u672A\u547D\u540D"),
+    url: String(x?.url || x?.URL || "").trim(),
+    ...x?.providerType || x?.PROVIDERTYPE ? { providerType: String(x.providerType || x.PROVIDERTYPE) } : {}
   })).filter((x) => x.url);
 }
 __name(normalizeProviderList, "normalizeProviderList");
@@ -989,7 +1070,72 @@ function buildPublicPreferencesCookie(value) {
 }
 __name(buildPublicPreferencesCookie, "buildPublicPreferencesCookie");
 async function getSelectedBackends(env, tokenData, runtime) {
-  if (tokenData?.type === "sub-ui") {
+  const apiReference = tokenData?.subApi;
+  const configReference = tokenData?.subConfig;
+  const apiReferenceString = typeof apiReference === "string" ? apiReference.trim() : "";
+  const configReferenceString = typeof configReference === "string" ? configReference.trim() : "";
+  const hasCompactBackendReferences = Boolean(
+    tokenData?.subApiId || tokenData?.subConfigId ||
+    tokenData?.subApiIds?.length || tokenData?.subConfigIds?.length ||
+    tokenData?.customSubApi || tokenData?.customSubConfig ||
+    tokenData?.backend?.api || tokenData?.backends?.length ||
+    Array.isArray(apiReference) || Array.isArray(configReference) ||
+    (apiReferenceString && configReferenceString)
+  );
+  if (hasCompactBackendReferences) {
+    const cfg = await getConfig(env);
+    const apis = normalizeProviderList(cfg.subApis);
+    const configs = normalizeProviderList(cfg.subConfigs);
+    const referencedIds = (value) => Array.isArray(value)
+      ? value.map((item) => String(item?.ID || item?.id || "").toUpperCase()).filter(Boolean)
+      : [];
+    const referencedUrls = (value) => Array.isArray(value)
+      ? value.map((item) => String(item?.URL || item?.url || "").trim()).filter(Boolean)
+      : [];
+    const apiIds = [
+      ...referencedIds(apiReference),
+      ...(tokenData.subApiIds || []).map((id) => String(id).toUpperCase()),
+      tokenData.subApiId,
+      apiReferenceString && !/^https?:\/\//i.test(apiReferenceString) ? apiReferenceString : ""
+    ].filter(Boolean);
+    const configIds = [
+      ...referencedIds(configReference),
+      ...(tokenData.subConfigIds || []).map((id) => String(id).toUpperCase()),
+      tokenData.subConfigId,
+      configReferenceString && !/^https?:\/\//i.test(configReferenceString) ? configReferenceString : ""
+    ].filter(Boolean);
+    const legacyApiUrl = /^https?:\/\//i.test(apiReferenceString) ? apiReferenceString : "";
+    const legacyConfigUrl = /^https?:\/\//i.test(configReferenceString) ? configReferenceString : "";
+    const referencedApiUrls = referencedUrls(apiReference);
+    const referencedConfigUrls = referencedUrls(configReference);
+    const selectedApis = tokenData.customSubApi || legacyApiUrl || referencedApiUrls.length
+      ? [{ url: tokenData.customSubApi || legacyApiUrl || referencedApiUrls[0] }]
+      : [...new Map(apiIds.map((id) => {
+        const provider = apis.find((item) => item.id === String(id).toUpperCase());
+        return provider ? [provider.id, provider] : null;
+      }).filter(Boolean)).values()];
+    const selectedConfigs = tokenData.customSubConfig || legacyConfigUrl || referencedConfigUrls.length
+      ? [{ url: tokenData.customSubConfig || legacyConfigUrl || referencedConfigUrls[0] }]
+      : [...new Map(configIds.map((id) => {
+        const provider = configs.find((item) => item.id === String(id).toUpperCase());
+        return provider ? [provider.id, provider] : null;
+      }).filter(Boolean)).values()];
+    if (selectedApis.length && selectedConfigs.length) {
+      const pairs = [];
+      for (const selectedApi of selectedApis) {
+        const rawApi = String(selectedApi.url || "").trim();
+        for (const selectedConfig of selectedConfigs) {
+          pairs.push({
+            api: rawApi.replace(/^https?:\/\//i, "").replace(/\/+$/, ""),
+            config: String(selectedConfig.url || "").trim(),
+            protocol: /^http:\/\//i.test(rawApi) ? "http" : "https"
+          });
+        }
+      }
+      return pairs.filter((x) => x.api && x.config);
+    }
+  }
+  if (tokenData?.type === "sub-ui" || hasCompactBackendReferences) {
     if (Array.isArray(tokenData.backends) && tokenData.backends.length) {
       return tokenData.backends.map((x) => ({
         api: String(x.api || "").replace(/^https?:\/\//i, "").replace(/\/+$/, ""),
@@ -1016,8 +1162,8 @@ async function getSelectedBackends(env, tokenData, runtime) {
     return [];
   }
   const cfg = await getConfig(env);
-  const apis = normalizeProviderList(cfg.subApis).filter((x) => x.enabled);
-  const configs = normalizeProviderList(cfg.subConfigs).filter((x) => x.enabled);
+  const apis = normalizeProviderList(cfg.subApis);
+  const configs = normalizeProviderList(cfg.subConfigs);
   const selectedApis = (tokenData?.subApiIds || []).map((id) => apis.find((x) => x.id === id)).filter(Boolean);
   const selectedConfigs = (tokenData?.subConfigIds || []).map((id) => configs.find((x) => x.id === id)).filter(Boolean);
   if (!selectedApis.length || !selectedConfigs.length) return [];
@@ -1038,11 +1184,15 @@ async function handlePublicGenerate(request, env, requestUrl) {
     const sources = cleanSourceList(data.sources || "");
     if (!sources.length) return jsonResponse({ ok: false, error: "\u8BF7\u8F93\u5165\u81F3\u5C11\u4E00\u4E2A\u8BA2\u9605\u94FE\u63A5" }, 400);
     if (sources.length > 100) return jsonResponse({ ok: false, error: "\u8BA2\u9605\u94FE\u63A5\u6700\u591A 100 \u6761" }, 400);
+    const updateMinutes = Number(data.update ?? DEFAULT_UPDATE_MINUTES);
+    if (!Number.isSafeInteger(updateMinutes) || updateMinutes < 0 || updateMinutes > 525600) return jsonResponse({ ok: false, error: "\u63A8\u8350\u66F4\u65B0\u65F6\u95F4\u5FC5\u987B\u662F 0 \u5230 525600 \u4E4B\u95F4\u7684\u6574\u6570\u5206\u949F" }, 400);
+    const updateEnable = normalizeUpdateEnabled(data.updateEnable);
     const cfg = await getConfig(env);
-    const apis = normalizeProviderList(cfg.subApis).filter((x) => x.enabled);
-    const configs = normalizeProviderList(cfg.subConfigs).filter((x) => x.enabled);
-    const apiIds = Array.isArray(data.apiIds) ? [...new Set(data.apiIds.map((x) => String(x).trim()).filter(Boolean))] : [];
-    const configIds = Array.isArray(data.configIds) ? [...new Set(data.configIds.map((x) => String(x).trim()).filter(Boolean))] : [];
+    const apis = normalizeProviderList(cfg.subApis);
+    const configs = normalizeProviderList(cfg.subConfigs);
+    const apiIds = Array.isArray(data.apiIds) ? [...new Set(data.apiIds.map((x) => String(x).trim().toUpperCase()).filter(Boolean))] : [];
+    const configIds = Array.isArray(data.configIds) ? [...new Set(data.configIds.map((x) => String(x).trim().toUpperCase()).filter(Boolean))] : [];
+    if (apiIds.length > 1 || configIds.length > 1) return jsonResponse({ ok: false, error: "\u6BCF\u4E2A\u805A\u5408\u8BA2\u9605\u94FE\u63A5\u53EA\u80FD\u9009\u62E9\u4E00\u4E2A\u8F6C\u6362\u540E\u7AEF\u548C\u4E00\u4E2A\u8F6C\u6362\u89C4\u5219" }, 400);
     const apiCustom = Boolean(data.apiCustom);
     const configCustom = Boolean(data.configCustom);
     let apiUrl = String(data.apiUrl || "").trim();
@@ -1071,35 +1221,34 @@ async function handlePublicGenerate(request, env, requestUrl) {
     if (!backends.length) return jsonResponse({ ok: false, error: "\u6CA1\u6709\u6709\u6548\u7684\u8BA2\u9605\u8F6C\u6362\u540E\u7AEF\u4E0E\u89C4\u5219\u7EC4\u5408" }, 400);
     const noAds = String(data.noAds || "").trim().slice(0, 5e3);
     const destroyKey = String(data.destroyKey || "").trim().slice(0, 256);
-    const token = String(data.path || "").trim();
+    const token = String(data.path || "").trim() || crypto.randomUUID();
     if (token.length < 3 || token.length > 128 || !/^[-A-Za-z0-9_]+$/.test(token)) return jsonResponse({ ok: false, error: "\u94FE\u63A5\u8DEF\u5F84\u53EA\u80FD\u4F7F\u7528\u5B57\u6BCD\u3001\u6570\u5B57\u3001\u77ED\u6A2A\u7EBF\u6216\u4E0B\u5212\u7EBF\uFF0C\u4E14\u957F\u5EA6\u81F3\u5C11\u4E3A 3 \u4E2A\u5B57\u7B26" }, 400);
     if (["admin", "api", "login", "logout", "favicon"].includes(token.toLowerCase())) return jsonResponse({ ok: false, error: "\u8BE5\u94FE\u63A5\u8DEF\u5F84\u4E0D\u53EF\u4F7F\u7528" }, 400);
     if (await getToken(env, token)) return jsonResponse({ ok: false, error: "\u8BE5\u94FE\u63A5\u8DEF\u5F84\u5DF2\u5B58\u5728\uFF0C\u8BF7\u66F4\u6362\u4E00\u4E2A" }, 409);
     const destroyKeyHash = destroyKey ? await sha256Hex(`${token}:${destroyKey}`) : "";
     const name = "\u8BA2\u9605\u94FE\u63A5";
-    const primaryBackend = backends[0];
     const item = {
       url: token,
       path: `/${token}`,
       subscriptionUrl: `${requestUrl.origin}/${encodeURIComponent(token)}`,
       name,
       sources,
-      subApiIds: selectedApis.map((x) => x.id),
-      subConfigIds: selectedConfigs.map((x) => x.id),
-      subApi: apiEntries[0]?.url || "",
-      subApiName: apiEntries[0]?.name || "",
-      subConfig: configEntries[0]?.url || "",
-      subConfigName: configEntries[0]?.name || "",
-      backend: primaryBackend,
-      backends,
+      ...apiCustom ? { subApi: [{ url: apiUrl }] } : selectedApis[0] ? { subApi: [{ id: selectedApis[0].id }] } : {},
+      ...configCustom ? { subConfig: [{ url: configUrl }] } : selectedConfigs[0] ? { subConfig: [{ id: selectedConfigs[0].id }] } : {},
       noAds,
-      target: "auto",
+      update: updateMinutes,
+      updateEnable,
       createdAt: (/* @__PURE__ */ new Date()).toISOString(),
       updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
-      type: "sub-ui",
       destroyKeyHash
     };
-    const storedItem = upperCaseObject(item);
+    const storedItem = Object.fromEntries(
+      Object.entries(upperCaseObject(item)).flatMap(([key, value]) => {
+        if (key === "UPDATE") return [[key, value], ["UPDATE_ENABLE", updateEnable]];
+        if (key === "UPDATEENABLE") return [];
+        return [[key, value]];
+      })
+    );
     await env.KV.put(`${URL_PREFIX}${token}`, JSON.stringify(storedItem));
     const prefs = {
       apiIds: selectedApis.map((x) => x.id),
@@ -1138,7 +1287,7 @@ async function handlePublicDestroy(request, env) {
     }
     token = String(token || "").trim().replace(/^\/+|\/+$/g, "");
     if (!token) return jsonResponse({ ok: false, error: "\u7F3A\u5C11\u8BA2\u9605\u94FE\u63A5\u6807\u8BC6" }, 400);
-    if (!/^[A-Za-z0-9]+$/.test(token) || token.length > 128) return jsonResponse({ ok: false, error: "\u8BA2\u9605\u94FE\u63A5\u6807\u8BC6\u65E0\u6548" }, 400);
+    if (!/^[-A-Za-z0-9_]+$/.test(token) || token.length > 128) return jsonResponse({ ok: false, error: "\u8BA2\u9605\u94FE\u63A5\u6807\u8BC6\u65E0\u6548" }, 400);
     const raw = await env.KV.get(`${URL_PREFIX}${token}`);
     if (!raw) return jsonResponse({ ok: false, error: "\u94FE\u63A5\u4E0D\u5B58\u5728\u6216\u5DF2\u7ECF\u88AB\u9500\u6BC1" }, 404);
     let item = null;
@@ -1263,9 +1412,13 @@ async function generateSubscription(request, env, sourceList, runtime, token) {
   }
   const responseHeaders = {
     "content-type": "text/plain; charset=utf-8",
-    "Profile-Update-Interval": `${SUBUpdateTime}`,
     "Profile-web-page-url": request.url.includes("?") ? request.url.split("?")[0] : request.url
   };
+  if (normalizeUpdateEnabled(runtime.tokenData?.updateEnable)) {
+    const updateMinutes = Number(runtime.tokenData?.update);
+    const minutes = Number.isSafeInteger(updateMinutes) && updateMinutes >= 0 && updateMinutes <= 525600 ? updateMinutes : DEFAULT_UPDATE_MINUTES;
+    responseHeaders["Profile-Update-Interval"] = `${minutes * 60}`;
+  }
   if (\u8BA2\u9605\u683C\u5F0F === "base64" || token === runtime.fakeToken) {
     return new Response(base64Data, { headers: responseHeaders });
   }
@@ -1669,7 +1822,7 @@ function renderLoginPage(url, error = "") {
   return `<!DOCTYPE html>
 <html>
 <head>
-<title>${escapeHTML(FileName)}\u7BA1\u7406\u9762\u677F</title>${SiteLogo ? `<link rel="icon" href="${escapeHTML(SiteLogo)}">` : ""}
+<title>${escapeHTML(FILENAME)}\u7BA1\u7406\u9762\u677F</title>${SITELOGO ? `<link rel="icon" href="${escapeHTML(SITELOGO)}">` : ""}
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
@@ -1683,7 +1836,7 @@ ${getToolStyles()}
 <body style="display:flex; justify-content:center; align-items:center; min-height:100vh; margin:0;">
 <main class="page app-shell" style="width:100%; max-width:420px; padding:20px; margin:0;">
 <section class="panel" style="padding:30px 24px; text-align:center;">
-<h1 class="title" style="margin-bottom:10px;">${escapeHTML(FileName)}</h1>
+<h1 class="title" style="margin-bottom:10px;">${escapeHTML(FILENAME)}</h1>
 <div class="subtitle" style="margin-bottom:24px;">\u8BF7\u767B\u5F55\u7BA1\u7406\u5458\u63A7\u5236\u53F0</div>
 <form method="POST" action="${escapeHTML(url.pathname)}" style="text-align:left;">
 <div class="field"><label>\u7528\u6237\u540D</label><input name="username" type="text" required autofocus></div>
@@ -1709,21 +1862,22 @@ function getSubscriptionLinks(url, token) {
   ];
 }
 __name(getSubscriptionLinks, "getSubscriptionLinks");
-function renderCFSubsGuestPage(url, guest, guestName = "") {
+function renderCFSubsGuestPage(url, guest, guestName = "", destroyKeyRequired = false) {
   const links = getSubscriptionLinks(url, guest);
   return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHTML(guestName ? `${guestName} 聚合订阅` : '聚合订阅')}</title>
 <style>
 ${getToolStyles()}
-.guest-shell{max-width:1100px;padding-top:0!important}.guest-header{margin:0 -28px 18px;padding:28px;border-bottom:1px solid rgba(120,130,140,.18)}.guest-link-list{display:grid;gap:10px}.guest-link-item{position:relative;padding:12px;border:1px solid rgba(229,229,223,.6);border-radius:12px;background:rgba(255,255,255,.5)}.guest-link-head{display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:30px;margin-bottom:14px}.guest-link-label{font-weight:700;word-break:break-word;padding-right:90px}.guest-link-url{display:block;width:100%;box-sizing:border-box;padding:10px 12px;margin-top:14px;border:1px solid rgba(229,229,223,.8);border-radius:9px;background:rgba(250,250,250,.7);color:#1f4b99;text-decoration:none;word-break:break-all;overflow-wrap:anywhere}.guest-actions{position:absolute;top:12px;right:12px;display:flex;gap:8px}.guest-copy-btn,.guest-hide-btn{min-width:56px;width:auto;height:30px;min-height:30px;padding:0 10px}.guest-hide-btn{display:none}.guest-qrcode{display:none;background:#fff;border-radius:12px;padding:12px;margin:14px auto 0;width:max-content;max-width:100%;box-shadow:0 8px 24px rgba(0,0,0,.08)}
-@media(max-width:640px){.guest-shell{width:calc(100% - 28px);margin:14px 14px 28px;padding:0 18px 24px;border-radius:22px}.guest-header{margin:0 -18px 16px;padding:22px 18px 20px}.guest-header .title{font-size:34px}.guest-link-item{padding:10px}.guest-link-url{margin-top:10px}}
-@media(prefers-color-scheme:dark){.guest-link-item{background:rgba(8,12,14,.78);border-color:rgba(255,255,255,.10)}.guest-link-url{background:rgba(2,6,8,.82);border-color:rgba(255,255,255,.12);color:#64b5f6}}
-</style><script src="https://cdn.jsdelivr.net/npm/@keeex/qrcodejs-kx@1.0.2/qrcode.min.js"></script></head><body><div id="copyNotice" class="toast"></div><main class="page app-shell guest-shell"><header class="header guest-header"><h1 class="title" style="font-size:26px">聚合订阅链接</h1><div class="subtitle">复制订阅链接可同时生成二维码</div></header><div class="guest-link-list">${links.map(([label,value])=>`<div class="guest-link-item"><div class="guest-link-head"><div class="guest-link-label">${escapeHTML(label)}</div></div><a class="guest-link-url" href="${escapeHTML(value)}" target="_blank" rel="noopener">${escapeHTML(value)}</a><div class="guest-actions"><button type="button" class="button guest-copy-btn" data-url="${escapeHTML(value)}">复制</button><button type="button" class="button secondary guest-hide-btn">隐藏</button></div><div class="guest-qrcode"></div></div>`).join('')}</div></main><script>
+.guest-shell{max-width:1100px;padding-top:0!important}.guest-header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin:0 -28px 18px;padding:28px;border-bottom:1px solid rgba(120,130,140,.18)}.guest-header-main{min-width:0}.guest-header .title{font-size:26px}.guest-header .subtitle{margin-top:8px}.guest-head-destroy{flex:0 0 auto;min-height:36px;padding:7px 12px;background:#d93025;border-color:#d93025;color:#fff}.guest-head-destroy:hover{background:#b91c1c;border-color:#b91c1c;color:#fff}.guest-link-list{display:grid;gap:10px}.guest-link-item{position:relative;padding:12px;border:1px solid rgba(148,163,184,.22);border-radius:14px;background:linear-gradient(135deg,rgba(255,255,255,.9) 0%,rgba(248,251,250,.75) 52%,rgba(232,245,236,.82) 100%);box-shadow:inset 0 1px 0 rgba(255,255,255,.7),0 10px 24px rgba(15,23,42,.05);transition:border-color .25s ease,box-shadow .25s ease,background .25s ease}.guest-link-item:hover{border-color:rgba(59,130,246,.34);box-shadow:inset 0 1px 0 rgba(255,255,255,.8),0 12px 28px rgba(15,23,42,.08)}.guest-link-head{display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:30px;margin-bottom:14px}.guest-link-label{font-weight:700;word-break:break-word;padding-right:90px}.guest-link-url{display:block;width:100%;box-sizing:border-box;padding:10px 12px;margin-top:14px;border:1px solid rgba(148,163,184,.28);border-radius:10px;background:rgba(250,250,250,.72);color:#1f4b99;text-decoration:none;word-break:break-all;overflow-wrap:anywhere;box-shadow:inset 0 1px 0 rgba(255,255,255,.65);transition:all .25s ease}.guest-link-url:hover{background:rgba(31,75,153,.04);border-color:rgba(31,75,153,.35);box-shadow:0 0 0 3px rgba(59,130,246,.08),inset 0 1px 0 rgba(255,255,255,.75)}.guest-actions{position:absolute;top:12px;right:12px;display:flex;gap:8px}.guest-copy-btn,.guest-hide-btn{min-width:56px;width:auto;height:30px;min-height:30px;padding:0 10px}.guest-hide-btn{display:none}.guest-qrcode{display:none;background:#fff;border-radius:12px;padding:12px;margin:14px auto 0;width:max-content;max-width:100%;box-shadow:0 8px 24px rgba(0,0,0,.08)}.guest-destroy-modal{position:fixed;inset:0;z-index:99999;display:none;align-items:center;justify-content:center;padding:20px;background:rgba(0,0,0,.44);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}.guest-destroy-dialog{width:min(440px,100%);padding:22px;border-radius:18px;background:rgba(255,255,255,.97);border:1px solid rgba(229,229,223,.9);box-shadow:0 20px 60px rgba(0,0,0,.24)}.guest-destroy-dialog h2{margin:0;font-size:18px}.guest-destroy-dialog p{margin:8px 0 14px;color:#777;font-size:13px;line-height:1.6}.guest-destroy-input{width:100%;box-sizing:border-box;padding:11px 12px;border:1px solid rgba(120,130,140,.35);border-radius:10px;font:inherit}.guest-destroy-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}.guest-destroy-confirm{background:#d93025;border-color:#d93025;color:#fff}.guest-destroy-confirm:hover{background:#b91c1c;border-color:#b91c1c;color:#fff}
+@media(max-width:640px){.page.app-shell.guest-shell{width:calc(100% - 28px);margin:14px 14px 28px;padding:0 14px 24px;border-radius:22px}.guest-header{margin:0 -14px 16px;padding:22px 14px 20px}.guest-header .title{font-size:22px}.guest-header .subtitle{font-size:12px}.guest-head-destroy{min-height:34px;padding:6px 9px;font-size:12px}.guest-link-item{padding:10px}.guest-link-url{margin-top:10px}.guest-destroy-dialog{padding:18px}}
+@media(prefers-color-scheme:dark){.guest-link-item{background:linear-gradient(135deg,rgba(10,16,19,.9) 0%,rgba(12,20,18,.78) 52%,rgba(8,16,13,.88) 100%);border-color:rgba(255,255,255,.12);box-shadow:inset 0 1px 0 rgba(255,255,255,.04),0 10px 24px rgba(0,0,0,.22)}.guest-link-item:hover{border-color:rgba(96,165,250,.32);box-shadow:inset 0 1px 0 rgba(255,255,255,.05),0 14px 32px rgba(0,0,0,.28)}.guest-link-url{background:rgba(2,6,8,.82);border-color:rgba(255,255,255,.12);color:#64b5f6;box-shadow:inset 0 1px 0 rgba(255,255,255,.04)}.guest-link-url:hover{background:rgba(100,181,246,.08);border-color:#64b5f6;box-shadow:0 0 0 3px rgba(96,165,250,.1),inset 0 1px 0 rgba(255,255,255,.04)}.guest-destroy-dialog{background:rgba(30,30,30,.97);border-color:rgba(255,255,255,.1)}.guest-destroy-dialog p{color:#9aa7b5}.guest-destroy-input{background:rgba(0,0,0,.35);border-color:rgba(255,255,255,.12);color:#f3f6f7}}
+</style><script src="https://cdn.jsdelivr.net/npm/@keeex/qrcodejs-kx@1.0.2/qrcode.min.js"></script></head><body><div id="copyNotice" class="toast"></div><main class="page app-shell guest-shell" data-token="${escapeHTML(String(guest || ""))}" data-key-required="${destroyKeyRequired ? "true" : "false"}"><header class="header guest-header"><div class="guest-header-main"><h1 class="title">聚合订阅链接</h1><div class="subtitle">复制订阅链接可同时生成二维码</div></div><button type="button" class="button guest-head-destroy">\u9500\u6BC1\u672C\u94FE\u63A5</button></header><div class="guest-link-list">${links.map(([label,value])=>`<div class="guest-link-item"><div class="guest-link-head"><div class="guest-link-label">${escapeHTML(label)}</div></div><a class="guest-link-url" href="${escapeHTML(value)}" target="_blank" rel="noopener">${escapeHTML(value)}</a><div class="guest-actions"><button type="button" class="button guest-copy-btn" data-url="${escapeHTML(value)}">复制</button><button type="button" class="button secondary guest-hide-btn">隐藏</button></div><div class="guest-qrcode"></div></div>`).join('')}</div></main><div class="guest-destroy-modal" id="guestDestroyModal"><div class="guest-destroy-dialog"><h2>\u9500\u6BC1\u672C\u94FE\u63A5</h2><p>\u9500\u6BC1\u540E\u6B64\u805A\u5408\u8BA2\u9605\u94FE\u63A5\u5C06\u7ACB\u5373\u5931\u6548\u4E14\u65E0\u6CD5\u6062\u590D\u3002\u8BF7\u8F93\u5165\u672C\u94FE\u63A5\u7684\u9500\u6BC1\u5BC6\u94A5\u3002</p><input id="guestDestroyKey" class="guest-destroy-input" type="password" autocomplete="current-password" placeholder="\u8BF7\u8F93\u5165\u9500\u6BC1\u5BC6\u94A5"><div class="guest-destroy-actions"><button type="button" class="button secondary" id="guestDestroyCancel">\u53D6\u6D88</button><button type="button" class="button guest-destroy-confirm" id="guestDestroyConfirm">\u786E\u8BA4\u9500\u6BC1</button></div></div></div><script>
 let guestToastTimer;function guestToast(message){const e=document.getElementById('copyNotice');e.textContent=message;e.style.display='block';clearTimeout(guestToastTimer);guestToastTimer=setTimeout(()=>e.style.display='none',1500)}function showGuestQr(b){const i=b.closest('.guest-link-item'),q=i.querySelector('.guest-qrcode'),c=i.querySelector('.guest-copy-btn'),h=i.querySelector('.guest-hide-btn');document.querySelectorAll('.guest-qrcode').forEach(x=>{x.style.display='none';x.innerHTML=''});document.querySelectorAll('.guest-copy-btn').forEach(x=>x.style.display='inline-flex');document.querySelectorAll('.guest-hide-btn').forEach(x=>x.style.display='none');q.innerHTML='';q.style.display='block';c.style.display='none';h.style.display='inline-flex';if(window.QRCode)new QRCode(q,{text:b.dataset.url,width:220,height:220,colorDark:'#000',colorLight:'#fff',correctLevel:QRCode.CorrectLevel.Q})}function hideGuestQr(b){const i=b.closest('.guest-link-item');i.querySelector('.guest-qrcode').style.display='none';i.querySelector('.guest-qrcode').innerHTML='';i.querySelector('.guest-copy-btn').style.display='inline-flex';b.style.display='none'}document.querySelectorAll('.guest-copy-btn').forEach(b=>b.addEventListener('click',()=>{const v=b.dataset.url||'';const done=()=>{guestToast('已复制到剪贴板');showGuestQr(b)};if(navigator.clipboard)navigator.clipboard.writeText(v).then(done).catch(()=>guestToast('复制失败，请手动复制'));else{const t=document.createElement('textarea');t.value=v;document.body.appendChild(t);t.select();document.execCommand('copy');t.remove();done()}}));document.querySelectorAll('.guest-hide-btn').forEach(b=>b.addEventListener('click',()=>hideGuestQr(b)));
+const destroyButton=document.querySelector('.guest-head-destroy'),destroyModal=document.getElementById('guestDestroyModal'),destroyKeyInput=document.getElementById('guestDestroyKey'),destroyToken=document.querySelector('.guest-shell').dataset.token;function closeDestroyModal(){destroyModal.style.display='none';destroyKeyInput.value=''}async function destroyCurrentLink(key){destroyButton.disabled=true;destroyButton.textContent='销毁中…';try{const response=await fetch('/api/destroy',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},cache:'no-store',body:JSON.stringify({token:destroyToken,key:key})});const result=await response.json();if(!response.ok||!result.ok)throw new Error(result.error||'销毁失败');closeDestroyModal();guestToast('链接已销毁，该链接已失效');setTimeout(()=>{location.href='/'},900)}catch(error){destroyButton.disabled=false;destroyButton.textContent='销毁本链接';guestToast(error.message||'销毁失败')}}destroyButton.addEventListener('click',()=>{if(document.querySelector('.guest-shell').dataset.keyRequired==='true'){destroyModal.style.display='flex';destroyKeyInput.focus();return}if(confirm('销毁后此聚合订阅链接将立即失效且无法恢复，确定要销毁吗？'))destroyCurrentLink('')});document.getElementById('guestDestroyCancel').addEventListener('click',closeDestroyModal);document.getElementById('guestDestroyConfirm').addEventListener('click',()=>{const key=destroyKeyInput.value.trim();if(!key){guestToast('请输入销毁密钥');destroyKeyInput.focus();return}destroyCurrentLink(key)});destroyModal.addEventListener('click',event=>{if(event.target===destroyModal)closeDestroyModal()});document.addEventListener('keydown',event=>{if(event.key==='Escape')closeDestroyModal()});
 </script></body></html>`;
 }
 
 function renderGuestPage(url, guest, guestName = "", backend = null, status = null, destroyKeyRequired = false) {
-  return renderCFSubsGuestPage(url, guest, guestName);
+  return renderCFSubsGuestPage(url, guest, guestName, destroyKeyRequired);
   const links = getSubscriptionLinks(url, guest);
   const apiUrl = backend ? `${backend.protocol}://${backend.api}` : "";
   const configUrl = backend?.config || "";
@@ -1737,7 +1891,7 @@ function renderGuestPage(url, guest, guestName = "", backend = null, status = nu
   return `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-<title>\u805A\u5408\u8BA2\u9605\u94FE\u63A5</title>${SiteLogo ? `<link rel="icon" href="${escapeHTML(SiteLogo)}">` : ""}
+<title>\u805A\u5408\u8BA2\u9605\u94FE\u63A5</title>${SITELOGO ? `<link rel="icon" href="${escapeHTML(SITELOGO)}">` : ""}
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>${getToolStyles()}
@@ -1760,7 +1914,7 @@ function renderGuestPage(url, guest, guestName = "", backend = null, status = nu
 @media(prefers-color-scheme:dark){.guest-destroy-dialog{background:rgba(30,30,30,.97);border-color:rgba(255,255,255,.1)}.guest-destroy-dialog p{color:#9aa7b5}.guest-destroy-input{background:rgba(0,0,0,.35);border-color:rgba(255,255,255,.12);color:#f3f6f7}.guest-head-destroy{background:#c62828;border-color:#c62828}.guest-head-destroy:hover{background:#a61f1f}.guest-destroy-confirm{background:#c62828;border-color:#c62828}.guest-destroy-confirm:hover{background:#a61f1f}}
 @media(prefers-color-scheme:dark){body{background:#000;background-image:radial-gradient(circle at 0% 28%,rgba(0,188,212,.14),transparent 24%),radial-gradient(circle at 100% 100%,rgba(0,120,70,.18),transparent 32%),linear-gradient(180deg,#000 0%,#020807 58%,#00140b 100%);background-attachment:fixed;color:#f4f7f8}.guest-shell{background:linear-gradient(135deg,rgba(1,5,6,.98) 0%,rgba(2,10,10,.96) 48%,rgba(0,54,35,.92) 100%);border-color:rgba(255,255,255,.13)}.guest-header{border-bottom-color:rgba(255,255,255,.10)}.guest-head-copy{background:#3f4650;color:#fff;border-color:#69717c}}
 @media(prefers-color-scheme:light){.guest-shell{background:linear-gradient(135deg,rgba(255,255,255,.95) 0%,rgba(250,255,252,.93) 55%,rgba(226,247,237,.9) 100%);border-color:rgba(120,150,135,.18)}.guest-link-item{background:rgba(255,255,255,.5);border-color:rgba(229,229,223,.7)}.guest-link-url,.guest-current{background:rgba(250,250,250,.7);border-color:rgba(229,229,223,.8);color:#1f4b99}.guest-current-label{color:#666}.guest-status.status-ok{color:#2e7d32;background:rgba(76,175,80,.08)}.guest-status.status-error{color:#c62828;background:rgba(244,67,54,.08)}}
-@media(max-width:640px){.guest-shell{width:calc(100% - 28px);margin:14px 14px 28px;padding:18px 18px 28px;border-radius:22px}.guest-header{margin:0 -18px 16px;padding:22px 18px 20px}.guest-head-row{align-items:flex-start;gap:12px}.guest-head-row .title{font-size:40px}.guest-head-row .subtitle{font-size:12px}.guest-head-copy{font-size:12px;padding:0;background:transparent;border:0}.guest-head-destroy{min-width:92px;padding:0 10px}.guest-destroy-dialog{padding:18px}.guest-destroy-actions{gap:7px}}
+@media(max-width:640px){.page.app-shell.guest-shell{width:calc(100% - 28px);margin:14px 14px 28px;padding:18px 14px 28px;border-radius:22px}.guest-header{margin:0 -14px 16px;padding:22px 14px 20px}.guest-head-row{align-items:flex-start;gap:12px}.guest-head-row .title{font-size:40px}.guest-head-row .subtitle{font-size:12px}.guest-head-copy{font-size:12px;padding:0;background:transparent;border:0}.guest-head-destroy{min-width:92px;padding:0 10px}.guest-destroy-dialog{padding:18px}.guest-destroy-actions{gap:7px}}
 </style>
 <script src="https://cdn.jsdelivr.net/npm/@keeex/qrcodejs-kx@1.0.2/qrcode.min.js"><\/script>
 </head>
@@ -1811,8 +1965,8 @@ ${links.map(([label, value]) => `<div class="guest-link-item">
 __name(renderGuestPage, "renderGuestPage");
 async function renderSubUIHome(request, url, env) {
   const cfg = await getConfig(env);
-  const apis = normalizeProviderList(cfg.subApis).filter((x) => x.enabled);
-  const configs = normalizeProviderList(cfg.subConfigs).filter((x) => x.enabled);
+  const apis = normalizeProviderList(cfg.subApis);
+  const configs = normalizeProviderList(cfg.subConfigs);
   const defaultApiId = String(cfg.defaultSubApiId || "");
   const defaultConfigId = String(cfg.defaultSubConfigId || "");
   let apiId = defaultApiId && apis.some((x) => x.id === defaultApiId) ? defaultApiId : apis[0]?.id || "";
@@ -1840,8 +1994,9 @@ ${getSubUIStyles()}
  .current-api-input{width:100%;height:42px;min-width:0}.current-config-input{width:100%;height:auto!important;min-height:42px!important;line-height:1.5;word-break:break-all;overflow-wrap:anywhere;white-space:normal}.current-config-link{display:flex;align-items:center;min-height:42px;height:auto;padding:10px 12px;border:1px solid rgba(229,229,223,.8);border-radius:8px;background:rgba(250,250,250,.7);box-sizing:border-box;color:#1f4b99;text-decoration:none;cursor:pointer;white-space:normal;word-break:break-all;overflow-wrap:anywhere}.current-api-input.current-config-link{height:auto;min-height:42px}.current-config-link:hover{text-decoration:none;border-color:#1f4b99;box-shadow:0 0 0 2px rgba(31,75,153,.10);background:rgba(31,75,153,.04)}.current-config-link:empty{color:#888}.current-config-link:focus-visible{text-decoration:none;outline:none;border-color:#1f4b99;box-shadow:0 0 0 3px rgba(31,75,153,.14)}
 .edit-custom{display:none;flex:0 0 auto;min-width:72px}.status-box{margin-top:12px}.status-title{font-size:13px;font-weight:700;margin:0 0 7px}.status-list{display:grid;gap:7px}
 .status-item{padding:8px 10px;border-radius:9px;font-weight:650;word-break:break-all}.status-item.wait{background:rgba(255,152,0,.1);border:1px solid rgba(255,152,0,.2);color:#f57c00}.status-item.ok{background:rgba(76,175,80,.12);border:1px solid rgba(76,175,80,.25);color:#2e7d32}.status-item.bad{background:rgba(244,67,54,.1);border:1px solid rgba(244,67,54,.22);color:#c62828}
+.advanced-features-toggle{display:flex;align-items:center;justify-content:space-between;width:100%;min-height:42px;padding:0;border:0;background:transparent;color:inherit;font:inherit;font-size:16px;font-weight:700;text-align:left;cursor:pointer}.advanced-chevron{transition:transform .18s ease}.advanced-features-toggle[aria-expanded="true"] .advanced-chevron{transform:rotate(180deg)}.advanced-features-content{padding-top:16px}.advanced-feature+.advanced-feature{margin-top:20px;padding-top:18px;border-top:1px solid rgba(120,130,140,.2)}.recommended-update-toggle{display:flex;align-items:center;gap:10px;min-height:32px;font-size:15px;font-weight:600;cursor:pointer}.recommended-update-toggle input{width:20px;height:20px;margin:0;accent-color:#1677ff}.recommended-update-label{display:block;margin-bottom:7px;font-weight:650}
 .custom-modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.42);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);display:none;align-items:center;justify-content:center;z-index:1200;padding:20px}.custom-modal{width:min(480px,100%);background:rgba(255,255,255,.96);border:1px solid rgba(229,229,223,.9);border-radius:18px;padding:20px;box-shadow:0 18px 50px rgba(0,0,0,.22)}.custom-modal h3{margin:0;font-size:17px}.custom-modal p{margin:6px 0 14px;color:#888;font-size:12px}.custom-modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}.aggregate-result-overlay{position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.42);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);overflow:auto;padding:20px}.aggregate-result-modal{position:relative;width:min(620px,calc(100vw - 40px));margin:auto;transition:height .2s ease,transform .2s ease}.aggregate-result-close{position:absolute;top:10px;right:10px;width:32px;height:32px;border:0;border-radius:50%;background:transparent;color:#777;font-size:24px;line-height:32px;text-align:center;cursor:pointer}.aggregate-result-close:hover{background:rgba(0,0,0,.07);color:#222}.aggregate-result-url{display:block;width:100%;padding:12px 14px;margin:14px 0 0;border:1px solid rgba(229,229,223,.8);border-radius:10px;background:rgba(250,250,250,.7);color:#1f4b99;word-break:break-all;overflow-wrap:anywhere;line-height:1.55;user-select:text;text-decoration:none;box-sizing:border-box}.aggregate-result-url:hover{text-decoration:none;border-color:#1f4b99;box-shadow:0 0 0 2px rgba(31,75,153,.10)}.aggregate-result-actions{display:flex;justify-content:center;gap:10px;margin:14px auto 0}.aggregate-result-actions .button{width:160px;min-height:40px}.aggregate-result-actions .aggregate-destroy-btn{background:#d93025;color:#fff;border-color:#d93025}.aggregate-result-actions .aggregate-destroy-btn:hover{background:#b91c1c;color:#fff;box-shadow:0 0 0 2px rgba(217,48,37,.12)}.aggregate-result-qr{display:block;margin:16px auto 0;padding:12px;width:max-content;max-width:100%;box-sizing:border-box;background:#fff;border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.18)}.aggregate-copy-status{min-height:18px;margin:8px 0 0;text-align:center;font-size:13px;font-weight:700;color:transparent}.aggregate-copy-status.success{color:#2e7d32}.aggregate-copy-status.error{color:#c62828}.generated-links-panel{margin-top:14px}.generated-links-list{display:grid;gap:10px;margin-top:10px}.generated-link-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:center}.generated-link-url{display:block;min-width:0;padding:11px 13px;border:1px solid rgba(229,229,223,.8);border-radius:10px;background:rgba(250,250,250,.7);color:#1f4b99;word-break:break-all;overflow-wrap:anywhere;line-height:1.45;text-decoration:none;box-sizing:border-box}.generated-link-url:hover{text-decoration:none;border-color:#1f4b99;box-shadow:0 0 0 2px rgba(31,75,153,.10)}.generated-link-destroy{width:84px;min-height:40px;background:#d93025!important;color:#fff!important;border-color:#d93025!important}.generated-link-destroy:hover{background:#b91c1c!important;box-shadow:0 0 0 2px rgba(217,48,37,.12)}
-@media(prefers-color-scheme:dark){.native-picker{background:#111;color:#f1f1f1;border-color:rgba(255,255,255,.14)}.native-picker option{background:#1b1b1b;color:#f1f1f1}.current-api-input,.current-config-input{background:rgba(0,0,0,.3);color:#64b5f6;border-color:rgba(255,255,255,.12)}.current-config-link{color:#64b5f6;background:rgba(0,0,0,.3);border-color:rgba(255,255,255,.12)}.current-config-link:hover{color:#64b5f6;text-decoration:none;border-color:#64b5f6;background:rgba(100,181,246,.08);box-shadow:0 0 0 2px rgba(100,181,246,.10)}.status-item.ok{background:rgba(129,199,132,.1);color:#81c784;border-color:rgba(129,199,132,.2)}.status-item.bad{background:rgba(229,115,115,.1);color:#e57373;border-color:rgba(229,115,115,.2)}.status-item.wait{background:rgba(255,183,77,.1);color:#ffb74d;border-color:rgba(255,183,77,.2)}.custom-modal{background:rgba(30,30,30,.97);border-color:rgba(255,255,255,.1)}.aggregate-result-url{background:rgba(0,0,0,.3);border-color:rgba(255,255,255,.12);color:#64b5f6}.aggregate-result-url:hover{color:#64b5f6;border-color:#64b5f6;background:rgba(100,181,246,.08);box-shadow:0 0 0 2px rgba(100,181,246,.10)}.aggregate-result-qr{background:#fff}.aggregate-result-close{color:#aaa}.aggregate-result-close:hover{background:rgba(255,255,255,.08);color:#fff}.aggregate-result-actions .aggregate-destroy-btn{background:#c62828;color:#fff;border-color:#c62828}.aggregate-result-actions .aggregate-destroy-btn:hover{background:#a61f1f}.aggregate-result-modal>#copyDirect{margin-top:16px}.aggregate-copy-status.success{color:#81c784}.aggregate-copy-status.error{color:#e57373}.generated-link-url{background:rgba(0,0,0,.3);color:#64b5f6;border-color:rgba(255,255,255,.12)}.generated-link-url:hover{color:#64b5f6;border-color:#64b5f6;background:rgba(100,181,246,.08);box-shadow:0 0 0 2px rgba(100,181,246,.10)}}
+@media(prefers-color-scheme:dark){.native-picker{background:#111;color:#f1f1f1;border-color:rgba(255,255,255,.14)}.native-picker option{background:#1b1b1b;color:#f1f1f1}.current-api-input,.current-config-input{background:rgba(0,0,0,.3);color:#64b5f6;border-color:rgba(255,255,255,.12)}.current-config-link{color:#64b5f6;background:rgba(0,0,0,.3);border-color:rgba(255,255,255,.12)}.current-config-link:hover{color:#64b5f6;text-decoration:none;border-color:#64b5f6;background:rgba(100,181,246,.08);box-shadow:0 0 0 2px rgba(100,181,246,.10)}.status-item.ok{background:rgba(129,199,132,.1);color:#81c784;border-color:rgba(129,199,132,.2)}.status-item.bad{background:rgba(229,115,115,.1);color:#e57373;border-color:rgba(229,115,115,.2)}.status-item.wait{background:rgba(255,183,77,.1);color:#ffb74d;border-color:rgba(255,183,77,.2)}.advanced-feature+.advanced-feature{border-top-color:rgba(255,255,255,.12)}.custom-modal{background:rgba(30,30,30,.97);border-color:rgba(255,255,255,.1)}.aggregate-result-url{background:rgba(0,0,0,.3);border-color:rgba(255,255,255,.12);color:#64b5f6}.aggregate-result-url:hover{color:#64b5f6;border-color:#64b5f6;background:rgba(100,181,246,.08);box-shadow:0 0 0 2px rgba(100,181,246,.10)}.aggregate-result-qr{background:#fff}.aggregate-result-close{color:#aaa}.aggregate-result-close:hover{background:rgba(255,255,255,.08);color:#fff}.aggregate-result-actions .aggregate-destroy-btn{background:#c62828;color:#fff;border-color:#c62828}.aggregate-result-actions .aggregate-destroy-btn:hover{background:#a61f1f}.aggregate-result-modal>#copyDirect{margin-top:16px}.aggregate-copy-status.success{color:#81c784}.aggregate-copy-status.error{color:#e57373}.generated-link-url{background:rgba(0,0,0,.3);color:#64b5f6;border-color:rgba(255,255,255,.12)}.generated-link-url:hover{color:#64b5f6;border-color:#64b5f6;background:rgba(100,181,246,.08);box-shadow:0 0 0 2px rgba(100,181,246,.10)}}
 </style>
 </head>
 <body>
@@ -1873,9 +2028,12 @@ ${configs.map((x) => `<option value="${esc(x.url)}" data-id="${esc(x.id)}" ${x.i
 <div class="status-box"><div class="status-title">\u53EF\u7528\u72B6\u6001</div><div id="configStatus" class="status-list"></div></div>
 </section>
 
-<section class="panel"><div style="display:flex;align-items:center;justify-content:space-between;gap:12px"><h2 class="section-title" style="margin-bottom:0">\u6392\u9664\u8282\u70B9</h2><button type="button" class="button secondary" id="editNoAds">\u7F16\u8F91</button></div><div class="section-note">\u516C\u5F00\u4F7F\u7528\u3002\u6BCF\u884C\u586B\u5199\u4E00\u4E2A\u5173\u952E\u8BCD\uFF0C\u5305\u542B\u5173\u952E\u8BCD\u7684\u8282\u70B9\u4F1A\u88AB\u6392\u9664\u3002</div><div class="field" id="noAdsField" style="display:none"><textarea id="noAds" placeholder="\u4F8B\u5982\uFF1At.me&#10;\u5E7F\u544A&#10;example.com">${esc(noAds)}</textarea></div></section>
-<section class="panel"><h2 class="section-title">\u5BC6\u94A5</h2><div class="section-note">\u53EF\u9009\u3002\u7528\u4E8E\u5728\u805A\u5408\u8BA2\u9605\u9875\u9762\u9500\u6BC1\u672C\u94FE\u63A5\u3002\u586B\u5199\u540E\uFF0C\u9500\u6BC1\u672C\u94FE\u63A5\u65F6\u9700\u8981\u63D0\u4F9B\u6B64\u5BC6\u94A5\u3002</div><div class="field"><input id="destroyKey" type="password" autocomplete="new-password" placeholder="\u53EF\u9009\uFF0C\u8BBE\u7F6E\u7528\u4E8E\u9500\u6BC1\u672C\u94FE\u63A5\u7684\u5BC6\u94A5"></div></section>
-<section class="panel"><h2 class="section-title">\u94FE\u63A5\u8DEF\u5F84</h2><div class="section-note">\u5FC5\u586B\u3002\u4E3A\u5B89\u5168\u8D77\u89C1\uFF0C\u5EFA\u8BAE\u4F7F\u7528\u968F\u673A UUID \u7B49\u590D\u6742\u8DEF\u5F84\uFF0C\u907F\u514D\u4F7F\u7528\u5BB9\u6613\u731C\u5230\u7684\u5185\u5BB9\u3002</div><div class="path-row"><input id="linkPath" type="text" minlength="3" maxlength="128" autocomplete="off" placeholder="\u4F8B\u5982\uFF1A550e8400-e29b-41d4-a716-446655440000"><button type="button" class="button secondary" id="randomLinkPath">\u968F\u673A UUID</button></div></section>
+<section class="panel advanced-features"><button type="button" class="advanced-features-toggle" id="advancedFeaturesToggle" aria-expanded="false" aria-controls="advancedFeaturesContent"><span>\u9AD8\u7EA7\u529F\u80FD</span><span class="advanced-chevron" aria-hidden="true">\u25BE</span></button><div class="advanced-features-content" id="advancedFeaturesContent" hidden>
+<section class="advanced-feature"><div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap"><h2 class="section-title" style="margin:0">\u6392\u9664\u8282\u70B9</h2><span id="noAdsCount" class="section-note" style="margin:0;white-space:nowrap" aria-live="polite">\u5C4F\u853D\u89C4\u5219\u6570 0</span></div><div class="section-note">\u6BCF\u884C\u586B\u5199\u4E00\u4E2A\u5173\u952E\u8BCD\uFF0C\u5305\u542B\u5173\u952E\u8BCD\u7684\u8282\u70B9\u4F1A\u88AB\u6392\u9664\u3002</div><div class="field"><textarea id="noAds" placeholder="\u4F8B\u5982\uFF1At.me&#10;\u5E7F\u544A&#10;example.com">${esc(noAds)}</textarea></div></section>
+<section class="advanced-feature"><h2 class="section-title">\u63A8\u8350\u81EA\u52A8\u66F4\u65B0</h2><label class="recommended-update-toggle"><input id="recommendedUpdateEnable" type="checkbox" checked><span>\u5F00\u542F</span></label><div class="field"><label for="recommendedUpdateMinutes" class="recommended-update-label">\u63A8\u8350\u66F4\u65B0\u65F6\u95F4\uFF08\u5206\u949F\uFF09</label><input id="recommendedUpdateMinutes" type="number" min="0" max="525600" step="1" value="60" inputmode="numeric"><div class="section-note">\u5173\u95ED\u5F00\u5173\u4E0D\u4F1A\u4FEE\u6539\u5DF2\u4FDD\u5B58\u7684\u5206\u949F\u6570\u3002</div></div></section>
+<section class="advanced-feature"><h2 class="section-title">\u5BC6\u94A5</h2><div class="section-note">\u53EF\u9009\u3002\u7528\u4E8E\u5728\u805A\u5408\u8BA2\u9605\u9875\u9762\u9500\u6BC1\u672C\u94FE\u63A5\u3002\u586B\u5199\u540E\uFF0C\u9500\u6BC1\u672C\u94FE\u63A5\u65F6\u9700\u8981\u63D0\u4F9B\u6B64\u5BC6\u94A5\u3002</div><div class="field"><input id="destroyKey" type="password" autocomplete="new-password" placeholder="\u53EF\u9009\uFF0C\u8BBE\u7F6E\u7528\u4E8E\u9500\u6BC1\u672C\u94FE\u63A5\u7684\u5BC6\u94A5"></div></section>
+<section class="advanced-feature"><h2 class="section-title">\u81EA\u5B9A\u4E49\u94FE\u63A5\u8DEF\u5F84</h2><div class="section-note">\u9009\u586B\u3002\u7559\u7A7A\u65F6\u751F\u6210\u94FE\u63A5\u4F1A\u81EA\u52A8\u4F7F\u7528\u968F\u673A UUID\u3002</div><div class="path-row"><input id="linkPath" type="text" maxlength="128" autocomplete="off" placeholder="\u53EF\u7559\u7A7A\uFF0C\u4F8B\u5982\uFF1A550e8400-e29b-41d4-a716-446655440000"><button type="button" class="button secondary" id="randomLinkPath">\u968F\u673A UUID</button></div></section>
+</div></section>
 <style>@media(max-width:600px){.path-row{grid-template-columns:1fr}.path-row .button{width:100%}}</style>
 <button class="primary" id="generate" type="button">\u751F\u6210\u805A\u5408\u8BA2\u9605\u94FE\u63A5</button>
 <section class="panel generated-links-panel" id="generatedLinksPanel" style="display:none"><h2 class="section-title">\u5DF2\u751F\u6210\u7684\u805A\u5408\u8BA2\u9605\u94FE\u63A5</h2><div class="section-note">\u6839\u636E\u672C\u673A\u6D4F\u89C8\u5668\u7F13\u5B58\u663E\u793A\u4F60\u751F\u6210\u8FC7\u7684\u94FE\u63A5\u3002\u94FE\u63A5\u6846\u53EF\u76F4\u63A5\u6253\u5F00\uFF0C\u9500\u6BC1\u540E\u94FE\u63A5\u5C06\u4F1A\u5931\u6548\u3002</div><div id="generatedLinksList" class="generated-links-list"></div></section>
@@ -1901,7 +2059,7 @@ function getSubUIStyles() {
 .checks{display:grid;gap:8px}.check{display:grid;grid-template-columns:18px minmax(0,1fr);align-items:center;gap:8px;margin:0;padding:10px;border:1px solid rgba(229,229,223,.6);border-radius:10px;background:rgba(255,255,255,.5);cursor:pointer}
 .check input{width:18px;height:18px;margin:0}.check span{font-weight:600}.check small{grid-column:2;color:#888;font-size:12px;word-break:break-all;overflow-wrap:anywhere}
 .primary{width:100%;min-height:42px;margin-top:12px}.result-panel[hidden]{display:none}.result-label{margin-top:12px;margin-bottom:6px;font-size:12px;font-weight:600;color:#666}.result-url{padding:10px;border:1px solid rgba(229,229,223,.8);border-radius:8px;background:rgba(250,250,250,.7);color:#1f4b99;word-break:break-all;overflow-wrap:anywhere}
-@media(max-width:600px){.aggregate-result-modal{width:calc(100vw - 40px)}.aggregate-result-actions{gap:8px}.aggregate-result-actions .button{width:calc(50% - 4px)}.row{grid-template-columns:1fr}.generated-link-row{grid-template-columns:minmax(0,1fr) 76px}.generated-link-destroy{width:76px;padding-left:8px;padding-right:8px}.page.app-shell{width:calc(100% - 28px);margin-left:14px;margin-right:14px}}
+@media(max-width:600px){.aggregate-result-modal{width:calc(100vw - 40px)}.aggregate-result-actions{gap:8px}.aggregate-result-actions .button{width:calc(50% - 4px)}.row{grid-template-columns:1fr}.generated-link-row{grid-template-columns:minmax(0,1fr) 76px}.generated-link-destroy{width:76px;padding-left:8px;padding-right:8px}.page.app-shell{width:calc(100% - 28px);margin-left:14px;margin-right:14px;padding-left:14px;padding-right:14px}}
 @media(prefers-color-scheme:dark){body{background:#000;background-image:radial-gradient(circle at 0% 28%,rgba(0,188,212,.18),transparent 24%),radial-gradient(circle at 100% 100%,rgba(0,120,70,.22),transparent 32%),linear-gradient(180deg,#000 0%,#020807 58%,#00140b 100%);background-attachment:fixed;color:#f4f7f8}.page.app-shell{background:linear-gradient(135deg,rgba(1,5,6,.98) 0%,rgba(2,10,10,.96) 48%,rgba(0,54,35,.92) 100%);border-color:rgba(255,255,255,.13);box-shadow:0 20px 70px rgba(0,0,0,.55)}.header{border-bottom-color:rgba(255,255,255,.10)}.title{color:#fff}.subtitle{color:#9aa7b5}.backend-version-card{background:linear-gradient(135deg,rgba(4,10,14,.98) 0%,rgba(3,18,20,.98) 48%,rgba(0,65,42,.94) 100%);border-color:rgba(255,255,255,.16);box-shadow:0 12px 36px rgba(0,40,25,.28)}.backend-version-label{color:#91a0ae}.backend-version-value{color:#fff}.panel{background:rgba(8,12,14,.78);border-color:rgba(255,255,255,.10)}.section-note{color:#9aa7b5}.field input,.field textarea,.native-picker,.current-api-input,.current-config-input,.current-config-link{background:rgba(2,6,8,.82);border-color:rgba(255,255,255,.13);color:#f3f6f7}.native-picker option{background:#0b1012;color:#f3f6f7}.check{background:rgba(15,22,24,.7);border-color:rgba(255,255,255,.10)}.check small{color:#8e9aa6}.result-label{color:#aab4be}.result-url{background:rgba(2,6,8,.72);color:#64b5f6;border-color:rgba(255,255,255,.12)}}
 `;
 }
@@ -1948,30 +2106,63 @@ async function listJsonManagerItems(env, query = "") {
   return result;
 }
 __name(listJsonManagerItems, "listJsonManagerItems");
-function renderJsonManagerPage(url, env, adminPath) {
-  const backPath = `/${encodeURIComponent(adminPath)}`;
-  const pagePath = `/${encodeURIComponent(adminPath)}/json`;
-  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>JSON \u7BA1\u7406 \xB7 ${escapeHTML(FileName || "SUB")}</title>${SiteLogo ? `<link rel="icon" href="${escapeHTML(SiteLogo)}">` : ""}<style>
+async function listKVEntries(env) {
+  const result = [];
+  let cursor;
+  do {
+    const page = await env.KV.list(cursor ? { cursor } : {});
+    const entries = await Promise.all(page.keys.map(async ({ name }) => {
+      let value = await env.KV.get(name);
+      if (value === null) return null;
+      let displayValue = value;
+      let exportValue = value;
+      let isJson = false;
+      try {
+        const normalized = upperCaseObject(JSON.parse(value));
+        const normalizedRaw = JSON.stringify(normalized);
+        if (normalizedRaw !== value) {
+          await env.KV.put(name, normalizedRaw);
+          value = normalizedRaw;
+        }
+        displayValue = JSON.stringify(JSON.parse(value), null, 2);
+        exportValue = JSON.parse(value);
+        isJson = true;
+      } catch {
+        exportValue = value;
+      }
+      return { name, value: displayValue, isJson, exportValue };
+    }));
+    result.push(...entries.filter(Boolean));
+    cursor = page.list_complete ? void 0 : page.cursor;
+  } while (cursor);
+  result.sort((a, b) => a.name.localeCompare(b.name));
+  return result;
+}
+__name(listKVEntries, "listKVEntries");
+function renderJsonManagerPage(url, adminPath, entries) {
+  const exportData = Object.fromEntries(entries.map((entry) => [entry.name, entry.exportValue]));
+  const safeExportData = JSON.stringify(exportData).replace(/</g, "\\u003c").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>备份与迁移 · ${escapeHTML(FILENAME || "SUB")}</title>${SITELOGO ? `<link rel="icon" href="${escapeHTML(SITELOGO)}">` : ""}<style>
 ${getToolStyles()}
-body{min-height:100vh}.json-shell{max-width:1120px;padding-top:34px!important;padding-bottom:40px}.json-header{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap}.json-title{font-size:28px;font-weight:800;line-height:1.2}.json-actions{display:flex;gap:8px;flex-wrap:wrap}.json-actions .button{min-width:86px}.json-toolbar{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:10px;align-items:center}.json-toolbar input{height:42px}.json-toolbar .button{height:42px;white-space:nowrap}.json-danger-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;margin-top:12px}.json-danger-row input{height:42px}.json-stat{font-size:15px;font-weight:700}.json-list{display:grid;gap:12px;margin-top:14px}.json-item{border:1px solid rgba(120,120,120,.2);border-radius:16px;padding:16px;background:rgba(255,255,255,.58)}.json-item-head{display:flex;justify-content:space-between;gap:14px;align-items:flex-start}.json-item-main{min-width:0}.json-item-title{font-weight:750;margin-bottom:6px}.json-item-url{display:block;color:#2563eb;word-break:break-all;overflow-wrap:anywhere;text-decoration:none;line-height:1.5}.json-item-url:hover{text-decoration:underline}.json-item-meta{font-size:12px;color:#777;margin-top:8px}.json-item-actions{display:flex;gap:8px;flex-wrap:wrap}.json-item-actions button{white-space:nowrap}.json-preview{display:none;margin-top:12px;max-height:360px;overflow:auto;border-radius:12px;padding:12px;background:rgba(10,15,17,.94);color:#d9f7e8;font:12px/1.55 ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;white-space:pre-wrap;word-break:break-all}.json-item.open .json-preview{display:block}.json-empty{padding:30px;text-align:center;color:#888}.json-confirm-overlay{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.42);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);z-index:3000;padding:20px}.json-confirm{width:min(460px,100%);background:rgba(255,255,255,.96);border-radius:20px;padding:22px;box-shadow:0 20px 70px rgba(0,0,0,.28)}.json-confirm h3{margin:0 0 8px}.json-confirm p{margin:0;color:#666;line-height:1.6}.json-confirm-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:18px}.json-confirm .danger{background:#d93025;color:#fff;border-color:#d93025}@media(max-width:720px){.json-toolbar{grid-template-columns:1fr}.json-danger-row{grid-template-columns:1fr}.json-item-head{flex-direction:column}.json-item-actions{width:100%}.json-item-actions .button{flex:1}.json-shell{width:calc(100% - 28px);margin:14px auto}.json-header{gap:12px}.json-actions{width:100%}.json-actions .button{flex:1}}@media(prefers-color-scheme:dark){.json-item{background:rgba(8,12,14,.8);border-color:rgba(255,255,255,.1)}.json-item-meta{color:#9aa7b5}.json-confirm{background:rgba(18,23,25,.98);color:#fff}.json-confirm p{color:#aeb8c1}}
+body{min-height:100vh}.json-shell{max-width:1100px;padding-top:0!important;padding-bottom:34px}.json-header{margin:0 -28px 18px;padding:28px;border-bottom:1px solid rgba(120,130,140,.18)}.json-header-main{min-width:0}.json-list{display:grid;gap:10px}.json-entry{min-width:0;border:1px solid rgba(120,130,140,.2);border-radius:12px;padding:14px;background:rgba(255,255,255,.58)}.json-entry-head{display:flex;align-items:center;justify-content:space-between;gap:12px}.json-key{min-width:0;font-size:16px;font-weight:700;overflow-wrap:anywhere}.json-entry-meta{display:flex;align-items:center;gap:10px;flex:0 0 auto}.json-kind{color:#687384;font-size:12px}.json-toggle{min-height:34px;padding:6px 12px;border:1px solid rgba(120,130,140,.35);border-radius:8px;background:rgba(255,255,255,.7);color:#1f2937;font-weight:600;cursor:pointer}.json-value{display:none;margin:12px 0 0;padding:12px;border-radius:8px;background:rgba(245,247,248,.85);font:12px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;overflow-wrap:anywhere;overflow:auto;max-height:70vh}.json-entry.open .json-value{display:block}.json-entry.open .json-toggle{background:#1f2937;color:#fff;border-color:#1f2937}.json-empty{color:#777;text-align:center;padding:28px 12px}.json-actions{display:flex;gap:8px;flex-wrap:wrap}.json-action{min-height:38px;padding:8px 12px;border-radius:9px;border:1px solid rgba(120,130,140,.35);background:rgba(255,255,255,.7);cursor:pointer;color:#1f2937;font-weight:600;text-decoration:none}.json-action.primary{background:#1f2937;color:#fff;border-color:#1f2937}.json-toast{position:fixed;top:18px;right:18px;z-index:10000;display:none;max-width:calc(100vw - 36px);padding:10px 14px;border-radius:10px;background:#1f2937;color:#fff;box-shadow:0 8px 30px rgba(0,0,0,.18)}
+@media(max-width:600px){.page.app-shell.json-shell{width:calc(100% - 28px);margin:14px 14px 28px;padding:0 14px 24px;border-radius:22px}.json-header{margin:0 -14px 16px;padding:22px 14px 20px}.json-header .title{font-size:22px}.json-actions{width:100%}.json-action{flex:1 1 auto;text-align:center}.json-entry{padding:10px}.json-key{font-size:14px;overflow-wrap:anywhere}.json-entry-head{align-items:flex-start}.json-entry-meta{gap:6px}.json-kind{font-size:11px}.json-toggle{min-width:60px;padding:6px 8px}.json-value{padding:10px}}
+@media(prefers-color-scheme:dark){.json-header{border-bottom-color:rgba(255,255,255,.1)}.json-entry{background:rgba(8,12,14,.78);border-color:rgba(255,255,255,.12)}.json-kind,.json-empty{color:#9aa7b5}.json-value{background:rgba(2,6,8,.72);color:#e7ecef}.json-toggle,.json-action{background:rgba(13,17,23,.8);border-color:rgba(255,255,255,.12);color:#e7ecef}.json-entry.open .json-toggle,.json-action.primary{background:#dfeafc;color:#0f172a;border-color:#dfeafc}}
 </style></head><body><main class="page app-shell json-shell">
-<header class="header json-header"><div><div class="json-title">JSON \u7BA1\u7406</div><div class="subtitle">\u7BA1\u7406\u6240\u6709\u5DF2\u7ECF\u751F\u6210\u7684\u805A\u5408\u8BA2\u9605\u94FE\u63A5\u3002\u5220\u9664\u540E\u5BF9\u5E94\u94FE\u63A5\u5C06\u7ACB\u5373\u5931\u6548\u4E14\u65E0\u6CD5\u6062\u590D\u3002</div></div><div class="json-actions"><a class="button secondary" href="${backPath}">\u8FD4\u56DE\u540E\u53F0</a><a class="button secondary" href="${pagePath}">\u5237\u65B0</a></div></header>
-<section class="panel"><div class="json-toolbar"><input id="jsonSearch" placeholder="\u641C\u7D22 JSON \u5173\u952E\u5B57\u3001\u57DF\u540D\u3001Token\u2026\u2026"><button type="button" class="button" id="jsonSearchBtn">\u641C\u7D22</button><div class="json-stat" id="jsonStat">\u52A0\u8F7D\u4E2D\u2026</div></div><div class="json-danger-row"><input id="jsonKeyword" placeholder="\u8F93\u5165 JSON \u5173\u952E\u5B57\u540E\u6279\u91CF\u5220\u9664\uFF0C\u4F8B\u5982 example.com"><button type="button" class="button danger" id="jsonKeywordDelete">\u6309\u5173\u952E\u5B57\u6279\u91CF\u5220\u9664</button></div></section>
-<section class="panel"><div class="json-toolbar" style="grid-template-columns:minmax(0,1fr) auto"><div><h2 class="section-title" style="margin:0">\u5168\u90E8\u805A\u5408\u8BA2\u9605 JSON</h2><div class="section-note">\u641C\u7D22\u4F1A\u5339\u914D JSON \u539F\u6587\uFF0C\u56E0\u6B64 URL\u3001\u89C4\u5219\u3001\u8282\u70B9\u6E90\u3001NOADS \u7B49\u5B57\u6BB5\u90FD\u53EF\u4EE5\u641C\u7D22\u3002</div></div><button type="button" class="button danger" id="jsonDeleteAll">\u5168\u90E8\u5220\u9664</button></div><div id="jsonList" class="json-list"></div></section>
-</main>
-<div id="jsonConfirmOverlay" class="json-confirm-overlay"><div class="json-confirm"><h3 id="jsonConfirmTitle">\u786E\u8BA4\u64CD\u4F5C</h3><p id="jsonConfirmText"></p><div class="json-confirm-actions"><button type="button" class="button secondary" id="jsonConfirmCancel">\u53D6\u6D88</button><button type="button" class="button danger" id="jsonConfirmOk">\u786E\u8BA4\u5220\u9664</button></div></div></div>
-<script>
+<header class="header json-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:14px"><div class="json-header-main"><h1 class="title">备份与迁移</h1><div class="subtitle">共 ${entries.length} 项 KV 数据；合并导入时同名键覆盖，其他数据保留</div></div><div class="json-actions"><button type="button" class="json-action primary" id="json-export-all">备份</button><button type="button" class="json-action" id="json-import-all">合并导入</button><a class="button secondary" href="/${escapeHTML(adminPath)}">返回控制台</a></div></header>
+<div class="json-list">${entries.length ? entries.map((entry) => `<article class="json-entry"><div class="json-entry-head"><div class="json-key">${escapeHTML(entry.name)}</div><div class="json-entry-meta"><span class="json-kind">${entry.isJson ? "JSON" : "文本"}</span><button type="button" class="json-toggle" aria-expanded="false">展开</button></div></div><pre class="json-value">${escapeHTML(entry.value)}</pre></article>`).join("") : '<div class="json-entry json-empty">KV 暂无数据</div>'}</div>
+</main><div id="jsonToast" class="json-toast" role="status" aria-live="polite"></div><script>
 (function(){
 'use strict';
-var listEl=document.getElementById('jsonList'),statEl=document.getElementById('jsonStat'),searchEl=document.getElementById('jsonSearch'),keywordEl=document.getElementById('jsonKeyword'),overlay=document.getElementById('jsonConfirmOverlay'),confirmTitle=document.getElementById('jsonConfirmTitle'),confirmText=document.getElementById('jsonConfirmText'),pending=null;
-function esc(v){return String(v==null?'':v).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
-function post(data){return fetch('/api/admin',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','Accept':'application/json'},cache:'no-store',body:JSON.stringify(data)}).then(function(r){return r.json().then(function(d){if(!r.ok||!d.ok)throw new Error(d.error||('\u64CD\u4F5C\u5931\u8D25\uFF08HTTP '+r.status+'\uFF09'));return d})})}
-function ask(title,text,fn){confirmTitle.textContent=title;confirmText.textContent=text;pending=fn;overlay.style.display='flex'}
-function closeConfirm(){overlay.style.display='none';pending=null}
-document.getElementById('jsonConfirmCancel').onclick=closeConfirm;document.getElementById('jsonConfirmOk').onclick=function(){if(!pending)return;var fn=pending;pending=null;overlay.style.display='none';fn()};overlay.onclick=function(e){if(e.target===overlay)closeConfirm()};document.addEventListener('keydown',function(e){if(e.key==='Escape')closeConfirm()});
-function render(items){statEl.textContent='\u5171 '+items.length+' \u4E2A';if(!items.length){listEl.innerHTML='<div class="json-empty">\u6CA1\u6709\u627E\u5230\u805A\u5408\u8BA2\u9605 JSON\u3002</div>';return}listEl.innerHTML=items.map(function(x,i){var pretty=x.raw;try{pretty=JSON.stringify(JSON.parse(x.raw),null,2)}catch(e){}return '<article class="json-item" data-token="'+esc(x.token)+'"><div class="json-item-head"><div class="json-item-main"><div class="json-item-title">'+esc(x.name||'\u8BA2\u9605\u94FE\u63A5')+' \xB7 '+esc(x.token)+'</div><a class="json-item-url" href="'+esc(x.subscriptionUrl||('/'+x.token))+'" target="_blank" rel="noopener noreferrer">'+esc(x.subscriptionUrl||('/'+x.token))+'</a><div class="json-item-meta">\u521B\u5EFA\uFF1A'+esc(x.createdAt||'\u672A\u77E5')+'\u3000\u66F4\u65B0\uFF1A'+esc(x.updatedAt||'\u672A\u77E5')+'</div></div><div class="json-item-actions"><button type="button" class="button secondary json-view-btn">\u67E5\u770B JSON</button><button type="button" class="button danger json-delete-btn">\u5220\u9664</button></div></div><pre class="json-preview">'+esc(pretty)+'</pre></article>'}).join('');Array.prototype.forEach.call(document.querySelectorAll('.json-view-btn'),function(btn){btn.onclick=function(){btn.closest('.json-item').classList.toggle('open');btn.textContent=btn.closest('.json-item').classList.contains('open')?'\u9690\u85CF JSON':'\u67E5\u770B JSON'}});Array.prototype.forEach.call(document.querySelectorAll('.json-delete-btn'),function(btn){btn.onclick=function(){var item=btn.closest('.json-item'),token=item.getAttribute('data-token');ask('\u5220\u9664\u8FD9\u4E2A\u805A\u5408\u8BA2\u9605\uFF1F','\u5220\u9664\u540E\u94FE\u63A5\u5C06\u7ACB\u5373\u5931\u6548\u4E14\u65E0\u6CD5\u6062\u590D\u3002',function(){post({type:'json_delete',token:token}).then(load).catch(function(e){alert(e.message||'\u5220\u9664\u5931\u8D25')})})}})}
-function load(){var q=searchEl.value.trim();statEl.textContent='\u52A0\u8F7D\u4E2D\u2026';post({type:'json_list',query:q}).then(function(d){render(d.items||[])}).catch(function(e){statEl.textContent='\u52A0\u8F7D\u5931\u8D25';alert(e.message||'\u52A0\u8F7D\u5931\u8D25')})}
-document.getElementById('jsonSearchBtn').onclick=load;searchEl.addEventListener('keydown',function(e){if(e.key==='Enter')load()});document.getElementById('jsonDeleteAll').onclick=function(){ask('\u5220\u9664\u5168\u90E8\u805A\u5408\u8BA2\u9605\uFF1F','\u8FD9\u4F1A\u5220\u9664\u5F53\u524D KV \u4E2D\u6240\u6709\u805A\u5408\u8BA2\u9605 JSON\uFF0C\u6240\u6709\u5BF9\u5E94\u94FE\u63A5\u90FD\u4F1A\u7ACB\u5373\u5931\u6548\u4E14\u65E0\u6CD5\u6062\u590D\u3002',function(){post({type:'json_delete_all'}).then(load).catch(function(e){alert(e.message||'\u5220\u9664\u5931\u8D25')})})};document.getElementById('jsonKeywordDelete').onclick=function(){var k=keywordEl.value.trim();if(!k)return alert('\u8BF7\u8F93\u5165 JSON \u5173\u952E\u5B57');ask('\u6309\u5173\u952E\u5B57\u6279\u91CF\u5220\u9664\uFF1F','\u5C06\u5220\u9664 JSON \u539F\u6587\u4E2D\u5305\u542B\u201C'+k+'\u201D\u7684\u6240\u6709\u805A\u5408\u8BA2\u9605\u94FE\u63A5\uFF0C\u5220\u9664\u540E\u65E0\u6CD5\u6062\u590D\u3002',function(){post({type:'json_delete_keyword',keyword:k}).then(function(d){alert('\u5DF2\u5220\u9664 '+(d.deleted||0)+' \u4E2A\u94FE\u63A5');load()}).catch(function(e){alert(e.message||'\u6279\u91CF\u5220\u9664\u5931\u8D25')})})};load();
+var exportData=${safeExportData};
+var entries=Array.prototype.slice.call(document.querySelectorAll('.json-entry'));
+var toast=document.getElementById('jsonToast'),toastTimer;
+function showMessage(message,isError){toast.textContent=message;toast.style.background=isError?'#d93025':'#1f2937';toast.style.display='block';clearTimeout(toastTimer);toastTimer=setTimeout(function(){toast.style.display='none'},2200)}
+entries.forEach(function(entry){var toggle=entry.querySelector('.json-toggle');if(!toggle)return;toggle.addEventListener('click',function(){var open=entry.classList.toggle('open');toggle.textContent=open?'隐藏':'展开';toggle.setAttribute('aria-expanded',String(open))})});
+function downloadBackup(){var blob=new Blob([JSON.stringify(exportData,null,2)],{type:'application/json;charset=utf-8'}),url=URL.createObjectURL(blob),anchor=document.createElement('a');anchor.href=url;anchor.download='kv-backup-'+new Date().toISOString().slice(0,10)+'.json';document.body.appendChild(anchor);anchor.click();anchor.remove();setTimeout(function(){URL.revokeObjectURL(url)},1000);showMessage('已备份全部 KV 数据')}
+document.getElementById('json-export-all').addEventListener('click',downloadBackup);
+var input=document.createElement('input');input.type='file';input.accept='.json,application/json';input.hidden=true;document.body.appendChild(input);
+document.getElementById('json-import-all').addEventListener('click',function(){input.click()});
+input.addEventListener('change',async function(){var file=input.files&&input.files[0];if(!file)return;try{var payload=JSON.parse(await file.text());if(!payload||typeof payload!=='object'||Array.isArray(payload))throw new Error('导入内容必须是一个 JSON 对象');var response=await fetch(window.location.pathname,{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},body:JSON.stringify({type:'import_all_json',payload:payload})});var result=await response.json().catch(function(){return{}});if(!response.ok||!result.ok)throw new Error(result.error||'导入失败');showMessage('已合并导入 '+(result.count||0)+' 项数据');setTimeout(function(){window.location.reload()},500)}catch(error){showMessage(error.message||'导入失败',true)}finally{input.value=''}});
 })();
 <\/script></body></html>`;
 }
@@ -2005,6 +2196,10 @@ function renderAdminPage(url, env, settings) {
 .sub-head{display:grid;grid-template-columns:max-content minmax(0,1fr);align-items:start;gap:14px}.sub-head .section-title{white-space:nowrap;font-size:16px;line-height:40px;margin:0}.sub-head-actions{display:grid;grid-template-columns:270px 190px;align-items:center;justify-content:end;gap:10px;width:100%}.default-provider-select{width:270px;min-width:270px;height:40px;padding:0 30px 0 12px;border:1px solid rgba(120,120,120,.45);border-radius:9px;background:rgba(255,255,255,.7);color:inherit;font-size:14px;font-weight:600;cursor:pointer;box-sizing:border-box}.default-provider-select:focus{outline:none;border-color:#3b82f6;box-shadow:0 0 0 2px rgba(59,130,246,.18);width:max-content;min-width:270px;max-width:calc(100vw - 40px)}.sub-head-actions>button{width:190px;min-width:190px;height:40px;white-space:nowrap;word-break:keep-all;overflow:hidden;text-overflow:clip;font-size:14px}.provider-main{min-width:0;width:100%;position:relative;z-index:1}.provider-url{display:block;width:100%;margin-top:6px;margin-bottom:0;word-break:break-all;overflow-wrap:anywhere;line-height:1.55}.provider-item{position:relative;padding:12px 104px 12px 42px;cursor:grab;transition:opacity .15s ease,transform .15s ease,box-shadow .15s ease}.provider-item:active{cursor:grabbing}.provider-item.dragging{opacity:.55}.provider-item.drag-over{box-shadow:inset 0 0 0 2px rgba(59,130,246,.45)}.drag-handle{position:absolute;left:12px;top:50%;transform:translateY(-50%);font-size:22px;line-height:1;color:#8a8a8a;letter-spacing:-3px;user-select:none;cursor:grab;touch-action:none}.admin-row-actions{position:absolute;top:12px;right:12px;display:flex;flex-direction:column;gap:7px;margin-top:0;align-items:stretch;z-index:2}.admin-row-actions button{min-width:68px}.provider-list.saving-order{opacity:.75;pointer-events:none}.empty{font-size:12px;color:#888}.topbar{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap}.topbar-main{min-width:0;flex:1}.site-title-display{font-size:28px;font-weight:700;line-height:1.2;color:#1a1a1a}.site-title-input{font-size:15px!important}.site-title-input:focus{box-shadow:none!important}.top-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}.top-actions .button{min-width:86px}.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.4);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);display:none;align-items:center;justify-content:center;z-index:1000;padding:20px}.modal-content{width:min(460px,100%);background:rgba(255,255,255,.95);border-radius:20px;padding:24px;box-shadow:0 10px 40px rgba(0,0,0,.2);border:1px solid rgba(255,255,255,.5)}.modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}@media(max-width:760px){.sub-head{grid-template-columns:1fr;gap:8px}.sub-head-actions{width:100%;grid-template-columns:minmax(0,1fr) 190px}.default-provider-select{width:100%;min-width:0;font-size:14px}.default-provider-select:focus{width:max-content;min-width:0;max-width:100%}}@media(max-width:600px){.admin-shell{width:calc(100% - 28px);margin-left:14px;margin-right:14px;padding-top:34px!important}.top-actions{width:100%;justify-content:stretch}.top-actions .button{flex:1}.sub-head-actions{width:100%;grid-template-columns:minmax(0,1fr) 170px}.default-provider-select{width:100%;min-width:0;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-left:10px;padding-right:24px}.default-provider-select:focus{width:100%;min-width:0;max-width:100%;font-size:12px}.sub-head-actions>button{width:170px;min-width:170px;white-space:nowrap}.provider-item{padding:12px 12px 12px 38px;display:block}.provider-main{width:100%;padding-right:0}.provider-url{width:100%;margin-top:7px;line-height:1.5}.admin-row-actions{position:static;display:grid;grid-template-columns:1fr 1fr;gap:8px;width:100%;margin-top:10px}.admin-row-actions button{width:100%;min-width:0;height:40px}.drag-handle{left:10px;top:18px;transform:none;font-size:20px}.modal-content{padding:20px}}.json-count-panel{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);align-items:center;gap:18px}.json-count-main{min-width:0}.json-count-main .section-title{margin-bottom:4px}.json-count-value{grid-column:2;font-size:26px;font-weight:800;white-space:nowrap;text-align:center}.json-count-view{grid-column:3;justify-self:end;min-width:92px;text-align:center;text-decoration:none}.json-count-panel>.json-count-main{grid-column:1}.json-count-panel>.json-count-view{grid-column:3}@media(max-width:600px){.json-count-panel{grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);gap:8px}.json-count-main{min-width:0}.json-count-value{font-size:22px}.json-count-view{min-width:76px;padding-left:12px;padding-right:12px}}@media(prefers-color-scheme:dark){.site-title-display{color:#f5f5f5}.site-title-input{color:#f5f5f5!important}.default-provider-select{background:rgba(30,30,30,.92);border-color:rgba(255,255,255,.18);color:#fff}.modal-content{background:rgba(30,30,30,.96);border-color:rgba(255,255,255,.1)}.empty{color:#aaa}body{background:#000;background-image:radial-gradient(circle at 0% 28%,rgba(0,188,212,.14),transparent 24%),radial-gradient(circle at 100% 100%,rgba(0,120,70,.18),transparent 32%),linear-gradient(180deg,#000 0%,#020807 58%,#00140b 100%);background-attachment:fixed;color:#f4f7f8}.page.admin-shell{background:linear-gradient(135deg,rgba(1,5,6,.98) 0%,rgba(2,10,10,.96) 48%,rgba(0,54,35,.92) 100%);border-color:rgba(255,255,255,.13);box-shadow:0 20px 70px rgba(0,0,0,.55)}.admin-shell .header{border-bottom-color:rgba(255,255,255,.10)}.admin-shell .site-title-display,.admin-shell .section-title,.admin-shell label{color:#fff}.admin-shell .subtitle,.admin-shell .empty{color:#9aa7b5}.admin-shell .provider-item{background:rgba(8,12,14,.78);border-color:rgba(255,255,255,.10)}.admin-shell .provider-url{color:#64b5f6}.admin-shell .default-provider-select,.admin-shell input{background:rgba(2,6,8,.82);border-color:rgba(255,255,255,.13);color:#f3f6f7}.admin-shell .modal-content{background:rgba(12,17,19,.97);border-color:rgba(255,255,255,.12);color:#fff}}
 /* SUBAPI / SUBCONFIG mobile layout fix */
 @media(max-width:600px){
+  .admin-shell{
+    padding-left:14px!important;
+    padding-right:14px!important;
+  }
   .sub-head-actions{
     display:flex !important;
     flex-direction:column !important;
@@ -2023,7 +2218,7 @@ function renderAdminPage(url, env, settings) {
 <header class="header topbar"><div class="topbar-main"><div class="site-title-display">${esc(settings.subName || "SUB")}</div><div class="subtitle">\u7BA1\u7406\u8BA2\u9605\u8F6C\u6362\u540E\u7AEF\u3001\u8BA2\u9605\u8F6C\u6362\u89C4\u5219\u548C\u7AD9\u70B9\u5B89\u5168\u8BBE\u7F6E\u3002</div></div><div class="top-actions"><button type="button" class="button secondary" data-open-modal="securityModal">\u5B89\u5168</button><button type="button" class="button secondary" data-open-modal="siteModal">\u7AD9\u70B9</button><a class="button danger" href="/${esc(settings.adminPath || "admin")}/logout">\u9000\u51FA</a></div></header>
 <section class="panel"><div class="sub-head"><div><h2 class="section-title">\u8BA2\u9605\u8F6C\u6362\u540E\u7AEF(SUBAPI)</h2></div><div class="sub-head-actions">${defaultSelect(apis, "subapi", defaultApiId)}<button type="button" data-provider-action="add" data-provider-type="subapi">\uFF0B \u6DFB\u52A0\u8BA2\u9605\u8F6C\u6362\u540E\u7AEF</button></div></div><div class="sub-grid provider-list" data-provider-type="subapi" style="margin-top:12px">${rows(apis, "subapi", "\u6682\u65E0\u8BA2\u9605\u8F6C\u6362\u540E\u7AEF\uFF0C\u8BF7\u624B\u52A8\u6DFB\u52A0\u3002")}</div></section>
 <section class="panel"><div class="sub-head"><div><h2 class="section-title">\u8BA2\u9605\u8F6C\u6362\u89C4\u5219(SUBCONFIG)</h2></div><div class="sub-head-actions">${defaultSelect(configs, "subconfig", defaultConfigId)}<button type="button" data-provider-action="add" data-provider-type="subconfig">\uFF0B \u6DFB\u52A0\u8BA2\u9605\u8F6C\u6362\u89C4\u5219</button></div></div><div class="sub-grid provider-list" data-provider-type="subconfig" style="margin-top:12px">${rows(configs, "subconfig", "\u6682\u65E0\u8BA2\u9605\u8F6C\u6362\u89C4\u5219\uFF0C\u8BF7\u624B\u52A8\u6DFB\u52A0\u3002")}</div></section>
-<section class="panel json-count-panel"><div class="json-count-main"><h2 class="section-title">\u805A\u5408\u8BA2\u9605\u94FE\u63A5</h2><div class="section-note">\u7BA1\u7406\u5F53\u524D KV \u4E2D\u5DF2\u7ECF\u751F\u6210\u7684\u805A\u5408\u8BA2\u9605 JSON\u3002</div></div><div class="json-count-value" id="jsonCountValue">\u52A0\u8F7D\u4E2D\u2026</div><a class="button json-count-view" href="/${esc(settings.adminPath || "admin")}/json">\u67E5\u770B</a></section>
+<section class="panel json-count-panel"><div class="json-count-main"><h2 class="section-title">\u5907\u4EFD\u4E0E\u8FC1\u79FB</h2><div class="section-note">\u5907\u4EFD\u3001\u6062\u590D\u5E76\u67E5\u770B KV \u4E2D\u6240\u6709\u914D\u7F6E\u3001\u8BA2\u9605\u4E0E\u94FE\u63A5 JSON\u3002\u5F53\u524D\u805A\u5408\u8BA2\u9605\u94FE\u63A5\u6570\uFF1A</div></div><div class="json-count-value" id="jsonCountValue">\u52A0\u8F7D\u4E2D\u2026</div><a class="button json-count-view" href="/${esc(settings.adminPath || "admin")}/json">\u8FDB\u5165</a></section>
 </main>
 <div id="providerModal" class="modal-overlay"><div class="modal-content"><h2 class="section-title" id="modalTitle">\u6DFB\u52A0</h2><div class="field"><label for="modalName">\u5907\u6CE8</label><input id="modalName"></div><div class="field"><label for="modalUrl">URL</label><input id="modalUrl" placeholder="https://..."></div><div class="modal-actions"><button type="button" class="secondary" id="providerCancel">\u53D6\u6D88</button><button type="button" id="modalSave">\u4FDD\u5B58</button></div></div></div>
 <div id="securityModal" class="modal-overlay"><div class="modal-content"><h2 class="section-title">\u5B89\u5168</h2><div class="section-note">\u4FEE\u6539\u7BA1\u7406\u5458\u8D26\u53F7\u548C\u5BC6\u7801\u3002\u4FEE\u6539\u5BC6\u7801\u65F6\u5FC5\u987B\u8F93\u5165\u4E24\u6B21\uFF1B\u4E24\u6B21\u7559\u7A7A\u8868\u793A\u4FDD\u6301\u539F\u5BC6\u7801\u3002</div><div class="field"><label for="securityUser">\u7BA1\u7406\u5458\u8D26\u53F7</label><input id="securityUser" value="${esc(settings.user || "")}" autocomplete="username"></div><div class="field"><label for="securityPass">\u7BA1\u7406\u5458\u5BC6\u7801</label><input id="securityPass" type="password" placeholder="\u7559\u7A7A\u4FDD\u6301\u539F\u5BC6\u7801" autocomplete="new-password"></div><div class="field"><label for="securityPass2">\u786E\u8BA4\u7BA1\u7406\u5458\u5BC6\u7801</label><input id="securityPass2" type="password" placeholder="\u518D\u6B21\u8F93\u5165\u65B0\u5BC6\u7801" autocomplete="new-password"></div><div class="modal-actions"><button type="button" class="secondary" data-close-modal="securityModal">\u53D6\u6D88</button><button type="button" id="saveSecurity">\u4FDD\u5B58</button></div></div></div>
@@ -2084,7 +2279,7 @@ var __INTERNAL_WRANGLER_MIDDLEWARE__ = [
   middleware_ensure_req_body_drained_default,
   middleware_miniflare3_json_error_default
 ];
-var middleware_insertion_facade_default = worker_default;
+var middleware_insertion_facade_default = WORKER_DEFAULT;
 
 // ../.npm/_npx/32026684e21afda6/node_modules/wrangler/templates/middleware/common.ts
 var __facade_middleware__ = [];
