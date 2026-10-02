@@ -1117,6 +1117,37 @@ async function handleAdmin(request, env, runtime) {
     }
     try {
       const data = await request.json();
+      if (data.type === "factory_reset") {
+        const config = await getConfig(env);
+        const expectedUser = String(config.user || "");
+        const expectedPass = String(config.pass || "");
+        const suppliedUser = typeof data.username === "string" ? data.username : "";
+        const suppliedPass = typeof data.password === "string" ? data.password : "";
+        if (!expectedUser || !expectedPass) {
+          return jsonResponse({ ok: false, error: "请先在管理后台设置管理员用户名和密码，再执行恢复出厂设置" }, 403);
+        }
+        if (!suppliedUser || !suppliedPass || suppliedUser !== expectedUser || suppliedPass !== expectedPass) {
+          return jsonResponse({ ok: false, error: "管理员用户名或密码错误" }, 403);
+        }
+        const keys = [];
+        let cursor;
+        do {
+          const page = await env.KV.list(cursor ? { cursor } : {});
+          keys.push(...page.keys.map(({ name }) => name));
+          cursor = page.list_complete ? void 0 : page.cursor;
+        } while (cursor);
+        let deleted = 0;
+        try {
+          for (const key of keys) {
+            await env.KV.delete(key);
+            deleted++;
+          }
+        } catch (error) {
+          console.error("Factory reset stopped after partial KV deletion");
+          return jsonResponse({ ok: false, error: `恢复出厂设置未能完成，已删除 ${deleted} 项 KV 数据` }, 500);
+        }
+        return jsonResponse({ ok: true, deleted });
+      }
       if (data.type === "import_all_json") {
         const payload = data.payload;
         if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
@@ -2939,12 +2970,13 @@ function renderJsonManagerPage(entries, adminPath) {
   return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHTML(title)}</title>${renderFavicon(title, SITELOGO)}<style>
 ${getToolStyles()}
 body{min-height:100vh}.json-shell{max-width:1100px;padding-top:0!important;padding-bottom:34px}.json-header{margin:0 -28px 18px;padding:28px;border-bottom:1px solid rgba(120,130,140,.18)}.json-header-main{min-width:0}.json-list{display:grid;gap:10px}.json-entry{min-width:0;border:1px solid rgba(120,130,140,.2);border-radius:12px;padding:14px;background:rgba(255,255,255,.58)}.json-entry-head{display:flex;align-items:center;justify-content:space-between;gap:12px}.json-key{min-width:0;font-size:16px;font-weight:700;overflow-wrap:anywhere}.json-entry-meta{display:flex;align-items:center;gap:10px;flex:0 0 auto}.json-empty{color:#777;text-align:center;padding:28px 12px}.json-actions{display:flex;gap:8px;flex-wrap:wrap}.json-toast{position:fixed;top:18px;right:18px;z-index:10000;display:none;max-width:calc(100vw - 36px);padding:10px 14px;border-radius:10px;background:#1f2937;color:#fff;box-shadow:0 8px 30px rgba(0,0,0,.18)}.json-view-overlay{position:fixed;inset:0;z-index:1000;display:none;align-items:center;justify-content:center;padding:20px;background:rgba(0,0,0,.58);backdrop-filter:blur(5px);-webkit-backdrop-filter:blur(5px);overscroll-behavior:contain}.json-view-overlay.open{display:flex}.json-view-modal{width:min(900px,100%);max-height:min(82vh,900px);display:flex;flex-direction:column;padding:20px;border:1px solid rgba(120,130,140,.24);border-radius:16px;background:#fff;color:#1f2937;box-shadow:0 18px 55px rgba(0,0,0,.32);overscroll-behavior:contain}.json-view-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}.json-view-title{min-width:0;margin:0;font-size:18px;font-weight:750;overflow-wrap:anywhere}.json-view-close{flex:0 0 auto;width:38px;min-width:38px;height:38px;padding:0;font-size:22px;line-height:1}.json-view-value{min-height:0;margin:0;padding:14px;border-radius:10px;background:rgba(245,247,248,.9);font:12px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre;overflow:auto;overscroll-behavior:contain;touch-action:pan-x pan-y;max-height:calc(82vh - 90px)}
+.factory-reset-modal{width:min(480px,100%);gap:12px}.factory-reset-modal h2{margin:0;font-size:20px}.factory-reset-modal p{margin:0;color:#b42318;line-height:1.6}.factory-reset-modal label{display:block;margin:4px 0}.factory-reset-modal input{width:100%;box-sizing:border-box;padding:10px 12px;border:1px solid rgba(120,130,140,.35);border-radius:9px;font:inherit}.factory-reset-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:4px}.factory-reset-button{background:#d93025!important;border-color:#d93025!important;color:#fff!important}.factory-reset-button:hover{background:#b91c1c!important;border-color:#b91c1c!important}
 @media(max-width:600px){.page.app-shell.json-shell{width:calc(100% - 28px);margin:14px 14px 28px;padding:0 14px 24px;border-radius:22px}.json-header{margin:0 -14px 16px;padding:22px 14px 20px}.json-header .title{font-size:22px}.json-actions{width:100%}.json-actions .button{flex:1 1 auto;text-align:center}.json-entry{padding:10px}.json-key{font-size:14px;overflow-wrap:anywhere}.json-entry-head{align-items:center}.json-view-overlay{padding:12px}.json-view-modal{max-height:86vh;padding:16px;border-radius:14px}.json-view-value{max-height:calc(86vh - 82px);padding:10px}}
-@media(prefers-color-scheme:dark){.json-header{border-bottom-color:rgba(255,255,255,.1)}.json-entry{background:rgba(8,12,14,.78);border-color:rgba(255,255,255,.12)}.json-empty{color:#9aa7b5}.json-view-modal{background:#11191d;border-color:rgba(255,255,255,.16);color:#e7ecef}.json-view-value{background:rgba(2,6,8,.72);color:#e7ecef}}
+@media(prefers-color-scheme:dark){.json-header{border-bottom-color:rgba(255,255,255,.1)}.json-entry{background:rgba(8,12,14,.78);border-color:rgba(255,255,255,.12)}.json-empty{color:#9aa7b5}.json-view-modal{background:#11191d;border-color:rgba(255,255,255,.16);color:#e7ecef}.json-view-value{background:rgba(2,6,8,.72);color:#e7ecef}.factory-reset-modal p{color:#ff8a80}.factory-reset-modal input{background:rgba(0,0,0,.35);border-color:rgba(255,255,255,.16);color:#f3f6f7}}
 </style></head><body><main class="page app-shell json-shell">
-<header class="header json-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:14px"><div class="json-header-main"><h1 class="title">备份与迁移</h1><div class="subtitle">共 ${entries.length} 项 KV 数据；导入时同名键覆盖，其他数据保留</div></div><div class="json-actions"><button type="button" class="button" id="json-export-all">导出</button><button type="button" class="button secondary" id="json-import-all">导入</button><a class="button secondary" href="/${escapeHTML(adminPath)}">返回管理面板</a></div></header>
+<header class="header json-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:14px"><div class="json-header-main"><h1 class="title">备份与迁移</h1><div class="subtitle">共 ${entries.length} 项 KV 数据；导入时同名键覆盖，其他数据保留</div></div><div class="json-actions"><button type="button" class="button" id="json-export-all">导出</button><button type="button" class="button secondary" id="json-import-all">导入</button><a class="button secondary" href="/${escapeHTML(adminPath)}">返回管理面板</a><button type="button" class="button factory-reset-button" id="factory-reset-open">恢复出厂设置</button></div></header>
 <div class="json-list">${entries.length ? entries.map((entry, index) => `<article class="json-entry"><div class="json-entry-head"><div class="json-key">${escapeHTML(entry.name)}</div><div class="json-entry-meta"><button type="button" class="button secondary json-show" data-entry-index="${index}">展示</button></div></div></article>`).join("") : '<div class="json-entry json-empty">KV 暂无数据</div>'}</div>
-</main><div id="jsonViewOverlay" class="json-view-overlay" aria-hidden="true"><section class="json-view-modal" role="dialog" aria-modal="true" aria-labelledby="jsonViewTitle"><div class="json-view-head"><h2 id="jsonViewTitle" class="json-view-title"></h2><button type="button" class="button secondary json-view-close" id="jsonViewClose" aria-label="关闭">×</button></div><pre id="jsonViewValue" class="json-view-value"></pre></section></div><div id="jsonToast" class="json-toast" role="status" aria-live="polite"></div><script src="/__cfsubs.js" defer><\/script><script>
+</main><div id="jsonViewOverlay" class="json-view-overlay" aria-hidden="true"><section class="json-view-modal" role="dialog" aria-modal="true" aria-labelledby="jsonViewTitle"><div class="json-view-head"><h2 id="jsonViewTitle" class="json-view-title"></h2><button type="button" class="button secondary json-view-close" id="jsonViewClose" aria-label="关闭">×</button></div><pre id="jsonViewValue" class="json-view-value"></pre></section></div><div id="factoryResetOverlay" class="json-view-overlay" aria-hidden="true"><section class="json-view-modal factory-reset-modal" role="dialog" aria-modal="true" aria-labelledby="factoryResetTitle"><h2 id="factoryResetTitle">恢复出厂设置</h2><p>此操作会永久删除当前 KV 中的全部数据，包括 CONFIG、所有订阅和链接，以及加密密钥。请先导出备份；删除后无法撤销。</p><label for="factoryResetUsername">管理员用户名</label><input id="factoryResetUsername" type="text" autocomplete="username" required><label for="factoryResetPassword">管理员密码</label><input id="factoryResetPassword" type="password" autocomplete="current-password" required><div class="factory-reset-actions"><button type="button" class="button secondary" id="factoryResetCancel">取消</button><button type="button" class="button factory-reset-button" id="factoryResetConfirm">验证并删除全部数据</button></div></section></div><div id="jsonToast" class="json-toast" role="status" aria-live="polite"></div><script src="/__cfsubs.js" defer><\/script><script>
 (function(){
 'use strict';
 var exportData=${safeExportData};
@@ -2957,6 +2989,12 @@ document.querySelectorAll('.json-show').forEach(function(button){button.addEvent
 viewClose.addEventListener('click',closeJsonView);
 viewOverlay.addEventListener('click',function(event){if(event.target===viewOverlay)closeJsonView()});
 document.addEventListener('keydown',function(event){if(event.key==='Escape'&&viewOverlay.classList.contains('open'))closeJsonView()});
+var resetOverlay=document.getElementById('factoryResetOverlay'),resetUsername=document.getElementById('factoryResetUsername'),resetPassword=document.getElementById('factoryResetPassword'),resetConfirm=document.getElementById('factoryResetConfirm');
+function closeFactoryReset(){resetOverlay.classList.remove('open');resetOverlay.setAttribute('aria-hidden','true');resetPassword.value=''}
+document.getElementById('factory-reset-open').addEventListener('click',function(){resetOverlay.classList.add('open');resetOverlay.setAttribute('aria-hidden','false');resetUsername.focus()});
+document.getElementById('factoryResetCancel').addEventListener('click',closeFactoryReset);
+resetOverlay.addEventListener('click',function(event){if(event.target===resetOverlay)closeFactoryReset()});
+resetConfirm.addEventListener('click',async function(){var username=resetUsername.value,password=resetPassword.value;if(!username||!password){showMessage('请输入管理员用户名和密码',true);return}if(!confirm('确定永久删除当前 KV 中的全部数据吗？此操作无法撤销。'))return;resetConfirm.disabled=true;try{var response=await fetch(window.location.pathname,{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},body:JSON.stringify({type:'factory_reset',username:username,password:password})}),result=await response.json().catch(function(){return{}});if(!response.ok||!result.ok)throw new Error(result.error||'恢复出厂设置失败');showMessage('已删除 '+result.deleted+' 项 KV 数据');setTimeout(function(){window.location.assign('/')},900)}catch(error){showMessage(error.message||'恢复出厂设置失败',true);resetPassword.value='';resetPassword.focus()}finally{resetConfirm.disabled=false}});
 function downloadExport(){var blob=new Blob([JSON.stringify(exportData,null,2)],{type:'application/json;charset=utf-8'}),url=URL.createObjectURL(blob),anchor=document.createElement('a');anchor.href=url;anchor.download='kv-export-'+new Date().toISOString().slice(0,10)+'.json';document.body.appendChild(anchor);anchor.click();anchor.remove();setTimeout(function(){URL.revokeObjectURL(url)},1000);showMessage('已导出全部 KV 数据')}
 document.getElementById('json-export-all').addEventListener('click',downloadExport);
 var input=document.createElement('input');input.type='file';input.accept='.json,application/json';input.hidden=true;document.body.appendChild(input);
@@ -3043,6 +3081,10 @@ async function renderAdminPage(url, env, settings) {
   .provider-section .sub-head-actions>button{
     width:auto !important;
   }
+}
+@media(min-width:761px){
+  .admin-shell{max-width:1240px}
+  .provider-section-main .sub-head-actions{grid-template-columns:minmax(0,380px) 190px}
 }
 </style></head><body><main class="page app-shell admin-shell">
 <header class="header topbar"><div class="topbar-main"><div class="site-title-display">${esc(settings.subName || "SUB")}</div><div class="subtitle">\u7BA1\u7406\u8BA2\u9605\u8F6C\u6362\u540E\u7AEF\u3001\u8BA2\u9605\u8F6C\u6362\u89C4\u5219\u548C\u7AD9\u70B9\u5B89\u5168\u8BBE\u7F6E\u3002</div></div><div class="top-actions"><button type="button" class="button secondary" data-open-modal="securityModal">\u5B89\u5168</button><button type="button" class="button" data-open-modal="siteModal">\u7AD9\u70B9</button><a class="button danger" href="/${esc(settings.adminPath || "admin")}/logout">\u9000\u51FA</a></div></header>
