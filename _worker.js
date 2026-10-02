@@ -1954,27 +1954,6 @@ function encodeBase64(value) {
   return btoa(binary);
 }
 
-function isValidConvertedContent(target, content) {
-  const text = String(content || "").trim();
-  if (!text) return false;
-
-  if (target === "singbox") {
-    try {
-      const parsed = JSON.parse(text);
-      return !!parsed && typeof parsed === "object" && Array.isArray(parsed.outbounds);
-    } catch {
-      return false;
-    }
-  }
-
-  if (target === "clash") {
-    return /(?:^|\n)\s*(?:proxies|proxy-providers)\s*:/m.test(text);
-  }
-
-  return true;
-}
-__name(isValidConvertedContent, "isValidConvertedContent");
-
 async function generateSubscription(request, env, sourceList, runtime, token) {
   let allSources = [...new Set((sourceList || []).map((x) => String(x).trim()).filter(Boolean))];
   let \u81EA\u5EFA\u8282\u70B9 = "";
@@ -2080,94 +2059,54 @@ async function generateSubscription(request, env, sourceList, runtime, token) {
   if (\u8BA2\u9605\u683C\u5F0F === "base64" || token === runtime.fakeToken) {
     return new Response(base64Data, { headers: responseHeaders });
   }
+  // 与稳定版 CF-SUB 保持一致：优先使用当前链接选择的 SUBAPI/SUBCONFIG，
+  // 失败后再使用全局默认后端；不要因为 SUBAPI 一次失败就直接返回 502。
+  const backends = [];
   try {
-    const backendPairs = await getSelectedBackends(env, runtime.tokenData, runtime);
-    let lastError;
-
-    for (const backend of backendPairs) {
-      try {
-        const finalUrl = buildSubUrl(backend.api, backend.config, 订阅格式, 订阅转换URL, backend.protocol);
-        const res = await fetchWithTimeout(
-          finalUrl,
-          { headers: { "User-Agent": runtime.userAgentHeader } },
-          12000
-        );
-        if (!res.ok) throw new Error(`SUBAPI ${res.status}`);
-
-        let content = await res.text();
-        if (订阅格式 === "clash") content = clashFix(content);
-
-        // 某些转换后端会在 HTTP 200 时直接返回错误文本。
-        // 不能把这类内容当成正常订阅交给 sing-box / Clash。
-        if (!isValidConvertedContent(订阅格式, content)) {
-          throw new Error(`SUBAPI 返回的 ${订阅格式} 内容无效`);
-        }
-
-        // 不设置 Content-Disposition，让浏览器直接显示文本/JSON，
-        // 而不是弹出“下载订阅文件”。
-        return new Response(content, { headers: responseHeaders });
-      } catch (e) {
-        lastError = e;
-      }
+    const selected = await getSelectedBackends(env, runtime.tokenData, runtime);
+    for (const backend of selected || []) {
+      if (backend?.api && backend?.config) backends.push(backend);
     }
-
-    // 当前选择的后端全部失败时，尝试后台设置的默认 SUBAPI + SUBCONFIG。
-    try {
-      const cfg = await getConfig(env);
-      const defaultApiId = String(cfg.defaultSubApiId || "").toUpperCase();
-      const defaultConfigId = String(cfg.defaultSubConfigId || "").toUpperCase();
-      const defaultApi = normalizeProviderList(cfg.subApis).find((x) => x.id === defaultApiId);
-      const defaultConfig = normalizeProviderList(cfg.subConfigs).find((x) => x.id === defaultConfigId);
-
-      if (defaultApi?.url && defaultConfig?.url) {
-        const rawApi = String(defaultApi.url).trim();
-        const protocol = /^http:\/\//i.test(rawApi) ? "http" : "https";
-        const api = rawApi.replace(/^https?:\/\//i, "").replace(/\/+$/, "");
-        const duplicate = backendPairs.some((x) =>
-          x.api === api && x.config === String(defaultConfig.url).trim() && x.protocol === protocol
-        );
-
-        if (!duplicate) {
-          const fallbackUrl = buildSubUrl(
-            api,
-            String(defaultConfig.url).trim(),
-            订阅格式,
-            订阅转换URL,
-            protocol
-          );
-          const fallbackRes = await fetchWithTimeout(
-            fallbackUrl,
-            { headers: { "User-Agent": runtime.userAgentHeader } },
-            12000
-          );
-          if (!fallbackRes.ok) throw new Error(`默认 SUBAPI ${fallbackRes.status}`);
-
-          let fallbackContent = await fallbackRes.text();
-          if (订阅格式 === "clash") fallbackContent = clashFix(fallbackContent);
-          if (!isValidConvertedContent(订阅格式, fallbackContent)) {
-            throw new Error(`默认 SUBAPI 返回的 ${订阅格式} 内容无效`);
-          }
-          return new Response(fallbackContent, { headers: responseHeaders });
-        }
-      }
-    } catch (e) {
-      lastError = e;
-    }
-
-    throw lastError || new Error("没有可用的 SUBAPI/SUBCONFIG");
-  } catch (error) {
-    return new Response(
-      `订阅转换失败：${error?.message || "SUBAPI/SUBCONFIG 不可用"}`,
-      {
-        status: 502,
-        headers: {
-          ...responseHeaders,
-          "content-type": "text/plain; charset=utf-8",
-          "Cache-Control": "no-store"
-        }
-      }
-    );
+  } catch (e) {
   }
+  try {
+    const cfg = await getConfig(env);
+    const apis = normalizeProviderList(cfg.subApis);
+    const configs = normalizeProviderList(cfg.subConfigs);
+    const defaultApi = apis.find((x) => x.id === String(cfg.defaultSubApiId || "").toUpperCase()) || apis[0];
+    const defaultConfig = configs.find((x) => x.id === String(cfg.defaultSubConfigId || "").toUpperCase()) || configs[0];
+    if (defaultApi?.url && defaultConfig?.url) {
+      const rawApi = String(defaultApi.url).trim();
+      const fallbackBackend = {
+        api: rawApi.replace(/^https?:\/\//i, "").replace(/\/+$/, ""),
+        config: String(defaultConfig.url).trim(),
+        protocol: /^http:\/\//i.test(rawApi) ? "http" : "https"
+      };
+      if (!backends.some((x) => x.api === fallbackBackend.api && x.config === fallbackBackend.config && x.protocol === fallbackBackend.protocol)) {
+        backends.push(fallbackBackend);
+      }
+    }
+  } catch (e) {
+  }
+
+  for (const backend of backends) {
+    try {
+      const finalUrl = buildSubUrl(backend.api, backend.config, 订阅格式, 订阅转换URL, backend.protocol);
+      const res = await fetch(finalUrl, { headers: { "User-Agent": runtime.userAgentHeader } });
+      if (!res.ok) continue;
+      let content = await res.text();
+      if (!content) continue;
+      if (订阅格式 === "clash") content = clashFix(content);
+      // 不设置 Content-Disposition，让浏览器直接显示订阅内容，而不是触发下载。
+      return new Response(content, { headers: responseHeaders });
+    } catch (e) {
+      continue;
+    }
+  }
+
+  // 与稳定版 CF-SUB 一致：转换后端全部失败时返回可用的 Base64 数据，
+  // 不返回 502 错误页，避免 Clash / sing-box 把错误页当成订阅内容。
+  return new Response(base64Data, { headers: responseHeaders });
 }
 __name(generateSubscription, "generateSubscription");
 function buildSubUrl(api, config, target, urlToConvert, protocol) {
