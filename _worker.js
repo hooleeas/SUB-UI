@@ -609,7 +609,7 @@ async function handleRequest(request, env) {
     if (request.method === "POST") return await handleAdmin(request, env, { adminPath });
     if (request.method !== "GET") return new Response("Method Not Allowed", { status: 405 });
     const entries = await listKVEntries(env);
-    return new Response(renderJsonManagerPage(entries, adminPath), {
+    return new Response(renderJsonManagerPage(entries, adminPath, Boolean(adminUser || adminPass)), {
       headers: {
         "Content-Type": "text/html;charset=utf-8",
         "Cache-Control": "no-store"
@@ -1123,10 +1123,11 @@ async function handleAdmin(request, env, runtime) {
         const expectedPass = String(config.pass || "");
         const suppliedUser = typeof data.username === "string" ? data.username : "";
         const suppliedPass = typeof data.password === "string" ? data.password : "";
-        if (!expectedUser || !expectedPass) {
-          return jsonResponse({ ok: false, error: "请先在管理后台设置管理员用户名和密码，再执行恢复出厂设置" }, 403);
-        }
-        if (!suppliedUser || !suppliedPass || suppliedUser !== expectedUser || suppliedPass !== expectedPass) {
+        if (!expectedUser && !expectedPass) {
+          if (suppliedUser || suppliedPass) return jsonResponse({ ok: false, error: "当前未设置管理员凭据，请清空用户名和密码后重试" }, 400);
+        } else if (!expectedUser || !expectedPass) {
+          return jsonResponse({ ok: false, error: "管理员用户名和密码必须同时设置；请先修正后台安全设置" }, 403);
+        } else if (!suppliedUser || !suppliedPass || suppliedUser !== expectedUser || suppliedPass !== expectedPass) {
           return jsonResponse({ ok: false, error: "管理员用户名或密码错误" }, 403);
         }
         const keys = [];
@@ -2962,7 +2963,7 @@ async function listKVEntries(env) {
   return result;
 }
 __name(listKVEntries, "listKVEntries");
-function renderJsonManagerPage(entries, adminPath) {
+function renderJsonManagerPage(entries, adminPath, credentialsConfigured = false) {
   const exportData = Object.fromEntries(entries.map((entry) => [entry.name, entry.exportValue]));
   const safeExportData = JSON.stringify(exportData).replace(/</g, "\\u003c").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
   const safeDisplayEntries = JSON.stringify(entries.map(({ name, value }) => ({ name, value }))).replace(/</g, "\\u003c").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
@@ -2976,7 +2977,7 @@ body{min-height:100vh}.json-shell{max-width:1100px;padding-top:0!important;paddi
 </style></head><body><main class="page app-shell json-shell">
 <header class="header json-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:14px"><div class="json-header-main"><h1 class="title">备份与迁移</h1><div class="subtitle">共 ${entries.length} 项 KV 数据；导入时同名键覆盖，其他数据保留</div></div><div class="json-actions"><button type="button" class="button danger" id="factory-reset-open">恢复出厂设置</button><button type="button" class="button" id="json-export-all">导出</button><button type="button" class="button secondary" id="json-import-all">导入</button><a class="button secondary" href="/${escapeHTML(adminPath)}">返回管理面板</a></div></header>
 <div class="json-list">${entries.length ? entries.map((entry, index) => `<article class="json-entry"><div class="json-entry-head"><div class="json-key">${escapeHTML(entry.name)}</div><div class="json-entry-meta"><button type="button" class="button secondary json-show" data-entry-index="${index}">展示</button></div></div></article>`).join("") : '<div class="json-entry json-empty">KV 暂无数据</div>'}</div>
-</main><div id="jsonViewOverlay" class="json-view-overlay" aria-hidden="true"><section class="json-view-modal" role="dialog" aria-modal="true" aria-labelledby="jsonViewTitle"><div class="json-view-head"><h2 id="jsonViewTitle" class="json-view-title"></h2><button type="button" class="button secondary json-view-close" id="jsonViewClose" aria-label="关闭">×</button></div><pre id="jsonViewValue" class="json-view-value"></pre></section></div><div id="factoryResetOverlay" class="json-view-overlay" aria-hidden="true"><section class="json-view-modal factory-reset-modal" role="dialog" aria-modal="true" aria-labelledby="factoryResetTitle"><h2 id="factoryResetTitle">恢复出厂设置</h2><p>此操作会永久删除当前 KV 中的全部数据，包括 CONFIG、所有订阅和链接，以及加密密钥。请先导出备份；删除后无法撤销。</p><label for="factoryResetUsername">管理员用户名</label><input id="factoryResetUsername" type="text" autocomplete="username" required><label for="factoryResetPassword">管理员密码</label><input id="factoryResetPassword" type="password" autocomplete="current-password" required><div class="factory-reset-actions"><button type="button" class="button secondary" id="factoryResetCancel">取消</button><button type="button" class="button danger" id="factoryResetConfirm">验证并删除全部数据</button></div></section></div><div id="jsonToast" class="json-toast" role="status" aria-live="polite"></div><script src="/__cfsubs.js" defer><\/script><script>
+</main><div id="jsonViewOverlay" class="json-view-overlay" aria-hidden="true"><section class="json-view-modal" role="dialog" aria-modal="true" aria-labelledby="jsonViewTitle"><div class="json-view-head"><h2 id="jsonViewTitle" class="json-view-title"></h2><button type="button" class="button secondary json-view-close" id="jsonViewClose" aria-label="关闭">×</button></div><pre id="jsonViewValue" class="json-view-value"></pre></section></div><div id="factoryResetOverlay" class="json-view-overlay" aria-hidden="true"><section class="json-view-modal factory-reset-modal" role="dialog" aria-modal="true" aria-labelledby="factoryResetTitle"><h2 id="factoryResetTitle">恢复出厂设置</h2><p>此操作会永久删除当前 KV 中的全部数据，包括 CONFIG、所有订阅和链接，以及加密密钥。请先导出备份；删除后无法撤销。</p>${credentialsConfigured ? '<label for="factoryResetUsername">管理员用户名</label><input id="factoryResetUsername" type="text" autocomplete="username" required><label for="factoryResetPassword">管理员密码</label><input id="factoryResetPassword" type="password" autocomplete="current-password" required>' : '<p>当前未设置管理员用户名和密码。确认后将直接执行删除。</p>'}<div class="factory-reset-actions"><button type="button" class="button secondary" id="factoryResetCancel">取消</button><button type="button" class="button danger" id="factoryResetConfirm">${credentialsConfigured ? '验证并删除全部数据' : '确认删除全部数据'}</button></div></section></div><div id="jsonToast" class="json-toast" role="status" aria-live="polite"></div><script src="/__cfsubs.js" defer><\/script><script>
 (function(){
 'use strict';
 var exportData=${safeExportData};
@@ -2989,12 +2990,12 @@ document.querySelectorAll('.json-show').forEach(function(button){button.addEvent
 viewClose.addEventListener('click',closeJsonView);
 viewOverlay.addEventListener('click',function(event){if(event.target===viewOverlay)closeJsonView()});
 document.addEventListener('keydown',function(event){if(event.key==='Escape'&&viewOverlay.classList.contains('open'))closeJsonView()});
-var resetOverlay=document.getElementById('factoryResetOverlay'),resetUsername=document.getElementById('factoryResetUsername'),resetPassword=document.getElementById('factoryResetPassword'),resetConfirm=document.getElementById('factoryResetConfirm');
-function closeFactoryReset(){resetOverlay.classList.remove('open');resetOverlay.setAttribute('aria-hidden','true');resetPassword.value=''}
-document.getElementById('factory-reset-open').addEventListener('click',function(){resetOverlay.classList.add('open');resetOverlay.setAttribute('aria-hidden','false');resetUsername.focus()});
+var resetOverlay=document.getElementById('factoryResetOverlay'),resetUsername=document.getElementById('factoryResetUsername'),resetPassword=document.getElementById('factoryResetPassword'),resetConfirm=document.getElementById('factoryResetConfirm'),resetCredentialsRequired=${credentialsConfigured};
+function closeFactoryReset(){resetOverlay.classList.remove('open');resetOverlay.setAttribute('aria-hidden','true');if(resetPassword)resetPassword.value=''}
+document.getElementById('factory-reset-open').addEventListener('click',function(){resetOverlay.classList.add('open');resetOverlay.setAttribute('aria-hidden','false');if(resetUsername)resetUsername.focus()});
 document.getElementById('factoryResetCancel').addEventListener('click',closeFactoryReset);
 resetOverlay.addEventListener('click',function(event){if(event.target===resetOverlay)closeFactoryReset()});
-resetConfirm.addEventListener('click',async function(){var username=resetUsername.value,password=resetPassword.value;if(!username||!password){showMessage('请输入管理员用户名和密码',true);return}if(!confirm('确定永久删除当前 KV 中的全部数据吗？此操作无法撤销。'))return;resetConfirm.disabled=true;try{var response=await fetch(window.location.pathname,{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},body:JSON.stringify({type:'factory_reset',username:username,password:password})}),result=await response.json().catch(function(){return{}});if(!response.ok||!result.ok)throw new Error(result.error||'恢复出厂设置失败');showMessage('已删除 '+result.deleted+' 项 KV 数据');setTimeout(function(){window.location.assign('/')},900)}catch(error){showMessage(error.message||'恢复出厂设置失败',true);resetPassword.value='';resetPassword.focus()}finally{resetConfirm.disabled=false}});
+resetConfirm.addEventListener('click',async function(){var username=resetUsername?resetUsername.value:'',password=resetPassword?resetPassword.value:'';if(resetCredentialsRequired&&(!username||!password)){showMessage('请输入管理员用户名和密码',true);return}if(!confirm('确定永久删除当前 KV 中的全部数据吗？此操作无法撤销。'))return;resetConfirm.disabled=true;try{var response=await fetch(window.location.pathname,{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},body:JSON.stringify({type:'factory_reset',username:username,password:password})}),result=await response.json().catch(function(){return{}});if(!response.ok||!result.ok)throw new Error(result.error||'恢复出厂设置失败');showMessage('已删除 '+result.deleted+' 项 KV 数据');setTimeout(function(){window.location.assign('/')},900)}catch(error){showMessage(error.message||'恢复出厂设置失败',true);if(resetPassword){resetPassword.value='';resetPassword.focus()}}finally{resetConfirm.disabled=false}});
 function downloadExport(){var blob=new Blob([JSON.stringify(exportData,null,2)],{type:'application/json;charset=utf-8'}),url=URL.createObjectURL(blob),anchor=document.createElement('a');anchor.href=url;anchor.download='kv-export-'+new Date().toISOString().slice(0,10)+'.json';document.body.appendChild(anchor);anchor.click();anchor.remove();setTimeout(function(){URL.revokeObjectURL(url)},1000);showMessage('已导出全部 KV 数据')}
 document.getElementById('json-export-all').addEventListener('click',downloadExport);
 var input=document.createElement('input');input.type='file';input.accept='.json,application/json';input.hidden=true;document.body.appendChild(input);
