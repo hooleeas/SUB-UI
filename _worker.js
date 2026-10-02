@@ -6,9 +6,6 @@ var APP_ID = "SUB-UI";
 var FILENAME = "SUB";
 var SITELOGO = "";
 var DEFAULT_UPDATE_MINUTES = 60;
-var SUB_SOURCE_TIMEOUT_MS = 8000;
-var SUBAPI_TIMEOUT_MS = 12000;
-var SUB_CACHE_FALLBACK_TTL_SECONDS = 300;
 var SUB_PREFIX = "SUB:";
 var URL_PREFIX = "URL:";
 var ID_CHARS = "ABCDEFGHJKMNPQRSTWXYZ2345678";
@@ -1959,120 +1956,80 @@ function encodeBase64(value) {
 
 async function generateSubscription(request, env, sourceList, runtime, token) {
   let allSources = [...new Set((sourceList || []).map((x) => String(x).trim()).filter(Boolean))];
-  let selfNodes = "";
-  let subscriptionLinks = "";
-
+  let \u81EA\u5EFA\u8282\u70B9 = "";
+  let \u8BA2\u9605\u94FE\u63A5 = "";
   for (const x of allSources) {
     if (x.toLowerCase().startsWith("http")) {
-      subscriptionLinks += x + "\n";
+      \u8BA2\u9605\u94FE\u63A5 += x + "\n";
     } else {
-      selfNodes += x + "\n";
+      \u81EA\u5EFA\u8282\u70B9 += x + "\n";
     }
   }
-
-  let nodeUrls = await ADD(subscriptionLinks);
-  let reqData = selfNodes;
+  let nodeUrls = await ADD(\u8BA2\u9605\u94FE\u63A5);
+  let req_data = \u81EA\u5EFA\u8282\u70B9;
   const isSubConverterRequest = request.headers.get("subconverter-request") || request.headers.get("subconverter-version") || runtime.userAgent.includes("subconverter");
-  let targetFormat = "base64";
-
+  let \u8BA2\u9605\u683C\u5F0F = "base64";
   if (!(runtime.userAgent.includes("null") || isSubConverterRequest || runtime.userAgent.includes("nekobox") || runtime.userAgent.includes("cf-sub"))) {
     if (runtime.userAgent.includes("sing-box") || runtime.userAgent.includes("singbox") || new URL(request.url).searchParams.has("sb") || new URL(request.url).searchParams.has("singbox")) {
-      targetFormat = "singbox";
+      \u8BA2\u9605\u683C\u5F0F = "singbox";
     } else if (runtime.userAgent.includes("surge") || new URL(request.url).searchParams.has("surge")) {
-      targetFormat = "surge";
+      \u8BA2\u9605\u683C\u5F0F = "surge";
     } else if (runtime.userAgent.includes("quantumult") || new URL(request.url).searchParams.has("quanx")) {
-      targetFormat = "quanx";
+      \u8BA2\u9605\u683C\u5F0F = "quanx";
     } else if (runtime.userAgent.includes("loon") || new URL(request.url).searchParams.has("loon")) {
-      targetFormat = "loon";
+      \u8BA2\u9605\u683C\u5F0F = "loon";
     } else if (runtime.userAgent.includes("clash") || runtime.userAgent.includes("meta") || runtime.userAgent.includes("mihomo") || new URL(request.url).searchParams.has("clash")) {
-      targetFormat = "clash";
+      \u8BA2\u9605\u683C\u5F0F = "clash";
     }
   }
-
   if (runtime.tokenData?.target && runtime.tokenData.target !== "auto") {
-    targetFormat = runtime.tokenData.target;
+    \u8BA2\u9605\u683C\u5F0F = runtime.tokenData.target;
   }
-
+  const sourceToken = new URL(request.url).searchParams.get("sourceToken") || token || "";
+  const conversionSeed = `${new URL(request.url).origin}/${await MD5MD5(runtime.fakeToken)}?token=${encodeURIComponent(runtime.fakeToken)}${sourceToken ? `&sourceToken=${encodeURIComponent(sourceToken)}` : ""}`;
+  let \u8BA2\u9605\u8F6C\u6362URL = conversionSeed;
+  let \u8FFD\u52A0UA = "v2rayn";
   const requestUrl = new URL(request.url);
-  const sourceToken = requestUrl.searchParams.get("sourceToken") || token || "";
-  const conversionSeed = `${requestUrl.origin}/${await MD5MD5(runtime.fakeToken)}?token=${encodeURIComponent(runtime.fakeToken)}${sourceToken ? `&sourceToken=${encodeURIComponent(sourceToken)}` : ""}`;
-  let conversionURL = conversionSeed;
-  let appendUA = "v2rayn";
-
   if (requestUrl.searchParams.has("b64") || requestUrl.searchParams.has("base64")) {
-    targetFormat = "base64";
+    \u8BA2\u9605\u683C\u5F0F = "base64";
   } else if (requestUrl.searchParams.has("clash")) {
-    appendUA = "clash";
+    \u8FFD\u52A0UA = "clash";
   } else if (requestUrl.searchParams.has("singbox")) {
-    appendUA = "singbox";
+    \u8FFD\u52A0UA = "singbox";
   } else if (requestUrl.searchParams.has("surge")) {
-    appendUA = "surge";
+    \u8FFD\u52A0UA = "surge";
   } else if (requestUrl.searchParams.has("quanx")) {
-    appendUA = "Quantumult%20X";
+    \u8FFD\u52A0UA = "Quantumult%20X";
   } else if (requestUrl.searchParams.has("loon")) {
-    appendUA = "Loon";
+    \u8FFD\u52A0UA = "Loon";
   }
-
   nodeUrls = [...new Set(nodeUrls)].filter((item) => item && item.trim());
-
-  // Cache the final result by token + target format + source/backend configuration.
-  // This prevents every client refresh from rebuilding the complete subscription chain.
-  const cacheTtl = getSubscriptionCacheTtl(runtime);
-  const cacheEnabled = request.method === "GET" && cacheTtl > 0 && token !== runtime.fakeToken;
-  const cache = caches.default;
-  let cacheRequest = null;
-
-  if (cacheEnabled) {
-    try {
-      const backendPairs = await getSelectedBackends(env, runtime.tokenData, runtime);
-      const cacheFingerprint = await sha256Hex(JSON.stringify({
-        token: String(token || ""),
-        format: targetFormat,
-        sources: allSources,
-        backends: backendPairs,
-        noAds: String(runtime.config_noAds || "")
-      }));
-      cacheRequest = new Request(`${requestUrl.origin}/__sub_ui_cache__/${cacheFingerprint}`, { method: "GET" });
-      const cached = await cache.match(cacheRequest);
-      if (cached) return cached;
-    } catch {
-      cacheRequest = null;
-    }
-  }
-
   if (nodeUrls.length > 0) {
-    const sourceResponse = await getSUB(nodeUrls, request, appendUA, runtime.userAgentHeader);
-    reqData += sourceResponse[0].join("\n");
-    conversionURL += "|" + sourceResponse[1];
-
-    if (targetFormat === "base64" && !isSubConverterRequest && !sourceResponse[1].includes("://")) {
+    const \u8BF7\u6C42\u8BA2\u9605\u54CD\u5E94\u5185\u5BB9 = await getSUB(
+      nodeUrls,
+      request,
+      \u8FFD\u52A0UA,
+      runtime.userAgentHeader
+    );
+    req_data += \u8BF7\u6C42\u8BA2\u9605\u54CD\u5E94\u5185\u5BB9[0].join("\n");
+    \u8BA2\u9605\u8F6C\u6362URL += "|" + \u8BF7\u6C42\u8BA2\u9605\u54CD\u5E94\u5185\u5BB9[1];
+    if (\u8BA2\u9605\u683C\u5F0F === "base64" && !isSubConverterRequest && \u8BF7\u6C42\u8BA2\u9605\u54CD\u5E94\u5185\u5BB9[1].includes("://")) {
       try {
         const backendPairs = await getSelectedBackends(env, runtime.tokenData, runtime);
         const backend = backendPairs[0];
         if (backend?.api && backend?.config) {
-          const u = buildSubUrl(backend.api, backend.config, "mixed", sourceResponse[1], backend.protocol);
-          const res = await fetchWithTimeout(
-            u,
-            { headers: { "User-Agent": "v2rayn/CF-SUB" } },
-            SUBAPI_TIMEOUT_MS
-          );
-          if (res.ok) {
-            const converted = await res.text();
-            try {
-              reqData += "\n" + atob(converted);
-            } catch {
-              reqData += "\n" + converted;
-            }
-          }
+          const u = buildSubUrl(backend.api, backend.config, "mixed", \u8BF7\u6C42\u8BA2\u9605\u54CD\u5E94\u5185\u5BB9[1], backend.protocol);
+          const res = await fetch(u, { headers: { "User-Agent": "v2rayn/CF-SUB" } });
+          if (res.ok) req_data += "\n" + atob(await res.text());
         }
-      } catch {
+      } catch (error) {
       }
     }
   }
-
-  const text = new TextDecoder().decode(new TextEncoder().encode(reqData));
+  const text = new TextDecoder().decode(
+    new TextEncoder().encode(req_data)
+  );
   let filteredLines = text.split("\n");
-
   if (runtime.config_noAds) {
     const adKeywords = runtime.config_noAds.split(/[, \r\n]+/).map((k) => k.trim().toLowerCase()).filter((k) => k.length > 0);
     if (adKeywords.length > 0) {
@@ -2082,108 +2039,107 @@ async function generateSubscription(request, env, sourceList, runtime, token) {
       });
     }
   }
-
   const uniqueLines = new Set(filteredLines);
   const result = [...uniqueLines].join("\n");
   let base64Data;
-
   try {
     base64Data = btoa(result);
-  } catch {
+  } catch (e) {
     base64Data = encodeBase64(result);
   }
-
   const responseHeaders = {
     "content-type": "text/plain; charset=utf-8",
     "Profile-web-page-url": request.url.includes("?") ? request.url.split("?")[0] : request.url
   };
-
   if (normalizeUpdateEnabled(runtime.tokenData?.updateEnable)) {
     const updateMinutes = Number(runtime.tokenData?.update);
     const minutes = Number.isSafeInteger(updateMinutes) && updateMinutes >= 0 && updateMinutes <= 525600 ? updateMinutes : DEFAULT_UPDATE_MINUTES;
     responseHeaders["Profile-Update-Interval"] = `${minutes * 60}`;
   }
+  if (\u8BA2\u9605\u683C\u5F0F === "base64" || token === runtime.fakeToken) {
+    return new Response(base64Data, { headers: responseHeaders });
+  }
+  try {
+    const backendPairs = await getSelectedBackends(env, runtime.tokenData, runtime);
+    let lastError;
 
-  let finalResponse;
+    // 第一层：按当前订阅选择的 SUBAPI / SUBCONFIG 逐个尝试。
+    for (const backend of backendPairs) {
+      try {
+        const finalUrl = buildSubUrl(backend.api, backend.config, 订阅格式, 订阅转换URL, backend.protocol);
+        const res = await fetchWithTimeout(
+          finalUrl,
+          { headers: { "User-Agent": runtime.userAgentHeader } },
+          12000
+        );
+        if (!res.ok) throw new Error(`SUBAPI ${res.status}`);
+        let content = await res.text();
+        if (订阅格式 === "clash") content = clashFix(content);
+        if (!runtime.userAgent.includes("mozilla")) {
+          responseHeaders["Content-Disposition"] = `attachment; filename*=utf-8''${encodeURIComponent(runtime.FileName)}`;
+        }
+        return new Response(content, { headers: responseHeaders });
+      } catch (e) {
+        lastError = e;
+      }
+    }
 
-  if (targetFormat === "base64" || token === runtime.fakeToken) {
-    finalResponse = new Response(base64Data, { headers: responseHeaders });
-  } else {
+    // 第二层：仿照 CF-SUBS，当前选择的后端全部失败后，再尝试全局默认后端。
     try {
-      const backendPairs = await getSelectedBackends(env, runtime.tokenData, runtime);
-      let lastError;
+      const cfg = await getConfig(env);
+      const apiProviders = normalizeProviderList(cfg.subApis);
+      const configProviders = normalizeProviderList(cfg.subConfigs);
+      const defaultApiId = String(cfg.defaultSubApiId || "").toUpperCase();
+      const defaultConfigId = String(cfg.defaultSubConfigId || "").toUpperCase();
+      const defaultApi = apiProviders.find((x) => x.id === defaultApiId) || apiProviders.find((x) => x.enabled !== false);
+      const defaultConfig = configProviders.find((x) => x.id === defaultConfigId) || configProviders.find((x) => x.enabled !== false);
 
-      for (const backend of backendPairs) {
-        try {
-          const finalUrl = buildSubUrl(backend.api, backend.config, targetFormat, conversionURL, backend.protocol);
+      if (defaultApi?.url && defaultConfig?.url) {
+        const rawApi = String(defaultApi.url).trim();
+        const fallbackBackend = {
+          api: rawApi.replace(/^https?:\/\//i, "").replace(/\/+$/, ""),
+          config: String(defaultConfig.url).trim(),
+          protocol: /^http:\/\//i.test(rawApi) ? "http" : "https"
+        };
+
+        const alreadyTried = backendPairs.some(
+          (x) => x.api === fallbackBackend.api && x.config === fallbackBackend.config && x.protocol === fallbackBackend.protocol
+        );
+
+        if (!alreadyTried) {
+          const fallbackUrl = buildSubUrl(
+            fallbackBackend.api,
+            fallbackBackend.config,
+            订阅格式,
+            订阅转换URL,
+            fallbackBackend.protocol
+          );
           const res = await fetchWithTimeout(
-            finalUrl,
+            fallbackUrl,
             { headers: { "User-Agent": runtime.userAgentHeader } },
-            SUBAPI_TIMEOUT_MS
+            12000
           );
           if (!res.ok) throw new Error(`SUBAPI ${res.status}`);
-
           let content = await res.text();
-          if (targetFormat === "clash") content = clashFix(content);
-
+          if (订阅格式 === "clash") content = clashFix(content);
           if (!runtime.userAgent.includes("mozilla")) {
             responseHeaders["Content-Disposition"] = `attachment; filename*=utf-8''${encodeURIComponent(runtime.FileName)}`;
           }
-
-          finalResponse = new Response(content, { headers: responseHeaders });
-          break;
-        } catch (e) {
-          lastError = e;
+          return new Response(content, { headers: responseHeaders });
         }
       }
-
-      if (!finalResponse) throw lastError || new Error("没有可用的 SUBAPI/SUBCONFIG");
-    } catch (error) {
-      return new Response(
-        `订阅转换失败：${error?.name === "AbortError" ? "SUBAPI 请求超时" : (error?.message || "SUBAPI/SUBCONFIG 不可用")}`,
-        {
-          status: 502,
-          headers: {
-            ...responseHeaders,
-            "content-type": "text/plain; charset=utf-8",
-            "Cache-Control": "no-store"
-          }
-        }
-      );
+    } catch (e) {
+      lastError = e;
     }
+
+    // 第三层：完全按照 CF-SUBS 的容错思路，转换失败时回退到 Base64，不返回 502。
+    return new Response(base64Data, { headers: responseHeaders });
+  } catch (error) {
+    return new Response(base64Data, { headers: responseHeaders });
   }
 
-  if (cacheRequest && finalResponse.status === 200) {
-    try {
-      const cacheHeaders = new Headers(finalResponse.headers);
-      cacheHeaders.set("Cache-Control", `public, max-age=${cacheTtl}`);
-      const cacheResponse = new Response(finalResponse.body, {
-        status: finalResponse.status,
-        statusText: finalResponse.statusText,
-        headers: cacheHeaders
-      });
-      await cache.put(cacheRequest, cacheResponse.clone());
-      return cacheResponse;
-    } catch {
-      return finalResponse;
-    }
-  }
-
-  return finalResponse;
 }
 __name(generateSubscription, "generateSubscription");
-
-function getSubscriptionCacheTtl(runtime) {
-  const enabled = normalizeUpdateEnabled(runtime.tokenData?.updateEnable);
-  if (!enabled) return SUB_CACHE_FALLBACK_TTL_SECONDS;
-  const minutes = Number(runtime.tokenData?.update);
-  if (Number.isSafeInteger(minutes) && minutes >= 1 && minutes <= 525600) {
-    return Math.min(minutes * 60, 86400);
-  }
-  return DEFAULT_UPDATE_MINUTES * 60;
-}
-__name(getSubscriptionCacheTtl, "getSubscriptionCacheTtl");
-
 function buildSubUrl(api, config, target, urlToConvert, protocol) {
   let base = `${protocol}://${api}/sub?target=${target}&url=${encodeURIComponent(urlToConvert)}&insert=false&config=${encodeURIComponent(config)}&emoji=true&list=false&tfo=false&scv=true&fdn=false&sort=false`;
   if (target === "surge") base += "&ver=4&new_name=true";
@@ -2356,84 +2312,57 @@ function clashFix(content) {
   return content;
 }
 __name(clashFix, "clashFix");
-async function getSUB(api, request, appendUA, userAgentHeader) {
+async function getSUB(api, request, \u8FFD\u52A0UA, userAgentHeader) {
   if (!api || api.length === 0) return [];
-  api = [...new Set(api)];
+  else api = [...new Set(api)];
   let newapi = "";
-  let conversionURLs = "";
-  let abnormalSubscriptions = "";
-
+  let \u8BA2\u9605\u8F6C\u6362URLs = "";
+  let \u5F02\u5E38\u8BA2\u9605 = "";
+  const controller = new AbortController();
+  const timeout = setTimeout(() => {
+    controller.abort();
+  }, 2e3);
   try {
-    const responses = await Promise.allSettled(
-      api.map((apiUrl) =>
-        getUrl(request, apiUrl, appendUA, userAgentHeader).then((response) =>
-          response.ok ? response.text() : Promise.reject(response)
-        )
-      )
-    );
-
+    const responses = await Promise.allSettled(api.map((apiUrl) => getUrl(request, apiUrl, \u8FFD\u52A0UA, userAgentHeader).then((response) => response.ok ? response.text() : Promise.reject(response))));
     const modifiedResponses = responses.map((response, index) => {
       if (response.status === "rejected") {
-        return {
-          status: response.reason?.name === "AbortError" ? "timeout" : "failed",
-          value: null,
-          apiUrl: api[index]
-        };
+        return { status: response.reason && response.reason.name === "AbortError" ? "\u8D85\u65F6" : "\u8BF7\u6C42\u5931\u8D25", value: null, apiUrl: api[index] };
       }
       return { status: response.status, value: response.value, apiUrl: api[index] };
     });
-
     for (const response of modifiedResponses) {
-      if (response.status !== "fulfilled") continue;
-      const content = await response.value || "null";
-
-      if (content.includes("proxies:") || (content.includes('outbounds"') && content.includes('inbounds"'))) {
-        conversionURLs += "|" + response.apiUrl;
-      } else if (content.includes("://")) {
-        newapi += content + "\n";
-      } else if (isValidBase64(content)) {
-        try {
+      if (response.status === "fulfilled") {
+        const content = await response.value || "null";
+        if (content.includes("proxies:") || content.includes('outbounds"') && content.includes('inbounds"')) {
+          \u8BA2\u9605\u8F6C\u6362URLs += "|" + response.apiUrl;
+        } else if (content.includes("://")) {
+          newapi += content + "\n";
+        } else if (isValidBase64(content)) {
           newapi += base64Decode(content) + "\n";
-        } catch {
-          const host = safeSourceHost(response.apiUrl);
-          if (host) abnormalSubscriptions += `${makeAbnormalSubscription(host)}\n`;
+        } else {
+          const \u5F02\u5E38\u8BA2\u9605LINK = `trojan://CMLiussss@127.0.0.1:8888?security=tls&allowInsecure=1&type=tcp&headerType=none#%E5%BC%82%E5%B8%B8%E8%AE%A2%E9%98%85%20${response.apiUrl.split("://")[1].split("/")[0]}`;
+          \u5F02\u5E38\u8BA2\u9605 += `${\u5F02\u5E38\u8BA2\u9605LINK}
+`;
         }
-      } else {
-        const host = safeSourceHost(response.apiUrl);
-        if (host) abnormalSubscriptions += `${makeAbnormalSubscription(host)}\n`;
       }
     }
-  } catch {
+  } catch (error) {
+  } finally {
+    clearTimeout(timeout);
   }
-
-  return [await ADD(newapi + abnormalSubscriptions), conversionURLs];
+  return [await ADD(newapi + \u5F02\u5E38\u8BA2\u9605), \u8BA2\u9605\u8F6C\u6362URLs];
 }
 __name(getSUB, "getSUB");
-
-function safeSourceHost(value) {
-  try {
-    return new URL(String(value)).hostname || "";
-  } catch {
-    return "";
-  }
-}
-__name(safeSourceHost, "safeSourceHost");
-
-function makeAbnormalSubscription(host) {
-  return `trojan://CMLiussss@127.0.0.1:8888?security=tls&allowInsecure=1&type=tcp&headerType=none#%E5%BC%82%E5%B8%B8%E8%AE%A2%E9%98%85%20${encodeURIComponent(host)}`;
-}
-__name(makeAbnormalSubscription, "makeAbnormalSubscription");
-
-async function getUrl(request, targetUrl, appendUA, userAgentHeader) {
+async function getUrl(request, targetUrl, \u8FFD\u52A0UA, userAgentHeader) {
   const newHeaders = new Headers(request.headers);
-  newHeaders.set("User-Agent", `${atob("djJyYXlOLzYuNDU=")} cmliu/CF-SUB ${appendUA}(${userAgentHeader})`);
-  return fetchWithTimeout(new Request(targetUrl, {
+  newHeaders.set("User-Agent", `${atob("djJyYXlOLzYuNDU=")} cmliu/CF-SUB ${\u8FFD\u52A0UA}(${userAgentHeader})`);
+  return fetch(new Request(targetUrl, {
     method: request.method,
     headers: newHeaders,
     body: request.method === "GET" ? null : request.body,
     redirect: "follow",
     cf: { insecureSkipVerify: true, allowUntrusted: true, validateCertificate: false }
-  }), {}, SUB_SOURCE_TIMEOUT_MS);
+  }));
 }
 __name(getUrl, "getUrl");
 function isValidBase64(str) {
