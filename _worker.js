@@ -2059,54 +2059,59 @@ async function generateSubscription(request, env, sourceList, runtime, token) {
   if (\u8BA2\u9605\u683C\u5F0F === "base64" || token === runtime.fakeToken) {
     return new Response(base64Data, { headers: responseHeaders });
   }
-  // 与稳定版 CF-SUB 保持一致：优先使用当前链接选择的 SUBAPI/SUBCONFIG，
-  // 失败后再使用全局默认后端；不要因为 SUBAPI 一次失败就直接返回 502。
-  const backends = [];
   try {
-    const selected = await getSelectedBackends(env, runtime.tokenData, runtime);
-    for (const backend of selected || []) {
-      if (backend?.api && backend?.config) backends.push(backend);
+    const backendPairs = await getSelectedBackends(env, runtime.tokenData, runtime);
+    let lastError;
+    for (const backend of backendPairs) {
+      try {
+        const finalUrl = buildSubUrl(backend.api, backend.config, \u8BA2\u9605\u683C\u5F0F, \u8BA2\u9605\u8F6C\u6362URL, backend.protocol);
+        const res = await fetch(finalUrl, { headers: { "User-Agent": runtime.userAgentHeader } });
+        if (!res.ok) throw new Error(`SUBAPI ${res.status}`);
+        let content = await res.text();
+        if (\u8BA2\u9605\u683C\u5F0F === "clash") {
+          content = clashFix(content);
+          if (!isValidClashSubscription(content)) throw new Error("SUBAPI 返回的 Clash 配置无效");
+        } else if (\u8BA2\u9605\u683C\u5F0F === "singbox") {
+          if (!isValidSingboxSubscription(content)) throw new Error("SUBAPI 返回的 sing-box 配置无效");
+        }
+        return new Response(content, { headers: responseHeaders });
+      } catch (e) {
+        lastError = e;
+      }
     }
-  } catch (e) {
-  }
-  try {
+
+    // 与稳定版 CF-SUB 一样，使用默认 SUBAPI/SUBCONFIG 再尝试一次。
     const cfg = await getConfig(env);
     const apis = normalizeProviderList(cfg.subApis);
     const configs = normalizeProviderList(cfg.subConfigs);
     const defaultApi = apis.find((x) => x.id === String(cfg.defaultSubApiId || "").toUpperCase()) || apis[0];
     const defaultConfig = configs.find((x) => x.id === String(cfg.defaultSubConfigId || "").toUpperCase()) || configs[0];
     if (defaultApi?.url && defaultConfig?.url) {
-      const rawApi = String(defaultApi.url).trim();
-      const fallbackBackend = {
-        api: rawApi.replace(/^https?:\/\//i, "").replace(/\/+$/, ""),
-        config: String(defaultConfig.url).trim(),
-        protocol: /^http:\/\//i.test(rawApi) ? "http" : "https"
-      };
-      if (!backends.some((x) => x.api === fallbackBackend.api && x.config === fallbackBackend.config && x.protocol === fallbackBackend.protocol)) {
-        backends.push(fallbackBackend);
+      try {
+        const rawApi = String(defaultApi.url).trim();
+        const protocol = /^http:\/\//i.test(rawApi) ? "http" : "https";
+        const api = rawApi.replace(/^https?:\/\//i, "").replace(/\/+$/, "");
+        const fallbackUrl = buildSubUrl(api, String(defaultConfig.url).trim(), \u8BA2\u9605\u683C\u5F0F, \u8BA2\u9605\u8F6C\u6362URL, protocol);
+        const resFb = await fetch(fallbackUrl, { headers: { "User-Agent": runtime.userAgentHeader } });
+        if (!resFb.ok) throw new Error(`SUBAPI ${resFb.status}`);
+        let contentFb = await resFb.text();
+        if (\u8BA2\u9605\u683C\u5F0F === "clash") {
+          contentFb = clashFix(contentFb);
+          if (!isValidClashSubscription(contentFb)) throw new Error("默认 SUBAPI 返回的 Clash 配置无效");
+        } else if (\u8BA2\u9605\u683C\u5F0F === "singbox") {
+          if (!isValidSingboxSubscription(contentFb)) throw new Error("默认 SUBAPI 返回的 sing-box 配置无效");
+        }
+        return new Response(contentFb, { headers: responseHeaders });
+      } catch (e) {
+        lastError = e;
       }
     }
-  } catch (e) {
-  }
 
-  for (const backend of backends) {
-    try {
-      const finalUrl = buildSubUrl(backend.api, backend.config, 订阅格式, 订阅转换URL, backend.protocol);
-      const res = await fetch(finalUrl, { headers: { "User-Agent": runtime.userAgentHeader } });
-      if (!res.ok) continue;
-      let content = await res.text();
-      if (!content) continue;
-      if (订阅格式 === "clash") content = clashFix(content);
-      // 不设置 Content-Disposition，让浏览器直接显示订阅内容，而不是触发下载。
-      return new Response(content, { headers: responseHeaders });
-    } catch (e) {
-      continue;
-    }
+    // 不把 SUBAPI 错误文本返回给客户端；回退到本 Worker 已收集的 Base64 节点。
+    return new Response(base64Data, { headers: responseHeaders });
+  } catch (error) {
+    return new Response(base64Data, { headers: responseHeaders });
   }
-
-  // 与稳定版 CF-SUB 一致：转换后端全部失败时返回可用的 Base64 数据，
-  // 不返回 502 错误页，避免 Clash / sing-box 把错误页当成订阅内容。
-  return new Response(base64Data, { headers: responseHeaders });
 }
 __name(generateSubscription, "generateSubscription");
 function buildSubUrl(api, config, target, urlToConvert, protocol) {
