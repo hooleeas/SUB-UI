@@ -2093,7 +2093,18 @@ async function handlePublicGenerate(request, env, requestUrl) {
     const token = String(data.path || "").trim() || crypto.randomUUID();
     if (token.length < 3 || token.length > 128 || !/^[-A-Za-z0-9_]+$/.test(token)) return jsonResponse({ ok: false, error: "\u94FE\u63A5\u8DEF\u5F84\u53EA\u80FD\u4F7F\u7528\u5B57\u6BCD\u3001\u6570\u5B57\u3001\u77ED\u6A2A\u7EBF\u6216\u4E0B\u5212\u7EBF\uFF0C\u4E14\u957F\u5EA6\u81F3\u5C11\u4E3A 3 \u4E2A\u5B57\u7B26" }, 400);
     if (["admin", "api", "login", "logout", "favicon"].includes(token.toLowerCase())) return jsonResponse({ ok: false, error: "\u8BE5\u94FE\u63A5\u8DEF\u5F84\u4E0D\u53EF\u4F7F\u7528" }, 400);
-    if (await getToken(env, token)) return jsonResponse({ ok: false, error: "\u8BE5\u94FE\u63A5\u8DEF\u5F84\u5DF2\u5B58\u5728\uFF0C\u8BF7\u66F4\u6362\u4E00\u4E2A" }, 409);
+    let existingToken;
+    try {
+      existingToken = await env.KV.get(`${URL_PREFIX}${token}`);
+    } catch (error) {
+      console.error("Generated link path collision check failed:", error);
+      return jsonResponse(
+        { ok: false, error: "\u65E0\u6CD5\u786E\u8BA4\u94FE\u63A5\u8DEF\u5F84\u662F\u5426\u5DF2\u5B58\u5728\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5" },
+        503,
+        { "Retry-After": "5" }
+      );
+    }
+    if (existingToken !== null) return jsonResponse({ ok: false, error: "\u8BE5\u94FE\u63A5\u8DEF\u5F84\u5DF2\u5B58\u5728\uFF0C\u8BF7\u66F4\u6362\u4E00\u4E2A" }, 409);
     const destroyKeyHash = destroyKey ? await sha256Hex(`${token}:${destroyKey}`) : "";
     const item = {
       url: token,
