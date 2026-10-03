@@ -2621,7 +2621,7 @@ function getToolStyles() {
 __name(getToolStyles, "getToolStyles");
 function renderFavicon(title, logo = "") {
   const iconUrl = String(logo || "").trim();
-  if (iconUrl) return `<link rel="icon" href="${escapeHTML(iconUrl)}">`;
+  if (iconUrl) return `<link rel="icon" href="${escapeHTML(iconUrl)}"><link rel="apple-touch-icon" href="${escapeHTML(iconUrl)}">`;
   const initial = Array.from(String(title || "").trim())[0] || "S";
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#2f6f54"/><text x="32" y="33" fill="#fff" font-family="Arial,sans-serif" font-size="38" font-weight="700" text-anchor="middle" dominant-baseline="central">${escapeHTML(initial)}</text></svg>`;
   return `<link rel="icon" type="image/svg+xml" href="${escapeHTML(`data:image/svg+xml,${encodeURIComponent(svg)}`)}">`;
