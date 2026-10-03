@@ -6,8 +6,20 @@ var APP_ID = "SUB-UI";
 var FILENAME = "SUB";
 var SITELOGO = "";
 var DEFAULT_UPDATE_MINUTES = 60;
+var INTERNAL_TOKEN_SEED = "CF-SUBS-INTERNAL";
 var SUB_PREFIX = "SUB:";
 var URL_PREFIX = "URL:";
+var CONFIG_SECTION_PREFIX = "CONFIG:SECTION:";
+var SUBAPIS_KEY = "SUBAPIS";
+var SUBCONFIGS_KEY = "SUBCONFIGS";
+var CONFIG_SECTIONS = {
+  site: ["subName", "adminPath", "siteLogo"],
+  security: ["user", "pass"],
+  subapi: ["subApis", "defaultSubApiId"],
+  subconfig: ["subConfigs", "defaultSubConfigId"]
+};
+var CONFIG_VERSION = 2;
+class ConfigStorageError extends Error {}
 var ID_CHARS = "ABCDEFGHJKMNPQRSTWXYZ2345678";
 var DEFAULT_ADMIN_PATH = "admin";
 function normalizeUpdateEnabled(value) {
@@ -18,12 +30,14 @@ var WORKER_DEFAULT = {
     try {
       return await handleRequest(request, env);
     } catch (error) {
-      console.error("SUB-UI request failed");
+      const configUnavailable = error instanceof ConfigStorageError;
+      console.error(configUnavailable ? "SUB-UI configuration unavailable" : "SUB-UI request failed", error.message);
       return new Response("SUB-UI Worker Error", {
-        status: 500,
+        status: configUnavailable ? 503 : 500,
         headers: {
           "Content-Type": "text/plain; charset=utf-8",
-          "Cache-Control": "no-store"
+          "Cache-Control": "no-store",
+          ...(configUnavailable ? { "Retry-After": "5" } : {})
         }
       });
     }
@@ -34,11 +48,24 @@ var CF_SUBS_CLIENT_SCRIPT = String.raw`
 'use strict';
 function $(id){return document.getElementById(id)}
 function esc(v){return String(v==null?'':v).replace(/[&<>"']/g,function(ch){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]})}
-function toast(message){
- var el=$('adminToast');
- if(!el){el=document.createElement('div');el.id='adminToast';el.style.cssText='position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:9999;padding:12px 18px;border-radius:12px;background:rgba(20,22,25,.92);color:#fff;font-weight:600;box-shadow:0 10px 30px rgba(0,0,0,.25);pointer-events:none;';document.body.appendChild(el)}
- el.textContent=message;el.style.display='block';clearTimeout(window.__cfToastTimer);window.__cfToastTimer=setTimeout(function(){el.style.display='none'},1400)
+function toast(message,isError){
+ var el=$('ccToast');
+ if(!el){
+  var style=document.createElement('style');
+  style.textContent='.cc-toast{position:fixed;left:50%;bottom:min(14vh,120px);z-index:100000;display:flex;align-items:center;gap:10px;max-width:min(520px,calc(100vw - 32px));padding:12px 18px;border:1px solid rgba(255,255,255,.12);border-radius:14px;background:rgba(25,31,36,.96);color:#fff;font-size:14px;font-weight:650;line-height:1.45;box-shadow:0 12px 36px rgba(0,0,0,.28);pointer-events:none;opacity:0;transform:translate(-50%,12px);transition:opacity .18s ease,transform .18s ease}.cc-toast.visible{opacity:1;transform:translate(-50%,0)}.cc-toast-icon{display:grid;width:22px;height:22px;flex:0 0 22px;place-items:center;border-radius:50%;background:#2e9b61;color:#fff;font-size:14px}.cc-toast.error .cc-toast-icon{background:#d93025}';
+  document.head.appendChild(style);
+  el=document.createElement('div');el.id='ccToast';el.className='cc-toast';el.setAttribute('role','status');el.setAttribute('aria-live','polite');
+  el.innerHTML='<span class="cc-toast-icon" aria-hidden="true"></span><span class="cc-toast-message"></span>';
+  document.body.appendChild(el)
+ }
+ el.classList.toggle('error',Boolean(isError));
+ el.querySelector('.cc-toast-icon').textContent=isError?'!':'✓';
+ el.querySelector('.cc-toast-message').textContent=String(message||'');
+ el.classList.add('visible');clearTimeout(window.__cfToastTimer);
+ window.__cfToastTimer=setTimeout(function(){el.classList.remove('visible')},2200)
 }
+window.CC=toast;
+function alertCC(message){toast(message,true)}
 // Centralize modal visibility and background scroll locking so every page restores its exact scroll position.
 var CFSubsModal=(function(){
  var openModals=new Set(),savedBodyStyles=null,savedScrollX=0,savedScrollY=0;
@@ -132,7 +159,7 @@ var CFSubsUI=(function(){
    return response.json().then(function(data){var info=api?data.api:data.config;return{ok:Boolean(response.ok&&data.ok&&info&&info.ok),info:info,data:data}})
   });
  }
- return{setStatus:setStatus,setLink:setLink,setExpanded:setExpanded,bindExpandToggles:bindExpandToggles,bindSelectChange:bindSelectChange,normalizeControls:normalizeControls,setButtonBusy:setButtonBusy,checkAvailability:checkAvailability};
+ return{setStatus:setStatus,setLink:setLink,setExpanded:setExpanded,bindExpandToggles:bindExpandToggles,bindSelectChange:bindSelectChange,normalizeControls:normalizeControls,setButtonBusy:setButtonBusy,checkAvailability:checkAvailability,notify:toast};
 })();
 window.CFSubsUI=CFSubsUI;
 
@@ -162,12 +189,7 @@ function forgetGeneratedLink(token){
  saveGeneratedLinks(generatedLinks().filter(function(x){return !x||String(x.token||'')!==token}));
  renderGeneratedLinks();
 }
-function aggregateNotice(message,isError){
- var notice=$('aggregateCopyNotice');if(!notice)return;
- notice.textContent=message;notice.style.display='block';notice.className='toast '+(isError?'error':'');
- window.clearTimeout(window.__aggregateCopyNoticeTimer);
- window.__aggregateCopyNoticeTimer=window.setTimeout(function(){notice.style.display='none';notice.className='toast'},1800);
-}
+function aggregateNotice(message,isError){toast(message,isError)}
 function renderGeneratedLinks(){
  var wrap=$('generatedLinksPanel'),listEl=$('generatedLinksList');if(!wrap||!listEl)return;
  var list=generatedLinks();
@@ -195,7 +217,7 @@ function syncGeneratedLinks(){
  })
  .catch(function(){});
 }
-function resetAggregateResult(){var q=$('aggregateResultQr');if(q){q.innerHTML='';q.style.display='block'}var b=$('copyDirect');if(b){b.textContent='复制';b.disabled=false}var d=$('destroyDirect');if(d){CFSubsUI.setButtonBusy(d,false);d.textContent='销毁'}var status=$('aggregateCopyStatus');if(status){status.textContent='';status.className='aggregate-copy-status'}}
+function resetAggregateResult(){var q=$('aggregateResultQr');if(q){q.innerHTML='';q.style.display='block'}var b=$('copyDirect');if(b){b.textContent='复制';b.disabled=false}var d=$('destroyDirect');if(d){CFSubsUI.setButtonBusy(d,false);d.textContent='销毁'}}
 function closeAggregateResult(){closeModal('aggregateResultModal');resetAggregateResult()}
 function destroyGeneratedLink(token,button,fromModal,key,skipConfirm){
  token=String(token||'').trim();if(!token)return;
@@ -253,14 +275,16 @@ function scheduleStatus(kind,delay){
 function checkStatus(kind,showLoading){
  var api=kind==='api',value=currentValue(kind),id=api?'apiStatus':'configStatus';
  if(api&&!value){var ver=$('apiVersion');if(ver)ver.textContent='未选择 SUBAPI'}
- if(!value){CFSubsUI.setStatus(id,'error',statusText(kind,null,false));return}
+ if(!value){if(statusTimers[kind])window.clearTimeout(statusTimers[kind]);statusTimers[kind]=null;CFSubsUI.setStatus(id,'error',statusText(kind,null,false));return}
  if(showLoading)CFSubsUI.setStatus(id,'pending','⏳ 状态检测中');
  CFSubsUI.checkAvailability(kind,value).then(function(result){
   if(currentValue(kind)!==value)return;
   var info=result.info,ok=result.ok;
   if(api){var ver=$('apiVersion');if(ver)ver.textContent=ok&&info&&info.version?String(info.version).trim():'无法获取版本'}
   CFSubsUI.setLink(api?'apiCurrent':'configCurrent',value,ok);
-  CFSubsUI.setStatus(id,ok?'success':'error',statusText(kind,info,ok));scheduleStatus(kind,ok?60000:10000)
+  CFSubsUI.setStatus(id,ok?'success':'error',statusText(kind,info,ok));
+  if(ok){if(statusTimers[kind])window.clearTimeout(statusTimers[kind]);statusTimers[kind]=null}
+  else scheduleStatus(kind,10000)
  }).catch(function(){
   if(currentValue(kind)!==value)return;
   if(api){var ver=$('apiVersion');if(ver)ver.textContent='无法获取版本'}
@@ -283,7 +307,7 @@ function cancelCustom(kind){
  var modal=$(api?'customApiModal':'customConfigModal');if(modal)closeModal(modal);updateCurrent(kind);checkStatus(kind,true)
 }
 function saveCustom(kind){
- var api=kind==='api',input=$(api?'customApiInput':'customConfigInput'),value=input?input.value.trim():'';if(api&&!/^https?:\/\//i.test(value))value='https://'+value;if(!/^https?:\/\//i.test(value)){alert('URL 必须以 http:// 或 https:// 开头');return}
+ var api=kind==='api',input=$(api?'customApiInput':'customConfigInput'),value=input?input.value.trim():'';if(api&&!/^https?:\/\//i.test(value))value='https://'+value;if(!/^https?:\/\//i.test(value)){alertCC('URL 必须以 http:// 或 https:// 开头');return}
  if(api){PUBLIC_STATE.apiUrl=value;PUBLIC_STATE.apiCustom=true;PUBLIC_STATE.apiId='';$('apiPicker').value='__custom'}else{PUBLIC_STATE.configUrl=value;PUBLIC_STATE.configCustom=true;PUBLIC_STATE.configId='';$('configPicker').value='__custom'}
  var modal=$(api?'customApiModal':'customConfigModal');if(modal)closeModal(modal);updateCurrent(kind);checkStatus(kind,true)
 }
@@ -314,10 +338,10 @@ function initPublic(){
  e=$('generate');if(e)e.addEventListener('click',function(){
   var sources=$('sources')?$('sources').value.trim():'',a=$('apiPicker'),c=$('configPicker');if(!a||!c)return;
   var apiCustom=a.value==='__custom',configCustom=c.value==='__custom',apiValue=currentValue('api'),configValue=currentValue('config');
-  if(!sources)return alert('请输入订阅链接');if(!apiValue)return alert('请选择订阅转换后端');if(!configValue)return alert('请选择订阅转换规则');
-  var pathInput=$('linkPath'),path=pathInput?pathInput.value.trim():'';if(!path){path=randomLinkPath();if(pathInput)pathInput.value=path}if(path.length<3)return alert('自定义链接路径至少需要 3 个字符');var updateInput=$('recommendedUpdateMinutes'),updateMinutes=Number(updateInput?updateInput.value:DEFAULT_UPDATE_MINUTES);if(!Number.isSafeInteger(updateMinutes)||updateMinutes<0||updateMinutes>525600)return alert('推荐更新时间必须是 0 到 525600 之间的整数分钟');var destroyKey=($('destroyKey')?$('destroyKey').value:'').trim();CURRENT_DESTROY_KEY=destroyKey;var body={path:path,sources:sources,apiIds:apiCustom?[]:[currentId('api')],apiCustom:apiCustom,apiUrl:apiCustom?apiValue:'',configIds:configCustom?[]:[currentId('config')],configCustom:configCustom,configUrl:configCustom?configValue:'',noAds:($('noAds')?$('noAds').value:'').trim(),update:updateMinutes,updateEnable:$('recommendedUpdateEnable')?$('recommendedUpdateEnable').checked:true,destroyKey:destroyKey};
+  if(!sources)return alertCC('请输入订阅链接');if(!apiValue)return alertCC('请选择订阅转换后端');if(!configValue)return alertCC('请选择订阅转换规则');
+  var pathInput=$('linkPath'),path=pathInput?pathInput.value.trim():'';if(!path){path=randomLinkPath();if(pathInput)pathInput.value=path}if(path.length<3)return alertCC('自定义链接路径至少需要 3 个字符');var updateInput=$('recommendedUpdateMinutes'),updateMinutes=Number(updateInput?updateInput.value:DEFAULT_UPDATE_MINUTES);if(!Number.isSafeInteger(updateMinutes)||updateMinutes<0||updateMinutes>525600)return alertCC('推荐更新时间必须是 0 到 525600 之间的整数分钟');var destroyKey=($('destroyKey')?$('destroyKey').value:'').trim();CURRENT_DESTROY_KEY=destroyKey;var body={path:path,sources:sources,apiIds:apiCustom?[]:[currentId('api')],apiCustom:apiCustom,apiUrl:apiCustom?apiValue:'',configIds:configCustom?[]:[currentId('config')],configCustom:configCustom,configUrl:configCustom?configValue:'',noAds:($('noAds')?$('noAds').value:'').trim(),update:updateMinutes,updateEnable:$('recommendedUpdateEnable')?$('recommendedUpdateEnable').checked:true,destroyKey:destroyKey};
   var button=$('generate');CFSubsUI.setButtonBusy(button,true,'生成聚合订阅链接');
-  fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},cache:'no-store',body:JSON.stringify(body)}).then(function(r){return r.json().then(function(d){return {r:r,d:d}})}).then(function(x){if(!x.r.ok||!x.d.ok)throw new Error(x.d.error||'生成失败');rememberGeneratedLink(x.d.subscription_url);$('direct').textContent=x.d.subscription_url;$('direct').href=x.d.subscription_url;var resultModal=$('aggregateResultModal');if(resultModal){openModal(resultModal);var copyButton=$('copyDirect');if(copyButton)copyButton.textContent='复制';var destroyButton=$('destroyDirect');if(destroyButton){destroyButton.textContent='销毁';destroyButton.disabled=false}var status=$('aggregateCopyStatus');if(status){status.textContent='';status.className='aggregate-copy-status'}renderAggregateQr(x.d.subscription_url)}}).catch(function(err){alert(err.message||'生成失败')}).finally(function(){CFSubsUI.setButtonBusy(button,false)})
+  fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},cache:'no-store',body:JSON.stringify(body)}).then(function(r){return r.json().then(function(d){return {r:r,d:d}})}).then(function(x){if(!x.r.ok||!x.d.ok)throw new Error(x.d.error||'生成失败');rememberGeneratedLink(x.d.subscription_url);$('direct').textContent=x.d.subscription_url;$('direct').href=x.d.subscription_url;var resultModal=$('aggregateResultModal');if(resultModal){openModal(resultModal);var copyButton=$('copyDirect');if(copyButton)copyButton.textContent='复制';var destroyButton=$('destroyDirect');if(destroyButton){destroyButton.textContent='销毁';destroyButton.disabled=false}renderAggregateQr(x.d.subscription_url)}}).catch(function(err){alertCC(err.message||'生成失败')}).finally(function(){CFSubsUI.setButtonBusy(button,false)})
  })
 }
 
@@ -326,21 +350,41 @@ var modalState=null;
 function showProvider(type,id,name,url){modalState={type:type,id:id||''};var t=$('modalTitle');if(t)t.textContent=(id?'编辑 ':'添加 ')+(type==='subapi'?'订阅转换后端':'订阅转换规则');if($('modalName'))$('modalName').value=name||'';if($('modalUrl'))$('modalUrl').value=url||'';openModal('providerModal')}
 function hideProvider(){closeModal('providerModal');modalState=null}
 function post(data){return fetch('/api/admin',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','Accept':'application/json'},cache:'no-store',body:JSON.stringify(data)}).then(function(r){return r.text().then(function(t){var d=null;try{d=t?JSON.parse(t):null}catch(e){}if(!d)throw new Error('服务器返回无效数据（HTTP '+r.status+'）');if(!r.ok||d.ok===false)throw new Error(d.error||('操作失败（HTTP '+r.status+'）'));return d})})}
-function setDefaultProvider(type,id){post({type:type+'_default',id:id}).then(function(){toast('默认配置已更新')}).catch(function(e){alert(e.message||'设置默认配置失败');setTimeout(function(){location.reload()},100)})}
-function deleteProvider(type,id){if(!confirm('确定删除这个项目？'))return;post({type:type+'_delete',id:id}).then(function(){toast('已删除');setTimeout(function(){location.reload()},500)}).catch(function(e){alert(e.message||'删除失败')})}
-function saveProvider(){if(!modalState)return;var name=$('modalName')?$('modalName').value.trim():'',url=$('modalUrl')?$('modalUrl').value.trim():'';if(!name)return alert('请输入备注');if(modalState.type==='subapi'&&!/^https?:\/\//i.test(url))url='https://'+url;if(!/^https?:\/\//i.test(url))return alert('URL 必须以 http:// 或 https:// 开头');var b=$('modalSave'),editing=Boolean(modalState.id);CFSubsUI.setButtonBusy(b,true,'保存中...');post({type:modalState.type+'_'+(editing?'update':'create'),id:modalState.id,name:name,url:url}).then(function(){hideProvider();toast(editing?'已保存':'已添加');setTimeout(function(){location.reload()},700)}).catch(function(e){alert(e.message||'保存失败')}).finally(function(){CFSubsUI.setButtonBusy(b,false)})}
-function saveSecurity(){var user=$('securityUser')?$('securityUser').value.trim():'',pass=$('securityPass')?$('securityPass').value:'',pass2=$('securityPass2')?$('securityPass2').value:'';if(!user)return alert('管理员账号不能为空');if(pass!==pass2)return alert('两次输入的密码不一致');var b=$('saveSecurity');CFSubsUI.setButtonBusy(b,true,'保存中...');post({type:'security',user:user,pass:pass}).then(function(){closeModal('securityModal');toast('安全设置已保存');setTimeout(function(){location.reload()},700)}).catch(function(e){alert(e.message||'保存失败')}).finally(function(){CFSubsUI.setButtonBusy(b,false)})}
-function saveSiteSettings(){var name=$('siteName')?$('siteName').value.trim()||'SUB':'SUB',path=$('sitePath')?$('sitePath').value.trim():'',logo=$('siteLogo')?$('siteLogo').value.trim():'';if(!/^[A-Za-z0-9_-]{2,60}$/.test(path))return alert('管理员路径只能使用 2-60 个字母、数字、下划线或短横线');if(logo&&!/^https?:\/\//i.test(logo))return alert('站点标签栏 Logo 必须是 http:// 或 https:// URL');var b=$('saveSite');CFSubsUI.setButtonBusy(b,true,'保存中...');post({type:'site_settings',subName:name,adminPath:path,siteLogo:logo}).then(function(d){closeModal('siteModal');toast('站点设置已保存');setTimeout(function(){location.href='/'+d.adminPath},700)}).catch(function(e){alert(e.message||'保存失败')}).finally(function(){CFSubsUI.setButtonBusy(b,false)})}
+function setDefaultProvider(type,id){post({type:type+'_default',id:id}).then(function(){toast('默认配置已更新')}).catch(function(e){alertCC(e.message||'设置默认配置失败')})}
+function renderProviderSection(type,items,defaultId){
+ var list=document.querySelector('.provider-list[data-provider-type="'+type+'"]');if(!list)return;
+ var section=list.closest('.provider-section'),select=section.querySelector('.default-provider-select'),count=section.querySelector('.provider-count');
+ if(select){select.replaceChildren();if(items.length){items.forEach(function(item){var option=document.createElement('option');option.value=item.id;option.textContent=item.name;select.appendChild(option)});select.value=defaultId||items[0].id}else{var emptyOption=document.createElement('option');emptyOption.value='';emptyOption.textContent='暂无配置';select.appendChild(emptyOption)}}
+ if(count)count.textContent='配置数 '+items.length;
+ list.replaceChildren();
+ if(!items.length){var empty=document.createElement('div');empty.className='empty';empty.textContent=type==='subapi'?'暂无订阅转换后端，请手动添加。':'暂无订阅转换规则，请手动添加。';list.appendChild(empty)}
+ items.forEach(function(item){
+  var row=document.createElement('div');row.className='link-item provider-item';row.draggable=true;row.dataset.providerId=item.id;
+  var handle=document.createElement('div');handle.className='drag-handle';handle.title='拖动排序';handle.setAttribute('aria-label','拖动排序');handle.textContent='⠿';row.appendChild(handle);
+  var main=document.createElement('div');main.className='provider-main';var name=document.createElement('div');name.className='link-label';name.textContent=item.name;var link=document.createElement('a');link.className='provider-url link-url';link.href=item.url;link.target='_blank';link.rel='noopener noreferrer';link.textContent=item.url;main.append(name,link);row.appendChild(main);
+  var actions=document.createElement('div');actions.className='actions admin-row-actions';
+  [['edit','secondary','编辑'],['delete','danger','删除']].forEach(function(entry){var button=document.createElement('button');button.type='button';button.className=entry[1];button.dataset.providerAction=entry[0];button.dataset.providerType=type;button.dataset.providerId=item.id;if(entry[0]==='edit'){button.dataset.providerName=item.name;button.dataset.providerUrl=item.url}button.textContent=entry[2];actions.appendChild(button)});
+  row.appendChild(actions);list.appendChild(row)
+ });
+ CFSubsUI.normalizeControls(section);window['__cfsubs_order_'+type]=items.map(function(item){return item.id}).join(',');initProviderDrag(section)
+}
+function updateProviderSection(type,result){renderProviderSection(type,result.items||[],result.defaultId||'')}
+function restoreProviderSection(type){return fetch('/api/ui-config',{cache:'no-store'}).then(function(response){if(!response.ok)throw new Error('恢复原排序失败（HTTP '+response.status+'）');return response.json()}).then(function(config){if(!config.ok)throw new Error(config.error||'恢复原排序失败');var isApi=type==='subapi',items=isApi?config.subApis:config.subConfigs;if(!Array.isArray(items))throw new Error('服务器返回的配置列表无效');updateProviderSection(type,{items:items,defaultId:isApi?config.defaultSubApiId:config.defaultSubConfigId})})}
+function deleteProvider(type,id){if(!confirm('确定删除这个项目？'))return;post({type:type+'_delete',id:id}).then(function(result){updateProviderSection(type,result);toast('已删除')}).catch(function(e){alertCC(e.message||'删除失败')})}
+function saveProvider(){if(!modalState)return;var name=$('modalName')?$('modalName').value.trim():'',url=$('modalUrl')?$('modalUrl').value.trim():'';if(!name)return alertCC('请输入备注');if(modalState.type==='subapi'&&!/^https?:\/\//i.test(url))url='https://'+url;if(!/^https?:\/\//i.test(url))return alertCC('URL 必须以 http:// 或 https:// 开头');var b=$('modalSave'),type=modalState.type,editing=Boolean(modalState.id);CFSubsUI.setButtonBusy(b,true,'保存中...');post({type:type+'_'+(editing?'update':'create'),id:modalState.id,name:name,url:url}).then(function(result){hideProvider();updateProviderSection(type,result);toast(editing?'已保存':'已添加')}).catch(function(e){alertCC(e.message||'保存失败')}).finally(function(){CFSubsUI.setButtonBusy(b,false)})}
+function saveSecurity(){var user=$('securityUser')?$('securityUser').value.trim():'',pass=$('securityPass')?$('securityPass').value:'',pass2=$('securityPass2')?$('securityPass2').value:'';if(!user)return alertCC('管理员账号不能为空');if(pass!==pass2)return alertCC('两次输入的密码不一致');var b=$('saveSecurity');CFSubsUI.setButtonBusy(b,true,'保存中...');post({type:'security',user:user,pass:pass}).then(function(){closeModal('securityModal');toast('安全设置已保存');setTimeout(function(){location.reload()},700)}).catch(function(e){alertCC(e.message||'保存失败')}).finally(function(){CFSubsUI.setButtonBusy(b,false)})}
+function updateSiteIdentity(name,logo){var title=name+' · 管理后台',display=document.querySelector('.site-title-display'),icon=document.querySelector('link[rel="icon"]');if(display)display.textContent=name;document.title=title;var href=String(logo||'').trim();if(!href){var initial=Array.from(title.trim())[0]||'S',svg='<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#2f6f54"/><text x="32" y="33" fill="#fff" font-family="Arial,sans-serif" font-size="38" font-weight="700" text-anchor="middle" dominant-baseline="central">'+initial.replace(/[&<>\"']/g,'')+'</text></svg>';href='data:image/svg+xml,'+encodeURIComponent(svg)}if(!icon){icon=document.createElement('link');icon.rel='icon';document.head.appendChild(icon)}icon.href=href}
+function saveSiteSettings(){var name=$('siteName')?$('siteName').value.trim()||'SUB':'SUB',path=$('sitePath')?$('sitePath').value.trim():'',logo=$('siteLogo')?$('siteLogo').value.trim():'';if(!/^[A-Za-z0-9_-]{2,60}$/.test(path))return alertCC('管理员路径只能使用 2-60 个字母、数字、下划线或短横线');if(logo&&!/^https?:\/\//i.test(logo))return alertCC('站点标签栏 Logo 必须是 http:// 或 https:// URL');var b=$('saveSite'),currentPath=document.querySelector('.admin-shell').dataset.adminPath;CFSubsUI.setButtonBusy(b,true,'保存中...');post({type:'site_settings',subName:name,adminPath:path,siteLogo:logo}).then(function(d){closeModal('siteModal');toast('站点设置已保存');if(d.adminPath!==currentPath){location.href='/'+d.adminPath;return}updateSiteIdentity(d.subName,d.siteLogo)}).catch(function(e){alertCC(e.message||'保存失败')}).finally(function(){CFSubsUI.setButtonBusy(b,false)})}
 function saveProviderOrder(type,items){var order=items.map(function(el){return el.dataset.providerId}).filter(Boolean);if(!order.length)return Promise.resolve();return post({type:type+'_reorder',order:order})}
-function initProviderDrag(){
- document.querySelectorAll('.provider-list').forEach(function(list){
+function initProviderDrag(root){
+ (root||document).querySelectorAll('.provider-list').forEach(function(list){
   var dragged=null,touchDragging=false,touchMoved=false;
   function clearDrag(){if(dragged)dragged.classList.remove('dragging');list.querySelectorAll('.provider-item').forEach(function(x){x.classList.remove('drag-over')});dragged=null;touchDragging=false;touchMoved=false}
   function saveOrder(){
    var type=list.dataset.providerType,all=Array.from(list.querySelectorAll('.provider-item')),order=all.map(function(x){return x.dataset.providerId}).filter(Boolean),changed=order.join(','),key='__cfsubs_order_'+type,old=window[key]||'';
    if(!order.length||changed===old)return;
    window[key]=changed;list.classList.add('saving-order');
-   saveProviderOrder(type,all).then(function(){toast('排序已保存')}).catch(function(err){alert(err.message||'排序保存失败');location.reload()}).finally(function(){list.classList.remove('saving-order')})
+   saveProviderOrder(type,all).then(function(result){updateProviderSection(type,result);toast('排序已保存')}).catch(function(err){alertCC(err.message||'排序保存失败');restoreProviderSection(type).catch(function(refreshError){alertCC(refreshError.message||'恢复原排序失败',true)})}).finally(function(){list.classList.remove('saving-order')})
   }
   list.querySelectorAll('.provider-item[draggable="true"]').forEach(function(item){
    item.addEventListener('dragstart',function(e){dragged=item;item.classList.add('dragging');if(e.dataTransfer){e.dataTransfer.effectAllowed='move';e.dataTransfer.setData('text/plain',item.dataset.providerId||'')}});
@@ -362,95 +406,11 @@ function initAdmin(){
  document.querySelectorAll('[data-open-modal]').forEach(function(b){b.addEventListener('click',function(){openModal(b.dataset.openModal)})});
  document.querySelectorAll('[data-close-modal]').forEach(function(b){b.addEventListener('click',function(){closeModal(b.dataset.closeModal)})});
  CFSubsUI.bindExpandToggles();
- document.querySelectorAll('[data-provider-action]').forEach(function(b){b.addEventListener('click',function(){var action=b.dataset.providerAction,type=b.dataset.providerType||'',id=b.dataset.providerId||'';if(action==='add')showProvider(type,'','','');else if(action==='edit')showProvider(type,id,b.dataset.providerName||'',b.dataset.providerUrl||'');else if(action==='delete')deleteProvider(type,id)})});
+ var adminShell=document.querySelector('.admin-shell');if(adminShell)adminShell.addEventListener('click',function(event){var b=event.target.closest('[data-provider-action]');if(!b)return;var action=b.dataset.providerAction,type=b.dataset.providerType||'',id=b.dataset.providerId||'';if(action==='add')showProvider(type,'','','');else if(action==='edit')showProvider(type,id,b.dataset.providerName||'',b.dataset.providerUrl||'');else if(action==='delete')deleteProvider(type,id)});
  var e=$('providerCancel');if(e)e.addEventListener('click',hideProvider);e=$('modalSave');if(e)e.addEventListener('click',saveProvider);e=$('saveSecurity');if(e)e.addEventListener('click',saveSecurity);e=$('saveSite');if(e)e.addEventListener('click',saveSiteSettings);
  document.querySelectorAll('.default-provider-select').forEach(function(select){CFSubsUI.bindSelectChange(select,function(value){setDefaultProvider(select.dataset.type,value)})});
  initProviderDrag();
  document.querySelectorAll('.modal-overlay').forEach(function(m){m.addEventListener('click',function(e){if(e.target===m)closeModal(m)})});
-}
-
-/* ---------- SUB-UI aggregate subscription page ---------- */
-function guestToast(message){
- var el=$('copyNotice');
- if(!el)return;
- el.textContent=message;
- el.style.display='block';
- clearTimeout(window.__cfGuestToastTimer);
- window.__cfGuestToastTimer=setTimeout(function(){el.style.display='none'},1500);
-}
-function guestCopy(button){
- var value=button.dataset.url||'';
- function done(){guestToast('已复制');showGuestQr(button)}
- function fail(){guestToast('复制失败，请手动复制')}
- if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(value).then(done).catch(fail);return}
- var ta=document.createElement('textarea');ta.value=value;ta.style.position='fixed';ta.style.opacity='0';document.body.appendChild(ta);ta.focus();ta.select();
- try{document.execCommand('copy');done()}catch(e){fail()}finally{ta.remove()}
-}
-function showGuestQr(button){
- var item=button.closest('.guest-link-item');
- var qr=item&&item.querySelector('.guest-qrcode');
- var copy=item&&item.querySelector('.guest-copy-btn');
- var hide=item&&item.querySelector('.guest-hide-btn');
- if(!item||!qr)return;
- document.querySelectorAll('.guest-link-item').forEach(function(other){
-  if(other===item)return;
-  var oq=other.querySelector('.guest-qrcode'),oc=other.querySelector('.guest-copy-btn'),oh=other.querySelector('.guest-hide-btn');
-  if(oq){oq.style.display='none';oq.innerHTML=''}
-  if(oc)oc.style.display='inline-flex';
-  if(oh)oh.style.display='none';
- });
- qr.innerHTML='';qr.style.display='block';
- if(copy)copy.style.display='none';
- if(hide)hide.style.display='inline-flex';
- if(window.QRCode){try{new QRCode(qr,{text:button.dataset.url,width:220,height:220,colorDark:'#000000',colorLight:'#ffffff',correctLevel:QRCode.CorrectLevel.Q})}catch(e){}}
-}
-function hideGuestQr(button){
- var item=button.closest('.guest-link-item');if(!item)return;
- var qr=item.querySelector('.guest-qrcode'),copy=item.querySelector('.guest-copy-btn'),hide=item.querySelector('.guest-hide-btn');
- if(qr){qr.style.display='none';qr.innerHTML=''}
- if(copy)copy.style.display='inline-flex';
- if(hide)hide.style.display='none';
-}
-function closeGuestDestroyModal(){var m=$('guestDestroyModal');if(m)closeModal(m);var i=$('guestDestroyKey');if(i)i.value=''}
-function openGuestDestroyModal(){var m=$('guestDestroyModal');if(m)openModal(m);var i=$('guestDestroyKey');if(i){i.value='';setTimeout(function(){i.focus()},0)}}
-function submitGuestDestroy(token,key){
- var button=document.querySelector('.guest-head-destroy');
- if(button){button.disabled=true;button.textContent='销毁中…'}
- fetch('/api/destroy',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},cache:'no-store',body:JSON.stringify({token:token,key:String(key||'')})})
- .then(function(r){return r.json().then(function(d){return {r:r,d:d}})})
- .then(function(x){
-  if(!x.r.ok||!x.d.ok)throw new Error(x.d.error||'销毁失败');
-  closeGuestDestroyModal();
-  guestToast('链接已销毁，该链接已失效');
-  setTimeout(function(){location.href='/'},900);
- })
- .catch(function(err){
-  if(button){button.disabled=false;button.textContent='销毁本链接'}
-  guestToast(err.message||'销毁失败');
- });
-}
-function initGuest(){
- var shell=document.querySelector('.guest-shell');
- if(!shell)return;
- var token=String(shell.dataset.token||'').trim();
- var keyRequired=shell.dataset.keyRequired==='true';
- document.querySelectorAll('.guest-copy-btn').forEach(function(b){b.addEventListener('click',function(){guestCopy(b)})});
- document.querySelectorAll('.guest-hide-btn').forEach(function(b){b.addEventListener('click',function(){hideGuestQr(b)})});
- var destroyButton=document.querySelector('.guest-head-destroy');
- if(destroyButton){destroyButton.addEventListener('click',function(){
-  if(keyRequired){openGuestDestroyModal();return}
-  if(!confirm('销毁后此聚合订阅链接将立即失效且无法恢复，确定要销毁吗？'))return;
-  submitGuestDestroy(token,'');
- })}
- var modal=$('guestDestroyModal');
- if(modal)modal.addEventListener('click',function(e){if(e.target===modal)closeGuestDestroyModal()});
- var cancel=$('guestDestroyCancel');if(cancel)cancel.addEventListener('click',closeGuestDestroyModal);
- var confirmButton=$('guestDestroyConfirm');if(confirmButton)confirmButton.addEventListener('click',function(){
-  var input=$('guestDestroyKey'),key=input?input.value.trim():'';
-  if(!key){guestToast('请输入销毁密钥');if(input)input.focus();return}
-  submitGuestDestroy(token,key);
- });
- document.addEventListener('keydown',function(e){if(e.key==='Escape')closeGuestDestroyModal()});
 }
 
 function boot(){
@@ -462,43 +422,21 @@ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',
 })();
 `;
 async function handleRequest(request, env) {
-  const userAgentHeader = request.headers.get("User-Agent") || "";
-  const userAgent = userAgentHeader.toLowerCase();
-  const url = new URL(request.url);
+  const url = getCanonicalRequestUrl(request);
   const queryToken = url.searchParams.get("token") || "";
-  const conversionSourceToken = url.searchParams.get("sourceToken") || "";
+  const userAgent = (request.headers.get("User-Agent") || "").toLowerCase();
   let adminUser = "";
   let adminPass = "";
   let adminPath = DEFAULT_ADMIN_PATH;
   SITELOGO = "";
   if (env.KV) {
-    try {
-      const kvConfig = await getConfig(env);
-      FILENAME = kvConfig.subName || "SUB";
-      adminUser = kvConfig.user || adminUser;
-      adminPass = kvConfig.pass || adminPass;
-      adminPath = normalizeAdminPath(kvConfig.adminPath) || DEFAULT_ADMIN_PATH;
-      SITELOGO = String(kvConfig.siteLogo || "");
-    } catch (e) {
-      console.error("\u89E3\u6790 KV \u914D\u7F6E\u5931\u8D25", e);
-    }
+    const kvConfig = await getConfig(env);
+    FILENAME = kvConfig.subName || "SUB";
+    adminUser = kvConfig.user || adminUser;
+    adminPass = kvConfig.pass || adminPass;
+    adminPath = normalizeAdminPath(kvConfig.adminPath) || DEFAULT_ADMIN_PATH;
+    SITELOGO = String(kvConfig.siteLogo || "");
   }
-  const fakeToken = await MD5MD5(`${APP_ID}${Math.ceil(new Date().setHours(0, 0, 0, 0) / 1e3)}`);
-  const isProxyClientUA = [
-    "clash",
-    "meta",
-    "mihomo",
-    "sing-box",
-    "singbox",
-    "surge",
-    "quantumult",
-    "loon",
-    "nekobox",
-    "v2rayn",
-    "v2rayng",
-    "shadowrocket",
-    "subconverter"
-  ].some((keyword) => userAgent.includes(keyword));
   if (url.searchParams.has("logout") || url.pathname === `/${adminPath}/logout`) {
     return new Response(null, {
       status: 302,
@@ -585,7 +523,7 @@ async function handleRequest(request, env) {
       }
     }
     if (request.method !== "GET") return new Response("Method Not Allowed", { status: 405 });
-    const items = await listJsonManagerItems(env, "");
+    const items = await listJsonManagerItems(env, "", url.origin);
     const managerConfig = await getConfig(env);
     return new Response(renderGeneratedLinksManagerPage(items, adminPath, managerConfig), {
       headers: {
@@ -637,56 +575,381 @@ async function handleRequest(request, env) {
       adminPath
     });
   }
+  const currentDate = /* @__PURE__ */ new Date();
+  currentDate.setHours(0, 0, 0, 0);
+  const fakeToken = await MD5MD5(`${INTERNAL_TOKEN_SEED}${Math.ceil(currentDate.getTime() / 1e3)}`);
   let publicToken = queryToken;
-  if (!publicToken && url.pathname !== "/") publicToken = decodeURIComponent(url.pathname.slice(1));
-  let tokenData = null;
-  if (env.KV && publicToken) tokenData = await getToken(env, publicToken);
-  const isFakeTokenRequest = publicToken === fakeToken || url.pathname === "/" + fakeToken;
-  let effectiveTokenData = tokenData;
-  if (!effectiveTokenData && isFakeTokenRequest && conversionSourceToken) {
-    effectiveTokenData = await getToken(env, conversionSourceToken);
+  if (!publicToken && url.pathname !== "/") {
+    try {
+      publicToken = decodeURIComponent(url.pathname.slice(1));
+    } catch {
+      return Response.redirect(url.origin + "/", 302);
+    }
   }
-  if (!tokenData && !isFakeTokenRequest && url.pathname !== "/") {
-    return Response.redirect(url.origin + "/", 302);
+  const isFakeTokenRequest = publicToken === fakeToken || url.pathname === `/${fakeToken}`;
+  if (isFakeTokenRequest && url.searchParams.has("sourceToken")) {
+    const sourceToken = url.searchParams.get("sourceToken") || "";
+    const sourceData = await getToken(env, sourceToken);
+    if (!sourceData) return new Response("内部订阅来源不存在。", { status: 404 });
+    const sourceResult = await collectSubscriptionSources(
+      sourceData.sources || [],
+      request,
+      "v2rayn",
+      request.headers.get("User-Agent") || ""
+    );
+    return new Response(
+      encodeBase64(filterSubscriptionNodes(sourceResult.nodes, sourceData.noAds).join("\n")),
+      { headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" } }
+    );
   }
-  if (!tokenData && !isFakeTokenRequest && url.pathname === "/") {
-    const page = await renderSubUIHome(request, url, env);
-    const html = page;
-    return new Response(html, {
-      headers: {
-        "Content-Type": "text/html; charset=UTF-8",
-        "Cache-Control": "no-store"
+  if (publicToken && !isFakeTokenRequest) {
+    const tokenData = await getToken(env, publicToken);
+    if (tokenData) {
+      const isProxyClientUA = [
+        "clash", "meta", "mihomo", "sing-box", "singbox", "surge",
+        "quantumult", "loon", "nekobox", "v2rayn", "v2rayng",
+        "shadowrocket", "subconverter"
+      ].some((keyword) => userAgent.includes(keyword));
+      if (request.method === "GET" && !url.search && userAgent.includes("mozilla") && !isProxyClientUA) {
+        const guestConfig = await getConfig(env);
+        const guestPage = renderCFSubsGuestPage(url, tokenData.url, Boolean(tokenData.destroyKeyHash), SITELOGO);
+        return new Response(guestPage.replace("</body>", `${renderGuestEditFeature(tokenData, guestConfig)}</body>`), {
+          headers: {
+            "Content-Type": "text/html; charset=UTF-8",
+            "Cache-Control": "no-store"
+          }
+        });
       }
-    });
+      return await generateSubscription(request, env, url, tokenData, publicToken, userAgent, fakeToken);
+    }
   }
-  let selectedSources = Array.isArray(effectiveTokenData?.sources) && effectiveTokenData.sources.length ? cleanSourceList(effectiveTokenData.sources) : [];
-  if (isFakeTokenRequest && !selectedSources.length && !conversionSourceToken) {
-    selectedSources = await getAllManagedSources(env);
-  }
-  if (userAgent.includes("mozilla") && !url.search && !isProxyClientUA && tokenData) {
-    const guestConfig = await getConfig(env);
-    const guestPage = renderCFSubsGuestPage(url, tokenData.url, Boolean(tokenData.destroyKeyHash), SITELOGO);
-    return new Response(guestPage.replace("</body>", `${renderGuestEditFeature(tokenData, guestConfig)}</body>`), {
-      headers: { "Content-Type": "text/html;charset=utf-8", "Cache-Control": "no-store" }
-    });
-  }
-  return await generateSubscription(
-    request,
-    env,
-    selectedSources,
-    {
-      mytoken: APP_ID,
-      fakeToken,
-      userAgent,
-      userAgentHeader,
-      config_noAds: String(effectiveTokenData?.noAds || ""),
-      FileName: FILENAME,
-      tokenData: effectiveTokenData
-    },
-    publicToken
-  );
+  if (url.pathname !== "/" || queryToken) return Response.redirect(url.origin + "/", 302);
+  const page = await renderSubUIHome(request, url, env);
+  return new Response(page, {
+    headers: {
+      "Content-Type": "text/html; charset=UTF-8",
+      "Cache-Control": "no-store"
+    }
+  });
 }
 __name(handleRequest, "handleRequest");
+function getCanonicalRequestUrl(request) {
+  const url = new URL(request.url);
+  let forwardedScheme = "";
+  const cfVisitor = request.headers.get("cf-visitor");
+  if (cfVisitor) {
+    try {
+      forwardedScheme = JSON.parse(cfVisitor).scheme;
+    } catch {
+      forwardedScheme = "";
+    }
+  }
+  if (forwardedScheme !== "http" && forwardedScheme !== "https") {
+    forwardedScheme = (request.headers.get("x-forwarded-proto") || "").split(",")[0].trim().toLowerCase();
+  }
+  if (forwardedScheme === "http" || forwardedScheme === "https") {
+    url.protocol = `${forwardedScheme}:`;
+  } else if (
+    url.protocol === "http:" &&
+    url.hostname !== "localhost" &&
+    !url.hostname.endsWith(".localhost") &&
+    !url.hostname.endsWith(".local") &&
+    !/^\d{1,3}(?:\.\d{1,3}){3}$/.test(url.hostname) &&
+    !url.hostname.startsWith("[")
+  ) {
+    url.protocol = "https:";
+  }
+  return url;
+}
+__name(getCanonicalRequestUrl, "getCanonicalRequestUrl");
+async function generateSubscription(request, env, requestUrl, tokenData, token, userAgent, fakeToken) {
+  const isSubConverterRequest = request.headers.has("subconverter-request") ||
+    request.headers.has("subconverter-version") || userAgent.includes("subconverter");
+  let target = "base64";
+  if (!(userAgent.includes("null") || isSubConverterRequest || userAgent.includes("nekobox") || userAgent.includes("cf-sub"))) {
+    if (userAgent.includes("sing-box") || userAgent.includes("singbox")) target = "singbox";
+    else if (userAgent.includes("surge")) target = "surge";
+    else if (userAgent.includes("quantumult")) target = "quanx";
+    else if (userAgent.includes("loon")) target = "loon";
+    else if (userAgent.includes("clash") || userAgent.includes("meta") || userAgent.includes("mihomo")) target = "clash";
+  }
+  if (requestUrl.searchParams.has("b64") || requestUrl.searchParams.has("base64")) target = "base64";
+  else if (requestUrl.searchParams.has("clash")) target = "clash";
+  else if (requestUrl.searchParams.has("sb") || requestUrl.searchParams.has("singbox")) target = "singbox";
+  else if (requestUrl.searchParams.has("surge")) target = "surge";
+  else if (requestUrl.searchParams.has("quanx")) target = "quanx";
+  else if (requestUrl.searchParams.has("loon")) target = "loon";
+
+  const sources = cleanSourceList(tokenData.sources || []);
+  const headers = {
+    "Content-Type": "text/plain; charset=utf-8",
+    "Cache-Control": "no-store",
+    "Profile-web-page-url": `${requestUrl.origin}${requestUrl.pathname}`
+  };
+  if (normalizeUpdateEnabled(tokenData.updateEnable)) {
+    const minutes = Number(tokenData.update ?? DEFAULT_UPDATE_MINUTES);
+    headers["Profile-Update-Interval"] = String((Number.isSafeInteger(minutes) && minutes >= 0 ? minutes : DEFAULT_UPDATE_MINUTES) * 60);
+  }
+  if (!sources.length) return new Response("此订阅链接没有启用的聚合来源。", { status: 404, headers });
+
+  const sourceData = await collectSubscriptionSources(
+    sources,
+    request,
+    subscriptionUserAgent(target),
+    subscriptionUserAgent("base64")
+  );
+  if (!sourceData.nodes.length && !sourceData.structuredUrls.length) {
+    return new Response("订阅源均无法读取，请检查来源地址后重试。", { status: 502, headers });
+  }
+  const rawResult = filterSubscriptionNodes(sourceData.nodes, tokenData.noAds).join("\n");
+  if (target === "base64") {
+    let result = rawResult;
+    if (sourceData.structuredUrls.length) {
+      try {
+        const converted = await fetchConvertedSubscription(
+          await getSubscriptionRuntime(env, tokenData, fakeToken),
+          "mixed",
+          sourceData.structuredUrls.join("|"),
+          request.headers.get("User-Agent") || ""
+        );
+        result = filterSubscriptionNodes(
+          [...sourceData.nodes, ...splitSubscriptionLines(converted)],
+          tokenData.noAds
+        ).join("\n");
+      } catch (error) {
+        console.error("Base64 subscription conversion failed:", error);
+        return new Response(`Base64 订阅生成失败：${getSubscriptionErrorMessage(error)}`, { status: 502, headers });
+      }
+    }
+    return new Response(encodeBase64(result), { headers });
+  }
+
+  try {
+    const runtime = await getSubscriptionRuntime(env, tokenData, fakeToken);
+    const sourceToken = requestUrl.searchParams.get("sourceToken") || token;
+    const internalFeed = new URL(`/${encodeURIComponent(runtime.fakeToken)}`, requestUrl.origin);
+    internalFeed.searchParams.set("token", runtime.fakeToken);
+    if (sourceToken) internalFeed.searchParams.set("sourceToken", sourceToken);
+    const converterInput = [internalFeed.href, ...sourceData.structuredUrls].join("|");
+    let content = await fetchConvertedSubscription(runtime, target, converterInput, subscriptionUserAgent(target));
+    if (target === "clash") content = clashFix(content);
+    if (!userAgent.includes("mozilla")) {
+      headers["Content-Disposition"] = `attachment; filename*=utf-8''${encodeURIComponent(FILENAME)}`;
+    }
+    return new Response(content, { headers });
+  } catch (error) {
+    console.error(`Subscription conversion failed (${target}):`, error);
+    return new Response(`订阅格式转换失败（${target}）：${getSubscriptionErrorMessage(error)}`, { status: 502, headers });
+  }
+}
+__name(generateSubscription, "generateSubscription");
+async function getSubscriptionRuntime(env, tokenData, fakeToken) {
+  const config = await getConfig(env);
+  const resolveUrl = (reference, providers) => {
+    const first = Array.isArray(reference) ? reference[0] : reference;
+    const id = String(first?.ID || first?.id || "").trim().toUpperCase();
+    return String(first?.URL || first?.url || providers.find((provider) => provider.id === id)?.url || "").trim();
+  };
+  const apiUrl = resolveUrl(tokenData.subApi, normalizeProviderList(config.subApis));
+  const configUrl = resolveUrl(tokenData.subConfig, normalizeProviderList(config.subConfigs));
+  if (!apiUrl) throw new Error("此订阅链接未配置有效的 SUBAPI");
+  if (!configUrl) throw new Error("此订阅链接未配置有效的 SUBCONFIG");
+  const protocol = /^http:\/\//i.test(apiUrl) ? "http" : "https";
+  const api = apiUrl.replace(/^https?:\/\//i, "").replace(/\/+$/, "");
+  return {
+    effectiveSubConverter: api,
+    effectiveSubConfig: configUrl,
+    effectiveSubProtocol: protocol,
+    fakeToken
+  };
+}
+__name(getSubscriptionRuntime, "getSubscriptionRuntime");
+async function fetchConvertedSubscription(runtime, target, sourceUrl, userAgent) {
+  const converterUrl = buildSubUrl(
+    runtime.effectiveSubConverter,
+    runtime.effectiveSubConfig,
+    target,
+    sourceUrl,
+    runtime.effectiveSubProtocol
+  );
+  const response = await fetchWithTimeout(converterUrl, { headers: { "User-Agent": userAgent } }, 15e3);
+  if (!response.ok) {
+    const errorBody = (await response.text()).replace(/https?:\/\/\S+/gi, "[url]").replace(/\s+/g, " ").slice(0, 240);
+    throw new Error(`SUBAPI 返回 HTTP ${response.status}${errorBody ? `: ${errorBody}` : ""}`);
+  }
+  const body = await response.text();
+  if (target === "mixed") {
+    if (isValidBase64(body.trim())) return base64Decode(body.trim());
+    if (body.includes("://")) return body;
+    throw new Error("SUBAPI mixed 响应不是有效的 Base64 或节点列表");
+  }
+  return body;
+}
+__name(fetchConvertedSubscription, "fetchConvertedSubscription");
+function buildSubUrl(api, config, target, sourceUrl, protocol) {
+  let url = `${protocol}://${api}/sub?target=${target}&url=${encodeURIComponent(sourceUrl)}&insert=false&config=${encodeURIComponent(config)}&emoji=true&list=false&tfo=false&scv=true&fdn=false&sort=false`;
+  if (target === "surge") url += "&ver=4&new_name=true";
+  else if (target === "quanx") url += "&udp=true";
+  else if (target === "clash" || target === "singbox" || target === "mixed") url += "&new_name=true";
+  return url;
+}
+__name(buildSubUrl, "buildSubUrl");
+function subscriptionUserAgent(target) {
+  return ({ base64: "v2rayn", clash: "clash", singbox: "singbox", surge: "surge", quanx: "Quantumult%20X", loon: "Loon" })[target] || "v2rayn";
+}
+__name(subscriptionUserAgent, "subscriptionUserAgent");
+function splitSubscriptionLines(value) {
+  return String(value || "").replace(/[ "'|\r\n]+/g, "\n").split(/\n+/).filter(Boolean);
+}
+__name(splitSubscriptionLines, "splitSubscriptionLines");
+function getSubscriptionErrorMessage(error) {
+  return error instanceof Error ? error.message : String(error || "未知错误");
+}
+__name(getSubscriptionErrorMessage, "getSubscriptionErrorMessage");
+async function collectSubscriptionSources(sourceList, request, additionalUserAgent, userAgentHeader) {
+  const inlineSources = sourceList.filter((source) => !/^https?:\/\//i.test(source));
+  const remoteSources = sourceList.filter((source) => /^https?:\/\//i.test(source));
+  const nodes = inlineSources.flatMap((source) => splitSubscriptionLines(source));
+  const structuredUrls = [];
+  const results = await Promise.allSettled(remoteSources.map(async (source) => {
+    const response = await getSubscriptionSource(request, source, additionalUserAgent, userAgentHeader);
+    if (!response.ok) {
+      await response.body?.cancel();
+      throw new Error(`来源返回 HTTP ${response.status}`);
+    }
+    return { source, content: (await response.text()).replace(/^\uFEFF/, "").trim() };
+  }));
+  for (let index = 0; index < results.length; index++) {
+    const result = results[index];
+    if (result.status === "rejected") {
+      let origin = "invalid subscription URL";
+      try { origin = new URL(remoteSources[index]).origin; } catch {}
+      console.warn("Subscription source request failed:", origin, result.reason);
+      continue;
+    }
+    const { source, content } = result.value;
+    if (!content) continue;
+    if (isStructuredSubscription(content)) {
+      structuredUrls.push(source);
+      continue;
+    }
+    let decoded = content;
+    if (!content.includes("://") && isValidBase64(content)) {
+      try { decoded = base64Decode(content.replace(/\s/g, "")); } catch (error) {
+        console.warn("Subscription source Base64 decode failed:", source, error);
+        continue;
+      }
+    }
+    if (decoded.includes("://")) nodes.push(...splitSubscriptionLines(decoded).filter((line) => line.includes("://")));
+    else console.warn("Subscription source format not recognized:", source);
+  }
+  return { nodes: [...new Set(nodes)], structuredUrls: [...new Set(structuredUrls)] };
+}
+__name(collectSubscriptionSources, "collectSubscriptionSources");
+function isStructuredSubscription(content) {
+  return /(?:^|\n)\s*proxies\s*:/i.test(content) ||
+    /"(?:outbounds|inbounds)"\s*:/.test(content) ||
+    /(?:^|\n)\s*proxy-providers\s*:/i.test(content);
+}
+__name(isStructuredSubscription, "isStructuredSubscription");
+function filterSubscriptionNodes(nodes, noAds) {
+  const keywords = String(noAds || "").split(/[, \r\n]+/).map((keyword) => keyword.trim().toLowerCase()).filter(Boolean);
+  return [...new Set(nodes.filter((line) => {
+    const lowerLine = line.toLowerCase();
+    return !keywords.some((keyword) => lowerLine.includes(keyword));
+  }))];
+}
+__name(filterSubscriptionNodes, "filterSubscriptionNodes");
+async function getSubscriptionSource(request, targetUrl, additionalUserAgent, userAgentHeader) {
+  let currentUrl = parsePublicHttpUrl(targetUrl);
+  let method = request.method;
+  const headers = new Headers({
+    "User-Agent": `v2rayN/6.45 cmliu/CF-SUB ${additionalUserAgent}(${userAgentHeader})`,
+    "Accept": "text/plain, application/json, */*"
+  });
+  const contentType = request.headers.get("Content-Type");
+  if (contentType) headers.set("Content-Type", contentType);
+  for (let redirectCount = 0; redirectCount <= 5; redirectCount++) {
+    const outboundRequest = new Request(currentUrl.href, {
+      method,
+      headers,
+      body: method === "GET" || method === "HEAD" ? null : request.clone().body,
+      redirect: "manual"
+    });
+    const response = await fetchWithTimeout(outboundRequest, {}, 10e3);
+    const location = response.headers.get("Location");
+    if (![301, 302, 303, 307, 308].includes(response.status) || !location) return response;
+    if (redirectCount === 5) {
+      await response.body?.cancel();
+      throw new Error("订阅源重定向次数超过限制");
+    }
+    currentUrl = parsePublicHttpUrl(new URL(location, currentUrl).href);
+    if (response.status === 303 || ([301, 302].includes(response.status) && method === "POST")) method = "GET";
+    await response.body?.cancel();
+  }
+  throw new Error("订阅源重定向次数超过限制");
+}
+__name(getSubscriptionSource, "getSubscriptionSource");
+function parsePublicHttpUrl(value) {
+  let url;
+  try { url = new URL(value); } catch { throw new Error("订阅源 URL 无效"); }
+  if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || isBlockedOutboundHostname(url.hostname)) {
+    throw new Error("订阅源 URL 不允许访问");
+  }
+  return url;
+}
+__name(parsePublicHttpUrl, "parsePublicHttpUrl");
+function isBlockedOutboundHostname(hostname) {
+  const host = hostname.toLowerCase().replace(/\.$/, "");
+  const bareHost = host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
+  if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local") ||
+      host.endsWith(".internal") || host.endsWith(".home") || host.endsWith(".lan") ||
+      host.endsWith(".test") || host.endsWith(".invalid") || host.endsWith(".example") ||
+      host.endsWith(".arpa") || host === "metadata.google" || host === "metadata.google.internal" ||
+      host === "metadata.azure.internal" || host === "instance-data.ec2.internal") return true;
+  if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(bareHost)) {
+    const [first, second, third] = bareHost.split(".").map(Number);
+    return first === 0 || first === 10 || first === 127 ||
+      (first === 100 && second >= 64 && second <= 127) ||
+      (first === 169 && second === 254) ||
+      (first === 172 && second >= 16 && second <= 31) ||
+      (first === 192 && (second === 0 || second === 2 || second === 168)) ||
+      (first === 192 && second === 88 && third === 99) ||
+      (first === 198 && (second === 18 || second === 19 || (second === 51 && third === 100))) ||
+      (first === 203 && second === 0 && third === 113) || first >= 224;
+  }
+  if (bareHost.includes(":")) {
+    const ipv6 = bareHost.toLowerCase();
+    return ipv6 === "::" || ipv6 === "::1" || ipv6.startsWith("fc") || ipv6.startsWith("fd") ||
+      /^fe[89ab]/.test(ipv6) || ipv6.startsWith("ff") || ipv6.startsWith("2001:db8:") || ipv6.startsWith("::ffff:");
+  }
+  return false;
+}
+__name(isBlockedOutboundHostname, "isBlockedOutboundHostname");
+function isValidBase64(value) {
+  const normalized = String(value || "").replace(/\s/g, "");
+  return normalized.length >= 4 && normalized.length % 4 !== 1 && /^[A-Za-z0-9+/_-]+={0,2}$/.test(normalized);
+}
+__name(isValidBase64, "isValidBase64");
+function encodeBase64(value) {
+  const bytes = new TextEncoder().encode(String(value || ""));
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(binary);
+}
+__name(encodeBase64, "encodeBase64");
+function base64Decode(value) {
+  let normalized = String(value || "").replace(/\s/g, "").replace(/-/g, "+").replace(/_/g, "/");
+  normalized += "=".repeat((4 - normalized.length % 4) % 4);
+  const binary = atob(normalized);
+  return new TextDecoder("utf-8", { fatal: true }).decode(Uint8Array.from(binary, (character) => character.charCodeAt(0)));
+}
+__name(base64Decode, "base64Decode");
+function clashFix(content) {
+  if (!content.includes("wireguard") || content.includes("remote-dns-resolve")) return content;
+  return content.replace(/type: wireguard[^\r\n]*/g, (line) => line.replace(/, mtu: 1280, udp: true/g, ", mtu: 1280, remote-dns-resolve: true, udp: true"));
+}
+__name(clashFix, "clashFix");
 async function fetchWithTimeout(resource, options = {}, timeoutMs = 3e3) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -769,7 +1032,9 @@ function normalizeConfigData(value) {
     SUBAPIS: "subApis",
     SUBCONFIGS: "subConfigs",
     DEFAULTSUBAPIID: "defaultSubApiId",
+    DEFAULT_SUBAPI_ID: "defaultSubApiId",
     DEFAULTSUBCONFIGID: "defaultSubConfigId",
+    DEFAULT_SUBCONFIG_ID: "defaultSubConfigId",
     USER: "user",
     PASS: "pass",
     ADMINPATH: "adminPath",
@@ -874,6 +1139,8 @@ async function getToken(env, token) {
     return null;
   }
   const normalized = upperCaseObject(parsed);
+  delete normalized.PATH;
+  delete normalized.SUBSCRIPTIONURL;
   for (const key of ["SUBAPIIDS", "SUBCONFIGIDS"]) {
     if (Array.isArray(normalized[key])) normalized[key] = normalized[key].map((id) => String(id).toUpperCase());
   }
@@ -1093,16 +1360,6 @@ async function decryptSourceList(env, sources) {
   }));
 }
 __name(decryptSourceList, "decryptSourceList");
-async function getAllManagedSources(env) {
-  const result = [];
-  const subs = await listSubs(env);
-  for (const sub of subs) {
-    if (sub.enabled === false) continue;
-    if (Array.isArray(sub.sources)) result.push(...sub.sources);
-  }
-  return [...new Set(result.map((x) => String(x).trim()).filter(Boolean))];
-}
-__name(getAllManagedSources, "getAllManagedSources");
 async function handleAdmin(request, env, runtime) {
   if (!env.KV) {
     return new Response(
@@ -1190,12 +1447,88 @@ async function handleAdmin(request, env, runtime) {
           }
           normalizedEntries.push([key, text]);
         }
+        const importKeys = new Set(normalizedEntries.map(([key]) => key));
+        const importedSections = new Map();
+        const importedProviderConfigs = new Map();
+        for (const [key, value] of normalizedEntries) {
+          if (key === SUBAPIS_KEY || key === SUBCONFIGS_KEY) {
+            const type = key === SUBAPIS_KEY ? "subapi" : "subconfig";
+            importedProviderConfigs.set(type, parseProviderConfig(value, type));
+            continue;
+          }
+          if (!key.startsWith(CONFIG_SECTION_PREFIX)) continue;
+          const section = key.slice(CONFIG_SECTION_PREFIX.length).toLowerCase();
+          const fields = CONFIG_SECTIONS[section];
+          if (!fields) return jsonResponse({ ok: false, error: `不支持的配置分组：${key}` }, 400);
+          let sectionData;
+          try {
+            sectionData = JSON.parse(value);
+            if (!sectionData || typeof sectionData !== "object" || Array.isArray(sectionData)) throw new Error("invalid shape");
+          } catch {
+            return jsonResponse({ ok: false, error: `配置分组数据无效：${key}` }, 400);
+          }
+          importedSections.set(section, { fields, data: normalizeConfigData(sectionData) });
+        }
+        const writesConfig = importKeys.has("CONFIG.JSON") || [...importedSections.keys()].some((section) => section === "site" || section === "security");
+        if (writesConfig) {
+          const configEntry = normalizedEntries.find(([key]) => key === "CONFIG.JSON");
+          let importedConfig;
+          if (configEntry) {
+            try {
+              importedConfig = JSON.parse(configEntry[1]);
+              if (!importedConfig || typeof importedConfig !== "object" || Array.isArray(importedConfig)) throw new Error("invalid shape");
+            } catch {
+              return jsonResponse({ ok: false, error: "CONFIG.JSON 格式无效，无法导入" }, 400);
+            }
+            importedConfig = normalizeConfigData(importedConfig);
+            if (Array.isArray(importedConfig.subApis) && !importedProviderConfigs.has("subapi")) {
+              importedProviderConfigs.set("subapi", {
+                subApis: normalizeProviderList(importedConfig.subApis),
+                defaultSubApiId: String(importedConfig.defaultSubApiId || "").toUpperCase()
+              });
+            }
+            if (Array.isArray(importedConfig.subConfigs) && !importedProviderConfigs.has("subconfig")) {
+              importedProviderConfigs.set("subconfig", {
+                subConfigs: normalizeProviderList(importedConfig.subConfigs),
+                defaultSubConfigId: String(importedConfig.defaultSubConfigId || "").toUpperCase()
+              });
+            }
+          } else {
+            importedConfig = await getConfig(env);
+          }
+          for (const { fields, data: sectionData } of importedSections.values()) {
+            if (fields.some((field) => field === "subApis" || field === "subConfigs")) continue;
+            for (const field of fields) {
+              if (Object.prototype.hasOwnProperty.call(sectionData, field)) importedConfig[field] = sectionData[field];
+            }
+          }
+          importedConfig.configVersion = CONFIG_VERSION;
+          const canonicalConfig = JSON.stringify(serializeBaseConfig(importedConfig));
+          if (configEntry) normalizedEntries.splice(normalizedEntries.indexOf(configEntry), 1, ["CONFIG.JSON", canonicalConfig]);
+          else normalizedEntries.push(["CONFIG.JSON", canonicalConfig]);
+        }
+        for (const [section, { data: sectionData }] of importedSections) {
+          const type = section === "subapi" ? "subapi" : section === "subconfig" ? "subconfig" : "";
+          const key = type === "subapi" ? SUBAPIS_KEY : SUBCONFIGS_KEY;
+          if (type && !importKeys.has(key)) importedProviderConfigs.set(type, parseProviderConfig(JSON.stringify(sectionData), type));
+        }
+        for (const [type, providerConfig] of importedProviderConfigs) {
+          const key = type === "subapi" ? SUBAPIS_KEY : SUBCONFIGS_KEY;
+          const entryIndex = normalizedEntries.findIndex(([entryKey]) => entryKey === key);
+          const value = serializeProviderConfig(providerConfig, type);
+          if (entryIndex >= 0) normalizedEntries[entryIndex] = [key, value];
+          else normalizedEntries.push([key, value]);
+        }
+        for (let index = normalizedEntries.length - 1; index >= 0; index--) {
+          if (normalizedEntries[index][0].startsWith(CONFIG_SECTION_PREFIX)) normalizedEntries.splice(index, 1);
+        }
         let imported = 0;
         try {
           for (const [key, value] of normalizedEntries) {
             await env.KV.put(key, value);
             imported++;
           }
+          await Promise.all(Object.keys(CONFIG_SECTIONS).map((section) => env.KV.delete(`${CONFIG_SECTION_PREFIX}${section.toUpperCase()}`)));
         } catch (error) {
           console.error("KV backup import failed after partial restore:", error);
           return jsonResponse({ ok: false, error: `\u5BFC\u5165\u5931\u8D25\uFF0C\u5DF2\u5BFC\u5165 ${imported} \u9879\uFF1A${error?.message || String(error)}` }, 500);
@@ -1204,7 +1537,7 @@ async function handleAdmin(request, env, runtime) {
       }
       if (data.type === "json_list") {
         const query = String(data.query || "").trim().slice(0, 500);
-        const items = await listJsonManagerItems(env, query);
+        const items = await listJsonManagerItems(env, query, runtime.url?.origin || "");
         return jsonResponse({ ok: true, count: items.length, items });
       }
       if (data.type === "url_bulk_delete") {
@@ -1234,7 +1567,7 @@ async function handleAdmin(request, env, runtime) {
         if (!value || value.length > 2e3) return jsonResponse({ ok: false, error: "请输入有效的字段值进行搜索" }, 400);
         const matches = await findGeneratedLinksByProvider(env, field, value);
         for (const match of matches) await env.KV.delete(match.key);
-        return jsonResponse({ ok: true, deleted: matches.length });
+        return jsonResponse({ ok: true, deleted: matches.length, tokens: matches.map((match) => match.key.slice(URL_PREFIX.length)) });
       }
       if (data.type === "url_bulk_update") {
         const field = String(data.field || "").trim().toUpperCase();
@@ -1418,18 +1751,20 @@ async function handleAdmin(request, env, runtime) {
       if (data.type === "security") {
         const old = await getConfig(env), user = String(data.user || "").trim();
         if (!user) return jsonResponse({ ok: false, error: "\u7BA1\u7406\u5458\u8D26\u53F7\u4E0D\u80FD\u4E3A\u7A7A" }, 400);
-        await putConfig(env, { ...old, user, pass: data.pass ? String(data.pass) : String(old.pass || "") });
+        await putBaseConfig(env, { ...old, user, pass: data.pass ? String(data.pass) : String(old.pass || "") });
         return jsonResponse({ ok: true });
       }
       if (data.type === "admin_path") {
-        const old = await getConfig(env), adminPath = normalizeAdminPath(data.adminPath);
+        const old = await getConfig(env);
+        const adminPath = normalizeAdminPath(data.adminPath);
         if (!adminPath) return jsonResponse({ ok: false, error: "\u7BA1\u7406\u5458\u8DEF\u5F84\u65E0\u6548" }, 400);
-        await putConfig(env, { ...old, adminPath });
+        await putBaseConfig(env, { ...old, adminPath });
         return jsonResponse({ ok: true, adminPath });
       }
       if (data.type === "site_name") {
-        const old = await getConfig(env), subName = normalizeName(data.subName) || "SUB";
-        await putConfig(env, { ...old, subName });
+        const old = await getConfig(env);
+        const subName = normalizeName(data.subName) || "SUB";
+        await putBaseConfig(env, { ...old, subName });
         return jsonResponse({ ok: true, subName });
       }
       if (data.type === "site_settings") {
@@ -1438,8 +1773,7 @@ async function handleAdmin(request, env, runtime) {
         const adminPath = normalizeAdminPath(data.adminPath) || DEFAULT_ADMIN_PATH;
         const siteLogo = String(data.siteLogo || "").trim();
         if (siteLogo && !/^https?:\/\//i.test(siteLogo)) return jsonResponse({ ok: false, error: "\u7AD9\u70B9\u6807\u7B7E\u680F Logo \u5FC5\u987B\u662F http:// \u6216 https:// URL" }, 400);
-        const next = { ...old, subName, adminPath, siteLogo };
-        await putConfig(env, next);
+        await putBaseConfig(env, { ...old, subName, adminPath, siteLogo });
         return jsonResponse({ ok: true, subName, adminPath, siteLogo });
       }
       if (["subapi_create", "subapi_update", "subapi_delete", "subapi_default", "subapi_reorder", "subconfig_create", "subconfig_update", "subconfig_delete", "subconfig_default", "subconfig_reorder"].includes(data.type)) {
@@ -1457,13 +1791,13 @@ async function handleAdmin(request, env, runtime) {
           }
           const map = new Map(list.map((item) => [item.id, item]));
           cfg[key] = order.map((x) => map.get(x));
-          await putConfig(env, cfg);
+          await putProviderConfig(env, isApi ? "subapi" : "subconfig", cfg);
           return jsonResponse({ ok: true, items: normalizeProviderList(cfg[key]), defaultId: String(cfg[defaultKey] || "") });
         }
         if (action === "default") {
           if (!list.some((x) => x.id === id)) return jsonResponse({ ok: false, error: "\u9879\u76EE\u4E0D\u5B58\u5728" }, 404);
           cfg[defaultKey] = id;
-          await putConfig(env, cfg);
+          await putProviderConfig(env, isApi ? "subapi" : "subconfig", cfg);
           return jsonResponse({ ok: true, items: normalizeProviderList(cfg[key]), defaultId: String(cfg[defaultKey] || "") });
         }
         if (action === "delete") {
@@ -1486,7 +1820,7 @@ async function handleAdmin(request, env, runtime) {
           if (!String(cfg[defaultKey] || "") && list.length) cfg[defaultKey] = list[0].id;
           cfg[key] = list;
         }
-        await putConfig(env, cfg);
+        await putProviderConfig(env, isApi ? "subapi" : "subconfig", cfg);
         return jsonResponse({ ok: true, items: normalizeProviderList(cfg[key]), defaultId: String(cfg[defaultKey] || "") });
       }
       return new Response("\u4E0D\u652F\u6301\u7684\u6570\u636E\u7C7B\u578B", { status: 400 });
@@ -1529,17 +1863,68 @@ async function getConfig(env) {
   let raw;
   try {
     raw = await env.KV.get("CONFIG.JSON");
-  } catch (e) {
-    return defaults;
+  } catch (error) {
+    throw new ConfigStorageError("无法读取 CONFIG.JSON", { cause: error });
   }
-  if (!raw) return defaults;
-  let stored;
-  try {
-    stored = JSON.parse(raw);
-  } catch {
-    return defaults;
+  let stored = {};
+  if (raw) {
+    try {
+      stored = JSON.parse(raw);
+      if (!stored || typeof stored !== "object" || Array.isArray(stored)) throw new Error("invalid shape");
+    } catch (error) {
+      throw new ConfigStorageError("CONFIG.JSON 格式无效", { cause: error });
+    }
   }
   const parsed = { ...defaults, ...normalizeConfigData(stored) };
+  const migrationNeeded = Number(stored.CONFIGVERSION || 0) < CONFIG_VERSION;
+  const legacySections = new Map();
+  if (migrationNeeded) {
+    const sectionValues = await Promise.all(Object.entries(CONFIG_SECTIONS).map(async ([section, fields]) => {
+      const key = `${CONFIG_SECTION_PREFIX}${section.toUpperCase()}`;
+      let sectionRaw;
+      try {
+        sectionRaw = await env.KV.get(key);
+      } catch (error) {
+        throw new ConfigStorageError(`无法读取配置分组：${section}`, { cause: error });
+      }
+      if (!sectionRaw) return null;
+      let sectionData;
+      try {
+        const sectionValue = JSON.parse(sectionRaw);
+        if (!sectionValue || typeof sectionValue !== "object" || Array.isArray(sectionValue)) throw new Error("invalid shape");
+        sectionData = normalizeConfigData(sectionValue);
+      } catch (error) {
+        throw new ConfigStorageError(`配置分组数据无效：${section}`, { cause: error });
+      }
+      return { key, section, fields, sectionData };
+    }));
+    for (const value of sectionValues) {
+      if (!value) continue;
+      legacySections.set(value.section, value.key);
+      if (value.section !== "subapi" && value.section !== "subconfig") {
+        for (const field of value.fields) {
+          if (Object.prototype.hasOwnProperty.call(value.sectionData, field)) parsed[field] = value.sectionData[field];
+        }
+      }
+    }
+  }
+  let apiRaw;
+  let configRaw;
+  try {
+    [apiRaw, configRaw] = await Promise.all([env.KV.get(SUBAPIS_KEY), env.KV.get(SUBCONFIGS_KEY)]);
+  } catch (error) {
+    throw new ConfigStorageError("无法读取 SUBAPIS / SUBCONFIGS", { cause: error });
+  }
+  let apiConfig = apiRaw ? parseProviderConfig(apiRaw, "subapi") : null;
+  let subConfig = configRaw ? parseProviderConfig(configRaw, "subconfig") : null;
+  const legacyApi = legacySections.has("subapi") ? await readLegacyProviderConfig(env, "subapi") : null;
+  const legacySubConfig = legacySections.has("subconfig") ? await readLegacyProviderConfig(env, "subconfig") : null;
+  if (!apiConfig) apiConfig = legacyApi || { subApis: normalizeProviderList(parsed.subApis), defaultSubApiId: String(parsed.defaultSubApiId || "").toUpperCase() };
+  if (!subConfig) subConfig = legacySubConfig || { subConfigs: normalizeProviderList(parsed.subConfigs), defaultSubConfigId: String(parsed.defaultSubConfigId || "").toUpperCase() };
+  parsed.subApis = apiConfig.subApis;
+  parsed.defaultSubApiId = apiConfig.defaultSubApiId;
+  parsed.subConfigs = subConfig.subConfigs;
+  parsed.defaultSubConfigId = subConfig.defaultSubConfigId;
   if (parsed.subName === "SUB-UI") parsed.subName = "SUB";
   const subApis = normalizeProviderList(parsed.subApis);
   const subConfigs = normalizeProviderList(parsed.subConfigs);
@@ -1547,41 +1932,104 @@ async function getConfig(env) {
   const defaultSubConfigId = String(parsed.defaultSubConfigId || "").toUpperCase();
   const normalizedStored = upperCaseObject(stored);
   for (const key of ["FAKEMODE", "FAKEURL", "FAKEURL302", "FAKECODE", "NOADS", "SUBAPI", "SUBCONFIG"]) delete normalizedStored[key];
-  const uppercaseProviderIds = (original, normalized) => {
-    if (!Array.isArray(normalizedStored[original])) return;
-    let index = 0;
-    return (normalizedStored[original] || []).map((item) => {
-      const url = String(item?.URL || "").trim();
-      if (!item || typeof item !== "object" || !url) return item;
-      const id = normalized[index++].id;
-      return item.ID === id ? item : { ...item, ID: id };
-    });
-  };
-  if (Array.isArray(normalizedStored.SUBAPIS)) normalizedStored.SUBAPIS = uppercaseProviderIds("SUBAPIS", subApis).map((item) => {
-    if (!item || typeof item !== "object") return item;
-    const { ENABLED, ...provider } = item;
-    return provider;
-  });
-  if (Array.isArray(normalizedStored.SUBCONFIGS)) normalizedStored.SUBCONFIGS = uppercaseProviderIds("SUBCONFIGS", subConfigs).map((item) => {
-    if (!item || typeof item !== "object") return item;
-    const { ENABLED, ...provider } = item;
-    return provider;
-  });
-  if (Object.prototype.hasOwnProperty.call(normalizedStored, "DEFAULTSUBAPIID")) normalizedStored.DEFAULTSUBAPIID = defaultSubApiId;
-  if (Object.prototype.hasOwnProperty.call(normalizedStored, "DEFAULTSUBCONFIGID")) normalizedStored.DEFAULTSUBCONFIGID = defaultSubConfigId;
-  const idsChanged = JSON.stringify(JSON.parse(raw)) !== JSON.stringify(normalizedStored);
   parsed.subApis = subApis;
   parsed.subConfigs = subConfigs;
   parsed.defaultSubApiId = defaultSubApiId;
   parsed.defaultSubConfigId = defaultSubConfigId;
-  if (idsChanged) await env.KV.put("CONFIG.JSON", JSON.stringify(normalizedStored));
+  const configExists = Boolean(raw) || legacySections.size > 0 || Boolean(apiRaw) || Boolean(configRaw);
+  const canonicalBase = serializeBaseConfig(parsed, normalizedStored);
+  const canonicalStored = configExists ? { ...canonicalBase, CONFIGVERSION: CONFIG_VERSION } : canonicalBase;
+  const changed = configExists && JSON.stringify(JSON.parse(raw || "{}")) !== JSON.stringify(canonicalStored);
+  const serializedApis = serializeProviderConfig({ subApis, defaultSubApiId }, "subapi");
+  const serializedConfigs = serializeProviderConfig({ subConfigs, defaultSubConfigId }, "subconfig");
+  const migrateApi = apiRaw ? apiRaw !== serializedApis : Boolean(stored.SUBAPIS) || legacySections.has("subapi");
+  const migrateConfig = configRaw ? configRaw !== serializedConfigs : Boolean(stored.SUBCONFIGS) || legacySections.has("subconfig");
+  if (changed || migrateApi || migrateConfig) {
+    try {
+      if (migrateApi) await env.KV.put(SUBAPIS_KEY, serializedApis);
+      if (migrateConfig) await env.KV.put(SUBCONFIGS_KEY, serializedConfigs);
+      if (changed) await env.KV.put("CONFIG.JSON", JSON.stringify(canonicalStored));
+      for (const key of legacySections.values()) await env.KV.delete(key);
+    } catch (error) {
+      throw new ConfigStorageError("无法迁移旧版配置存储", { cause: error });
+    }
+  }
   return parsed;
 }
 __name(getConfig, "getConfig");
 async function putConfig(env, value) {
-  await env.KV.put("CONFIG.JSON", JSON.stringify(upperCaseObject(value)));
+  await putBaseConfig(env, value);
+  await putProviderConfig(env, "subapi", value);
+  await putProviderConfig(env, "subconfig", value);
 }
 __name(putConfig, "putConfig");
+async function putBaseConfig(env, value) {
+  await env.KV.put("CONFIG.JSON", JSON.stringify(serializeBaseConfig(value)));
+}
+__name(putBaseConfig, "putBaseConfig");
+async function putProviderConfig(env, type, value) {
+  if (type === "subapi") {
+    await env.KV.put(SUBAPIS_KEY, serializeProviderConfig({ subApis: value.subApis, defaultSubApiId: value.defaultSubApiId }, type));
+    return;
+  }
+  if (type === "subconfig") {
+    await env.KV.put(SUBCONFIGS_KEY, serializeProviderConfig({ subConfigs: value.subConfigs, defaultSubConfigId: value.defaultSubConfigId }, type));
+    return;
+  }
+  throw new Error(`未知配置类型：${type}`);
+}
+__name(putProviderConfig, "putProviderConfig");
+function serializeBaseConfig(value, original = {}) {
+  const normalized = { ...original, ...normalizeConfigData(value) };
+  for (const key of ["SUBAPIS", "SUBCONFIGS", "DEFAULTSUBAPIID", "DEFAULTSUBCONFIGID", "CONFIGVERSION"]) delete normalized[key];
+  delete normalized.subApis;
+  delete normalized.subConfigs;
+  delete normalized.defaultSubApiId;
+  delete normalized.defaultSubConfigId;
+  return { ...upperCaseObject(normalized), CONFIGVERSION: CONFIG_VERSION };
+}
+__name(serializeBaseConfig, "serializeBaseConfig");
+function parseProviderConfig(raw, type) {
+  let value;
+  try {
+    value = typeof raw === "string" ? JSON.parse(raw) : raw;
+    if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("invalid shape");
+    value = normalizeConfigData(value);
+    const isApi = type === "subapi";
+    const items = value[isApi ? "subApis" : "subConfigs"];
+    if (!Array.isArray(items)) throw new Error("provider list missing");
+    return {
+      [isApi ? "subApis" : "subConfigs"]: normalizeProviderList(items),
+      [isApi ? "defaultSubApiId" : "defaultSubConfigId"]: String(value[isApi ? "defaultSubApiId" : "defaultSubConfigId"] || "").toUpperCase()
+    };
+  } catch (error) {
+    throw new ConfigStorageError(`${type === "subapi" ? "SUBAPIS" : "SUBCONFIGS"} KV 数据无效`, { cause: error });
+  }
+}
+__name(parseProviderConfig, "parseProviderConfig");
+async function readLegacyProviderConfig(env, type) {
+  const key = `${CONFIG_SECTION_PREFIX}${type.toUpperCase()}`;
+  let raw;
+  try {
+    raw = await env.KV.get(key);
+  } catch (error) {
+    throw new ConfigStorageError(`无法读取旧配置分组：${type}`, { cause: error });
+  }
+  return raw ? parseProviderConfig(raw, type) : null;
+}
+__name(readLegacyProviderConfig, "readLegacyProviderConfig");
+function serializeProviderConfig(value, type) {
+  const isApi = type === "subapi";
+  const serialized = upperCaseObject({
+    [isApi ? "subApis" : "subConfigs"]: normalizeProviderList(value[isApi ? "subApis" : "subConfigs"]),
+    [isApi ? "defaultSubApiId" : "defaultSubConfigId"]: String(value[isApi ? "defaultSubApiId" : "defaultSubConfigId"] || "").toUpperCase()
+  });
+  const defaultKey = isApi ? "DEFAULTSUBAPIID" : "DEFAULTSUBCONFIGID";
+  serialized[isApi ? "DEFAULT_SUBAPI_ID" : "DEFAULT_SUBCONFIG_ID"] = serialized[defaultKey];
+  delete serialized[defaultKey];
+  return JSON.stringify(serialized);
+}
+__name(serializeProviderConfig, "serializeProviderConfig");
 function normalizeProviderList(input) {
   if (!Array.isArray(input)) return [];
   return input.map((x) => ({
@@ -1598,114 +2046,6 @@ function buildPublicPreferencesCookie(value) {
   return `CF_SUB_PREFS=${encoded}; Max-Age=2592000; Path=/; SameSite=Lax; Secure`;
 }
 __name(buildPublicPreferencesCookie, "buildPublicPreferencesCookie");
-async function getSelectedBackends(env, tokenData, runtime) {
-  const apiReference = tokenData?.subApi;
-  const configReference = tokenData?.subConfig;
-  const apiReferenceString = typeof apiReference === "string" ? apiReference.trim() : "";
-  const configReferenceString = typeof configReference === "string" ? configReference.trim() : "";
-  const hasCompactBackendReferences = Boolean(
-    tokenData?.subApiId || tokenData?.subConfigId ||
-    tokenData?.subApiIds?.length || tokenData?.subConfigIds?.length ||
-    tokenData?.customSubApi || tokenData?.customSubConfig ||
-    tokenData?.backend?.api || tokenData?.backends?.length ||
-    Array.isArray(apiReference) || Array.isArray(configReference) ||
-    (apiReferenceString && configReferenceString)
-  );
-  if (hasCompactBackendReferences) {
-    const cfg = await getConfig(env);
-    const apis = normalizeProviderList(cfg.subApis);
-    const configs = normalizeProviderList(cfg.subConfigs);
-    const referencedIds = (value) => Array.isArray(value)
-      ? value.map((item) => String(item?.ID || item?.id || "").toUpperCase()).filter(Boolean)
-      : [];
-    const referencedUrls = (value) => Array.isArray(value)
-      ? value.map((item) => String(item?.URL || item?.url || "").trim()).filter(Boolean)
-      : [];
-    const apiIds = [
-      ...referencedIds(apiReference),
-      ...(tokenData.subApiIds || []).map((id) => String(id).toUpperCase()),
-      tokenData.subApiId,
-      apiReferenceString && !/^https?:\/\//i.test(apiReferenceString) ? apiReferenceString : ""
-    ].filter(Boolean);
-    const configIds = [
-      ...referencedIds(configReference),
-      ...(tokenData.subConfigIds || []).map((id) => String(id).toUpperCase()),
-      tokenData.subConfigId,
-      configReferenceString && !/^https?:\/\//i.test(configReferenceString) ? configReferenceString : ""
-    ].filter(Boolean);
-    const legacyApiUrl = /^https?:\/\//i.test(apiReferenceString) ? apiReferenceString : "";
-    const legacyConfigUrl = /^https?:\/\//i.test(configReferenceString) ? configReferenceString : "";
-    const referencedApiUrls = referencedUrls(apiReference);
-    const referencedConfigUrls = referencedUrls(configReference);
-    const selectedApis = tokenData.customSubApi || legacyApiUrl || referencedApiUrls.length
-      ? [{ url: tokenData.customSubApi || legacyApiUrl || referencedApiUrls[0] }]
-      : [...new Map(apiIds.map((id) => {
-        const provider = apis.find((item) => item.id === String(id).toUpperCase());
-        return provider ? [provider.id, provider] : null;
-      }).filter(Boolean)).values()];
-    const selectedConfigs = tokenData.customSubConfig || legacyConfigUrl || referencedConfigUrls.length
-      ? [{ url: tokenData.customSubConfig || legacyConfigUrl || referencedConfigUrls[0] }]
-      : [...new Map(configIds.map((id) => {
-        const provider = configs.find((item) => item.id === String(id).toUpperCase());
-        return provider ? [provider.id, provider] : null;
-      }).filter(Boolean)).values()];
-    if (selectedApis.length && selectedConfigs.length) {
-      const pairs = [];
-      for (const selectedApi of selectedApis) {
-        const rawApi = String(selectedApi.url || "").trim();
-        for (const selectedConfig of selectedConfigs) {
-          pairs.push({
-            api: rawApi.replace(/^https?:\/\//i, "").replace(/\/+$/, ""),
-            config: String(selectedConfig.url || "").trim(),
-            protocol: /^http:\/\//i.test(rawApi) ? "http" : "https"
-          });
-        }
-      }
-      return pairs.filter((x) => x.api && x.config);
-    }
-  }
-  if (tokenData?.type === "sub-ui" || hasCompactBackendReferences) {
-    if (Array.isArray(tokenData.backends) && tokenData.backends.length) {
-      return tokenData.backends.map((x) => ({
-        api: String(x.api || "").replace(/^https?:\/\//i, "").replace(/\/+$/, ""),
-        config: String(x.config || "").trim(),
-        protocol: x.protocol === "http" ? "http" : "https"
-      })).filter((x) => x.api && x.config);
-    }
-    if (tokenData.backend?.api && tokenData.backend?.config) {
-      const x = tokenData.backend;
-      return [{
-        api: String(x.api).replace(/^https?:\/\//i, "").replace(/\/+$/, ""),
-        config: String(x.config).trim(),
-        protocol: x.protocol === "http" ? "http" : "https"
-      }];
-    }
-    if (tokenData.subApi && tokenData.subConfig) {
-      const raw = String(tokenData.subApi).trim();
-      return [{
-        api: raw.replace(/^https?:\/\//i, "").replace(/\/+$/, ""),
-        config: String(tokenData.subConfig).trim(),
-        protocol: /^http:\/\//i.test(raw) ? "http" : "https"
-      }];
-    }
-    return [];
-  }
-  const cfg = await getConfig(env);
-  const apis = normalizeProviderList(cfg.subApis);
-  const configs = normalizeProviderList(cfg.subConfigs);
-  const selectedApis = (tokenData?.subApiIds || []).map((id) => apis.find((x) => x.id === id)).filter(Boolean);
-  const selectedConfigs = (tokenData?.subConfigIds || []).map((id) => configs.find((x) => x.id === id)).filter(Boolean);
-  if (!selectedApis.length || !selectedConfigs.length) return [];
-  const pairs = [];
-  for (const api of selectedApis) {
-    const raw = String(api.url || "").trim();
-    const protocol = /^http:\/\//i.test(raw) ? "http" : "https";
-    const host = raw.replace(/^https?:\/\//i, "").replace(/\/+$/, "");
-    for (const config of selectedConfigs) pairs.push({ api: host, config: config.url, protocol });
-  }
-  return pairs;
-}
-__name(getSelectedBackends, "getSelectedBackends");
 async function handlePublicGenerate(request, env, requestUrl) {
   if (!env.KV) return jsonResponse({ ok: false, error: "\u672A\u7ED1\u5B9A KV" }, 500);
   try {
@@ -1757,8 +2097,6 @@ async function handlePublicGenerate(request, env, requestUrl) {
     const destroyKeyHash = destroyKey ? await sha256Hex(`${token}:${destroyKey}`) : "";
     const item = {
       url: token,
-      path: `/${token}`,
-      subscriptionUrl: `${requestUrl.origin}/${encodeURIComponent(token)}`,
       sources,
       ...apiCustom ? { subApi: [{ url: apiUrl }] } : selectedApis[0] ? { subApi: [{ id: selectedApis[0].id }] } : {},
       ...configCustom ? { subConfig: [{ url: configUrl }] } : selectedConfigs[0] ? { subConfig: [{ id: selectedConfigs[0].id }] } : {},
@@ -1947,194 +2285,6 @@ async function handlePublicUpdate(request, env) {
   }
 }
 __name(handlePublicUpdate, "handlePublicUpdate");
-function encodeBase64(value) {
-  const bytes = new TextEncoder().encode(String(value || ''));
-  let binary = '';
-  for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-  return btoa(binary);
-}
-
-async function generateSubscription(request, env, sourceList, runtime, token) {
-  let allSources = [...new Set((sourceList || []).map((x) => String(x).trim()).filter(Boolean))];
-  let \u81EA\u5EFA\u8282\u70B9 = "";
-  let \u8BA2\u9605\u94FE\u63A5 = "";
-  for (const x of allSources) {
-    if (x.toLowerCase().startsWith("http")) {
-      \u8BA2\u9605\u94FE\u63A5 += x + "\n";
-    } else {
-      \u81EA\u5EFA\u8282\u70B9 += x + "\n";
-    }
-  }
-  let nodeUrls = await ADD(\u8BA2\u9605\u94FE\u63A5);
-  let req_data = \u81EA\u5EFA\u8282\u70B9;
-  const isSubConverterRequest = request.headers.get("subconverter-request") || request.headers.get("subconverter-version") || runtime.userAgent.includes("subconverter");
-  let \u8BA2\u9605\u683C\u5F0F = "base64";
-  if (!(runtime.userAgent.includes("null") || isSubConverterRequest || runtime.userAgent.includes("nekobox") || runtime.userAgent.includes("cf-sub"))) {
-    if (runtime.userAgent.includes("sing-box") || runtime.userAgent.includes("singbox") || new URL(request.url).searchParams.has("sb") || new URL(request.url).searchParams.has("singbox")) {
-      \u8BA2\u9605\u683C\u5F0F = "singbox";
-    } else if (runtime.userAgent.includes("surge") || new URL(request.url).searchParams.has("surge")) {
-      \u8BA2\u9605\u683C\u5F0F = "surge";
-    } else if (runtime.userAgent.includes("quantumult") || new URL(request.url).searchParams.has("quanx")) {
-      \u8BA2\u9605\u683C\u5F0F = "quanx";
-    } else if (runtime.userAgent.includes("loon") || new URL(request.url).searchParams.has("loon")) {
-      \u8BA2\u9605\u683C\u5F0F = "loon";
-    } else if (runtime.userAgent.includes("clash") || runtime.userAgent.includes("meta") || runtime.userAgent.includes("mihomo") || new URL(request.url).searchParams.has("clash")) {
-      \u8BA2\u9605\u683C\u5F0F = "clash";
-    }
-  }
-  if (runtime.tokenData?.target && runtime.tokenData.target !== "auto") {
-    \u8BA2\u9605\u683C\u5F0F = runtime.tokenData.target;
-  }
-  const sourceToken = new URL(request.url).searchParams.get("sourceToken") || token || "";
-  const conversionSeed = `${new URL(request.url).origin}/${await MD5MD5(runtime.fakeToken)}?token=${encodeURIComponent(runtime.fakeToken)}${sourceToken ? `&sourceToken=${encodeURIComponent(sourceToken)}` : ""}`;
-  let \u8BA2\u9605\u8F6C\u6362URL = conversionSeed;
-  let \u8FFD\u52A0UA = "v2rayn";
-  const requestUrl = new URL(request.url);
-  if (requestUrl.searchParams.has("b64") || requestUrl.searchParams.has("base64")) {
-    \u8BA2\u9605\u683C\u5F0F = "base64";
-  } else if (requestUrl.searchParams.has("clash")) {
-    \u8FFD\u52A0UA = "clash";
-  } else if (requestUrl.searchParams.has("singbox")) {
-    \u8FFD\u52A0UA = "singbox";
-  } else if (requestUrl.searchParams.has("surge")) {
-    \u8FFD\u52A0UA = "surge";
-  } else if (requestUrl.searchParams.has("quanx")) {
-    \u8FFD\u52A0UA = "Quantumult%20X";
-  } else if (requestUrl.searchParams.has("loon")) {
-    \u8FFD\u52A0UA = "Loon";
-  }
-  nodeUrls = [...new Set(nodeUrls)].filter((item) => item && item.trim());
-  if (nodeUrls.length > 0) {
-    const \u8BF7\u6C42\u8BA2\u9605\u54CD\u5E94\u5185\u5BB9 = await getSUB(
-      nodeUrls,
-      request,
-      \u8FFD\u52A0UA,
-      runtime.userAgentHeader
-    );
-    req_data += \u8BF7\u6C42\u8BA2\u9605\u54CD\u5E94\u5185\u5BB9[0].join("\n");
-    \u8BA2\u9605\u8F6C\u6362URL += "|" + \u8BF7\u6C42\u8BA2\u9605\u54CD\u5E94\u5185\u5BB9[1];
-    if (\u8BA2\u9605\u683C\u5F0F === "base64" && !isSubConverterRequest && \u8BF7\u6C42\u8BA2\u9605\u54CD\u5E94\u5185\u5BB9[1].includes("://")) {
-      try {
-        const backendPairs = await getSelectedBackends(env, runtime.tokenData, runtime);
-        const backend = backendPairs[0];
-        if (backend?.api && backend?.config) {
-          const u = buildSubUrl(backend.api, backend.config, "mixed", \u8BF7\u6C42\u8BA2\u9605\u54CD\u5E94\u5185\u5BB9[1], backend.protocol);
-          const res = await fetch(u, { headers: { "User-Agent": "v2rayn/CF-SUB" } });
-          if (res.ok) req_data += "\n" + atob(await res.text());
-        }
-      } catch (error) {
-      }
-    }
-  }
-  const text = new TextDecoder().decode(
-    new TextEncoder().encode(req_data)
-  );
-  let filteredLines = text.split("\n");
-  if (runtime.config_noAds) {
-    const adKeywords = runtime.config_noAds.split(/[, \r\n]+/).map((k) => k.trim().toLowerCase()).filter((k) => k.length > 0);
-    if (adKeywords.length > 0) {
-      filteredLines = filteredLines.filter((line) => {
-        const lowerLine = line.toLowerCase();
-        return !adKeywords.some((keyword) => lowerLine.includes(keyword));
-      });
-    }
-  }
-  const uniqueLines = new Set(filteredLines);
-  const result = [...uniqueLines].join("\n");
-  let base64Data;
-  try {
-    base64Data = btoa(result);
-  } catch (e) {
-    base64Data = encodeBase64(result);
-  }
-  const responseHeaders = {
-    "content-type": "text/plain; charset=utf-8",
-    "Profile-web-page-url": request.url.includes("?") ? request.url.split("?")[0] : request.url
-  };
-  if (normalizeUpdateEnabled(runtime.tokenData?.updateEnable)) {
-    const updateMinutes = Number(runtime.tokenData?.update);
-    const minutes = Number.isSafeInteger(updateMinutes) && updateMinutes >= 0 && updateMinutes <= 525600 ? updateMinutes : DEFAULT_UPDATE_MINUTES;
-    responseHeaders["Profile-Update-Interval"] = `${minutes * 60}`;
-  }
-  if (\u8BA2\u9605\u683C\u5F0F === "base64" || token === runtime.fakeToken) {
-    return new Response(base64Data, { headers: responseHeaders });
-  }
-  try {
-    const backendPairs = await getSelectedBackends(env, runtime.tokenData, runtime);
-    let lastError;
-    for (const backend of backendPairs) {
-      try {
-        const finalUrl = buildSubUrl(backend.api, backend.config, \u8BA2\u9605\u683C\u5F0F, \u8BA2\u9605\u8F6C\u6362URL, backend.protocol);
-        const res = await fetch(finalUrl, { headers: { "User-Agent": runtime.userAgentHeader } });
-        if (!res.ok) throw new Error(`SUBAPI ${res.status}`);
-        let content = await res.text();
-        if (\u8BA2\u9605\u683C\u5F0F === "clash") {
-          content = clashFix(content);
-          if (!isValidClashSubscription(content)) throw new Error("SUBAPI 返回的 Clash 配置无效");
-        } else if (\u8BA2\u9605\u683C\u5F0F === "singbox") {
-          if (!isValidSingboxSubscription(content)) throw new Error("SUBAPI 返回的 sing-box 配置无效");
-        }
-        return new Response(content, { headers: responseHeaders });
-      } catch (e) {
-        lastError = e;
-      }
-    }
-
-    // 与稳定版 CF-SUB 一样，使用默认 SUBAPI/SUBCONFIG 再尝试一次。
-    const cfg = await getConfig(env);
-    const apis = normalizeProviderList(cfg.subApis);
-    const configs = normalizeProviderList(cfg.subConfigs);
-    const defaultApi = apis.find((x) => x.id === String(cfg.defaultSubApiId || "").toUpperCase()) || apis[0];
-    const defaultConfig = configs.find((x) => x.id === String(cfg.defaultSubConfigId || "").toUpperCase()) || configs[0];
-    if (defaultApi?.url && defaultConfig?.url) {
-      try {
-        const rawApi = String(defaultApi.url).trim();
-        const protocol = /^http:\/\//i.test(rawApi) ? "http" : "https";
-        const api = rawApi.replace(/^https?:\/\//i, "").replace(/\/+$/, "");
-        const fallbackUrl = buildSubUrl(api, String(defaultConfig.url).trim(), \u8BA2\u9605\u683C\u5F0F, \u8BA2\u9605\u8F6C\u6362URL, protocol);
-        const resFb = await fetch(fallbackUrl, { headers: { "User-Agent": runtime.userAgentHeader } });
-        if (!resFb.ok) throw new Error(`SUBAPI ${resFb.status}`);
-        let contentFb = await resFb.text();
-        if (\u8BA2\u9605\u683C\u5F0F === "clash") {
-          contentFb = clashFix(contentFb);
-          if (!isValidClashSubscription(contentFb)) throw new Error("默认 SUBAPI 返回的 Clash 配置无效");
-        } else if (\u8BA2\u9605\u683C\u5F0F === "singbox") {
-          if (!isValidSingboxSubscription(contentFb)) throw new Error("默认 SUBAPI 返回的 sing-box 配置无效");
-        }
-        return new Response(contentFb, { headers: responseHeaders });
-      } catch (e) {
-        lastError = e;
-      }
-    }
-
-    // 不把 SUBAPI 错误文本返回给客户端；回退到本 Worker 已收集的 Base64 节点。
-    return new Response(base64Data, { headers: responseHeaders });
-  } catch (error) {
-    return new Response(base64Data, { headers: responseHeaders });
-  }
-}
-__name(generateSubscription, "generateSubscription");
-function buildSubUrl(api, config, target, urlToConvert, protocol) {
-  let base = `${protocol}://${api}/sub?target=${target}&url=${encodeURIComponent(urlToConvert)}&insert=false&config=${encodeURIComponent(config)}&emoji=true&list=false&tfo=false&scv=true&fdn=false&sort=false`;
-  if (target === "surge") base += "&ver=4&new_name=true";
-  else if (target === "quanx") base += "&udp=true";
-  else if (target === "clash" || target === "singbox" || target === "mixed") base += "&new_name=true";
-  return base;
-}
-__name(buildSubUrl, "buildSubUrl");
-async function ADD(envadd) {
-  var addtext = envadd.replace(/[ "'|\r\n]+/g, "\n").replace(/\n+/g, "\n");
-  if (addtext.charAt(0) == "\n") addtext = addtext.slice(1);
-  if (addtext.charAt(addtext.length - 1) == "\n") addtext = addtext.slice(0, addtext.length - 1);
-  return addtext.split("\n");
-}
-__name(ADD, "ADD");
-function base64Decode(str) {
-  const bytes = new Uint8Array(atob(str).split("").map((c) => c.charCodeAt(0)));
-  const decoder = new TextDecoder("utf-8");
-  return decoder.decode(bytes);
-}
-__name(base64Decode, "base64Decode");
 async function sha256Hex(input) {
   const bytes = new TextEncoder().encode(String(input));
   const hash = await crypto.subtle.digest("SHA-256", bytes);
@@ -2270,80 +2420,6 @@ async function MD5MD5(text) {
   return md5Hex(firstHex.slice(7, 27));
 }
 __name(MD5MD5, "MD5MD5");
-function clashFix(content) {
-  if (content.includes("wireguard") && !content.includes("remote-dns-resolve")) {
-    let lines = content.includes("\r\n") ? content.split("\r\n") : content.split("\n");
-    let result = "";
-    for (let line of lines) {
-      if (line.includes("type: wireguard")) {
-        result += line.replace(new RegExp(`, mtu: 1280, udp: true`, "g"), `, mtu: 1280, remote-dns-resolve: true, udp: true`) + "\n";
-      } else {
-        result += line + "\n";
-      }
-    }
-    return result;
-  }
-  return content;
-}
-__name(clashFix, "clashFix");
-async function getSUB(api, request, \u8FFD\u52A0UA, userAgentHeader) {
-  if (!api || api.length === 0) return [];
-  else api = [...new Set(api)];
-  let newapi = "";
-  let \u8BA2\u9605\u8F6C\u6362URLs = "";
-  let \u5F02\u5E38\u8BA2\u9605 = "";
-  const controller = new AbortController();
-  const timeout = setTimeout(() => {
-    controller.abort();
-  }, 2e3);
-  try {
-    const responses = await Promise.allSettled(api.map((apiUrl) => getUrl(request, apiUrl, \u8FFD\u52A0UA, userAgentHeader).then((response) => response.ok ? response.text() : Promise.reject(response))));
-    const modifiedResponses = responses.map((response, index) => {
-      if (response.status === "rejected") {
-        return { status: response.reason && response.reason.name === "AbortError" ? "\u8D85\u65F6" : "\u8BF7\u6C42\u5931\u8D25", value: null, apiUrl: api[index] };
-      }
-      return { status: response.status, value: response.value, apiUrl: api[index] };
-    });
-    for (const response of modifiedResponses) {
-      if (response.status === "fulfilled") {
-        const content = await response.value || "null";
-        if (content.includes("proxies:") || content.includes('outbounds"') && content.includes('inbounds"')) {
-          \u8BA2\u9605\u8F6C\u6362URLs += "|" + response.apiUrl;
-        } else if (content.includes("://")) {
-          newapi += content + "\n";
-        } else if (isValidBase64(content)) {
-          newapi += base64Decode(content) + "\n";
-        } else {
-          const \u5F02\u5E38\u8BA2\u9605LINK = `trojan://CMLiussss@127.0.0.1:8888?security=tls&allowInsecure=1&type=tcp&headerType=none#%E5%BC%82%E5%B8%B8%E8%AE%A2%E9%98%85%20${response.apiUrl.split("://")[1].split("/")[0]}`;
-          \u5F02\u5E38\u8BA2\u9605 += `${\u5F02\u5E38\u8BA2\u9605LINK}
-`;
-        }
-      }
-    }
-  } catch (error) {
-  } finally {
-    clearTimeout(timeout);
-  }
-  return [await ADD(newapi + \u5F02\u5E38\u8BA2\u9605), \u8BA2\u9605\u8F6C\u6362URLs];
-}
-__name(getSUB, "getSUB");
-async function getUrl(request, targetUrl, \u8FFD\u52A0UA, userAgentHeader) {
-  const newHeaders = new Headers(request.headers);
-  newHeaders.set("User-Agent", `${atob("djJyYXlOLzYuNDU=")} cmliu/CF-SUB ${\u8FFD\u52A0UA}(${userAgentHeader})`);
-  return fetch(new Request(targetUrl, {
-    method: request.method,
-    headers: newHeaders,
-    body: request.method === "GET" ? null : request.body,
-    redirect: "follow",
-    cf: { insecureSkipVerify: true, allowUntrusted: true, validateCertificate: false }
-  }));
-}
-__name(getUrl, "getUrl");
-function isValidBase64(str) {
-  const v = String(str || "").replace(/\s/g, "");
-  return v.length >= 4 && v.length % 4 === 0 && /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(v);
-}
-__name(isValidBase64, "isValidBase64");
 function getCookie(request, name) {
   const cookie = request.headers.get("Cookie") || "";
   const cookies = cookie.split(";").map((item) => item.trim());
@@ -2459,7 +2535,7 @@ function getToolStyles() {
         textarea { min-height: 200px; line-height: 1.5; resize: vertical; }
         .error { color: #b00020; margin-top: 10px; }
         .muted { color: #666; font-size: 13px; margin-left: 8px; transition: color 0.3s; }
-        .toast { position: fixed; left: 50%; top: auto; bottom: 28px; transform: translateX(-50%); display: none; min-width: 190px; max-width: calc(100vw - 40px); padding: 12px 18px; text-align: center; color: #fff; background: rgba(0, 0, 0, 0.82); border-radius: 12px; z-index: 99999; box-sizing: border-box; }
+
         #current-qrcode { display: none; margin-top: 12px; padding: 12px; border: 1px solid rgba(229, 229, 223, 0.6); border-radius: 12px; background: rgba(255, 255, 255, 0.7); backdrop-filter: blur(10px); width: fit-content; max-width: 100%; }
         .hidden { display: none !important; }
         .modal-overlay { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0, 0, 0, 0.4); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); display: none; justify-content: center; align-items: center; z-index: 1000; overflow-y: auto; }
@@ -2580,16 +2656,16 @@ function getSubscriptionLinks(url, token) {
 __name(getSubscriptionLinks, "getSubscriptionLinks");
 function renderCFSubsGuestPage(url, guest, destroyKeyRequired = false, siteLogo = "") {
   const links = getSubscriptionLinks(url, guest);
-  const title = "\u805A\u5408\u8BA2\u9605\u94FE\u63A5";
+  const title = "\u805A\u5408\u8BA2\u9605";
   return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title>${renderFavicon(title, siteLogo)}
 <style>
 ${getToolStyles()}
 .guest-shell{max-width:1100px;padding-top:0!important}.guest-header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin:0 -28px 18px;padding:28px;border-bottom:1px solid rgba(120,130,140,.18)}.guest-header-main{min-width:0}.guest-header .title{font-size:26px}.guest-header .subtitle{margin-top:8px}.guest-head-destroy{flex:0 0 auto;min-height:36px;padding:7px 12px;background:#d93025;border-color:#d93025;color:#fff}.guest-head-destroy:hover{background:#b91c1c;border-color:#b91c1c;color:#fff}.guest-link-list{display:grid;gap:10px}.guest-link-item{position:relative;padding:12px;border:1px solid rgba(148,163,184,.22);border-radius:14px;background:linear-gradient(135deg,rgba(255,255,255,.9) 0%,rgba(248,251,250,.75) 52%,rgba(232,245,236,.82) 100%);box-shadow:inset 0 1px 0 rgba(255,255,255,.7),0 10px 24px rgba(15,23,42,.05);transition:border-color .25s ease,box-shadow .25s ease,background .25s ease}.guest-link-item:hover{border-color:rgba(59,130,246,.34);box-shadow:inset 0 1px 0 rgba(255,255,255,.8),0 12px 28px rgba(15,23,42,.08)}.guest-link-head{display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:30px;margin-bottom:14px}.guest-link-label{font-weight:700;word-break:break-word;padding-right:90px}.guest-link-url{display:block;width:100%;box-sizing:border-box;padding:10px 12px;margin-top:14px;border:1px solid rgba(148,163,184,.28);border-radius:10px;background:rgba(250,250,250,.72);color:#1f4b99;text-decoration:none;word-break:break-all;overflow-wrap:anywhere;box-shadow:inset 0 1px 0 rgba(255,255,255,.65);transition:all .25s ease}.guest-link-url:hover{background:rgba(31,75,153,.04);border-color:rgba(31,75,153,.35);box-shadow:0 0 0 3px rgba(59,130,246,.08),inset 0 1px 0 rgba(255,255,255,.75)}.guest-actions{position:absolute;top:12px;right:12px;display:flex;gap:8px}.guest-copy-btn,.guest-hide-btn{min-width:56px;width:auto;height:30px;min-height:30px;padding:0 10px}.guest-hide-btn{display:none}.guest-qrcode{display:none;background:#fff;border-radius:12px;padding:12px;margin:14px auto 0;width:max-content;max-width:100%;box-shadow:0 8px 24px rgba(0,0,0,.08)}.guest-destroy-modal{position:fixed;inset:0;z-index:99999;display:none;align-items:center;justify-content:center;padding:20px;background:rgba(0,0,0,.44);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}.guest-destroy-dialog{width:min(440px,100%);padding:22px;border-radius:18px;background:rgba(255,255,255,.97);border:1px solid rgba(229,229,223,.9);box-shadow:0 20px 60px rgba(0,0,0,.24)}.guest-destroy-dialog h2{margin:0;font-size:18px}.guest-destroy-dialog p{margin:8px 0 14px;color:#777;font-size:13px;line-height:1.6}.guest-destroy-input{width:100%;box-sizing:border-box;padding:11px 12px;border:1px solid rgba(120,130,140,.35);border-radius:10px;font:inherit}.guest-destroy-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}.guest-destroy-confirm{background:#d93025;border-color:#d93025;color:#fff}.guest-destroy-confirm:hover{background:#b91c1c;border-color:#b91c1c;color:#fff}
 @media(max-width:640px){.page.app-shell.guest-shell{width:calc(100% - 28px);margin:14px 14px 28px;padding:0 14px 24px;border-radius:22px}.guest-header{margin:0 -14px 16px;padding:22px 14px 20px}.guest-header .title{font-size:22px}.guest-header .subtitle{font-size:12px}.guest-head-destroy{min-height:34px;padding:6px 9px;font-size:12px}.guest-link-item{padding:10px}.guest-link-url{margin-top:10px}.guest-destroy-dialog{padding:18px}}
 @media(prefers-color-scheme:dark){.guest-link-item{background:linear-gradient(135deg,rgba(10,16,19,.9) 0%,rgba(12,20,18,.78) 52%,rgba(8,16,13,.88) 100%);border-color:rgba(255,255,255,.12);box-shadow:inset 0 1px 0 rgba(255,255,255,.04),0 10px 24px rgba(0,0,0,.22)}.guest-link-item:hover{border-color:rgba(96,165,250,.32);box-shadow:inset 0 1px 0 rgba(255,255,255,.05),0 14px 32px rgba(0,0,0,.28)}.guest-link-url{background:rgba(2,6,8,.82);border-color:rgba(255,255,255,.12);color:#64b5f6;box-shadow:inset 0 1px 0 rgba(255,255,255,.04)}.guest-link-url:hover{background:rgba(100,181,246,.08);border-color:#64b5f6;box-shadow:0 0 0 3px rgba(96,165,250,.1),inset 0 1px 0 rgba(255,255,255,.04)}.guest-destroy-dialog{background:rgba(30,30,30,.97);border-color:rgba(255,255,255,.1)}.guest-destroy-dialog p{color:#9aa7b5}.guest-destroy-input{background:rgba(0,0,0,.35);border-color:rgba(255,255,255,.12);color:#f3f6f7}}
-</style><script src="https://cdn.jsdelivr.net/npm/@keeex/qrcodejs-kx@1.0.2/qrcode.min.js"></script></head><body><div id="copyNotice" class="toast"></div><main class="page app-shell guest-shell" data-token="${escapeHTML(String(guest || ""))}" data-key-required="${destroyKeyRequired ? "true" : "false"}"><header class="header guest-header"><div class="guest-header-main"><h1 class="title">聚合订阅链接</h1><div class="subtitle">复制订阅链接可同时生成二维码</div></div><button type="button" class="button guest-head-destroy">\u9500\u6BC1\u672C\u94FE\u63A5</button></header><div class="guest-link-list">${links.map(([label,value])=>`<div class="guest-link-item"><div class="guest-link-head"><div class="guest-link-label">${escapeHTML(label)}</div></div><a class="guest-link-url" href="${escapeHTML(value)}" target="_blank" rel="noopener">${escapeHTML(value)}</a><div class="guest-actions"><button type="button" class="button guest-copy-btn" data-url="${escapeHTML(value)}">复制</button><button type="button" class="button secondary guest-hide-btn">隐藏</button></div><div class="guest-qrcode"></div></div>`).join('')}</div></main><div class="guest-destroy-modal" id="guestDestroyModal"><div class="guest-destroy-dialog"><h2>\u9500\u6BC1\u672C\u94FE\u63A5</h2><p>\u9500\u6BC1\u540E\u6B64\u805A\u5408\u8BA2\u9605\u94FE\u63A5\u5C06\u7ACB\u5373\u5931\u6548\u4E14\u65E0\u6CD5\u6062\u590D\u3002\u8BF7\u8F93\u5165\u672C\u94FE\u63A5\u7684\u9500\u6BC1\u5BC6\u94A5\u3002</p><input id="guestDestroyKey" class="guest-destroy-input" type="password" autocomplete="current-password" placeholder="\u8BF7\u8F93\u5165\u9500\u6BC1\u5BC6\u94A5"><div class="guest-destroy-actions"><button type="button" class="button secondary" id="guestDestroyCancel">\u53D6\u6D88</button><button type="button" class="button guest-destroy-confirm" id="guestDestroyConfirm">\u786E\u8BA4\u9500\u6BC1</button></div></div></div><script src="/__cfsubs.js" defer><\/script><script>
-let guestToastTimer;function guestToast(message){const e=document.getElementById('copyNotice');e.textContent=message;e.style.display='block';clearTimeout(guestToastTimer);guestToastTimer=setTimeout(()=>e.style.display='none',1500)}function showGuestQr(b){const i=b.closest('.guest-link-item'),q=i.querySelector('.guest-qrcode'),c=i.querySelector('.guest-copy-btn'),h=i.querySelector('.guest-hide-btn');document.querySelectorAll('.guest-qrcode').forEach(x=>{x.style.display='none';x.innerHTML=''});document.querySelectorAll('.guest-copy-btn').forEach(x=>x.style.display='inline-flex');document.querySelectorAll('.guest-hide-btn').forEach(x=>x.style.display='none');q.innerHTML='';q.style.display='block';c.style.display='none';h.style.display='inline-flex';if(window.QRCode)new QRCode(q,{text:b.dataset.url,width:220,height:220,colorDark:'#000',colorLight:'#fff',correctLevel:QRCode.CorrectLevel.Q})}function hideGuestQr(b){const i=b.closest('.guest-link-item');i.querySelector('.guest-qrcode').style.display='none';i.querySelector('.guest-qrcode').innerHTML='';i.querySelector('.guest-copy-btn').style.display='inline-flex';b.style.display='none'}document.querySelectorAll('.guest-copy-btn').forEach(b=>b.addEventListener('click',()=>{const v=b.dataset.url||'';const done=()=>{guestToast('已复制到剪贴板');showGuestQr(b)};if(navigator.clipboard)navigator.clipboard.writeText(v).then(done).catch(()=>guestToast('复制失败，请手动复制'));else{const t=document.createElement('textarea');t.value=v;document.body.appendChild(t);t.select();document.execCommand('copy');t.remove();done()}}));document.querySelectorAll('.guest-hide-btn').forEach(b=>b.addEventListener('click',()=>hideGuestQr(b)));
-const destroyButton=document.querySelector('.guest-head-destroy'),destroyModal=document.getElementById('guestDestroyModal'),destroyKeyInput=document.getElementById('guestDestroyKey'),destroyToken=document.querySelector('.guest-shell').dataset.token;function closeDestroyModal(){window.CFSubsModal.close(destroyModal);destroyKeyInput.value=''}async function destroyCurrentLink(key){window.CFSubsUI.setButtonBusy(destroyButton,true,'销毁中…');try{const response=await fetch('/api/destroy',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},cache:'no-store',body:JSON.stringify({token:destroyToken,key:key})});const result=await response.json();if(!response.ok||!result.ok)throw new Error(result.error||'销毁失败');closeDestroyModal();guestToast('链接已销毁，该链接已失效');setTimeout(()=>{location.href='/'},900)}catch(error){window.CFSubsUI.setButtonBusy(destroyButton,false);guestToast(error.message||'销毁失败')}}destroyButton.addEventListener('click',()=>{if(document.querySelector('.guest-shell').dataset.keyRequired==='true'){window.CFSubsModal.open(destroyModal);destroyKeyInput.focus();return}if(confirm('销毁后此聚合订阅链接将立即失效且无法恢复，确定要销毁吗？'))destroyCurrentLink('')});document.getElementById('guestDestroyCancel').addEventListener('click',closeDestroyModal);document.getElementById('guestDestroyConfirm').addEventListener('click',()=>{const key=destroyKeyInput.value.trim();if(!key){guestToast('请输入销毁密钥');destroyKeyInput.focus();return}destroyCurrentLink(key)});destroyModal.addEventListener('click',event=>{if(event.target===destroyModal)closeDestroyModal()});document.addEventListener('keydown',event=>{if(event.key==='Escape')closeDestroyModal()});
+</style><script src="https://cdn.jsdelivr.net/npm/@keeex/qrcodejs-kx@1.0.2/qrcode.min.js"></script></head><body><main class="page app-shell guest-shell" data-token="${escapeHTML(String(guest || ""))}" data-key-required="${destroyKeyRequired ? "true" : "false"}"><header class="header guest-header"><div class="guest-header-main"><h1 class="title">聚合订阅链接</h1><div class="subtitle">复制订阅链接可同时生成二维码</div></div><button type="button" class="button guest-head-destroy">\u9500\u6BC1\u672C\u94FE\u63A5</button></header><div class="guest-link-list">${links.map(([label,value])=>`<div class="guest-link-item"><div class="guest-link-head"><div class="guest-link-label">${escapeHTML(label)}</div></div><a class="guest-link-url" href="${escapeHTML(value)}" target="_blank" rel="noopener">${escapeHTML(value)}</a><div class="guest-actions"><button type="button" class="button guest-copy-btn" data-url="${escapeHTML(value)}">复制</button><button type="button" class="button secondary guest-hide-btn">隐藏</button></div><div class="guest-qrcode"></div></div>`).join('')}</div></main><div class="guest-destroy-modal" id="guestDestroyModal"><div class="guest-destroy-dialog"><h2>\u9500\u6BC1\u672C\u94FE\u63A5</h2><p>\u9500\u6BC1\u540E\u6B64\u805A\u5408\u8BA2\u9605\u94FE\u63A5\u5C06\u7ACB\u5373\u5931\u6548\u4E14\u65E0\u6CD5\u6062\u590D\u3002\u8BF7\u8F93\u5165\u672C\u94FE\u63A5\u7684\u9500\u6BC1\u5BC6\u94A5\u3002</p><input id="guestDestroyKey" class="guest-destroy-input" type="password" autocomplete="current-password" placeholder="\u8BF7\u8F93\u5165\u9500\u6BC1\u5BC6\u94A5"><div class="guest-destroy-actions"><button type="button" class="button secondary" id="guestDestroyCancel">\u53D6\u6D88</button><button type="button" class="button guest-destroy-confirm" id="guestDestroyConfirm">\u786E\u8BA4\u9500\u6BC1</button></div></div></div><script src="/__cfsubs.js" defer><\/script><script>
+function guestToast(message,isError){window.CC(message,isError)}function showGuestQr(b){const i=b.closest('.guest-link-item'),q=i.querySelector('.guest-qrcode'),c=i.querySelector('.guest-copy-btn'),h=i.querySelector('.guest-hide-btn');document.querySelectorAll('.guest-qrcode').forEach(x=>{x.style.display='none';x.innerHTML=''});document.querySelectorAll('.guest-copy-btn').forEach(x=>x.style.display='inline-flex');document.querySelectorAll('.guest-hide-btn').forEach(x=>x.style.display='none');q.innerHTML='';q.style.display='block';c.style.display='none';h.style.display='inline-flex';if(window.QRCode)new QRCode(q,{text:b.dataset.url,width:220,height:220,colorDark:'#000',colorLight:'#fff',correctLevel:QRCode.CorrectLevel.Q})}function hideGuestQr(b){const i=b.closest('.guest-link-item');i.querySelector('.guest-qrcode').style.display='none';i.querySelector('.guest-qrcode').innerHTML='';i.querySelector('.guest-copy-btn').style.display='inline-flex';b.style.display='none'}document.querySelectorAll('.guest-copy-btn').forEach(b=>b.addEventListener('click',()=>{const v=b.dataset.url||'';const done=()=>{guestToast('已复制到剪贴板');showGuestQr(b)};if(navigator.clipboard)navigator.clipboard.writeText(v).then(done).catch(()=>guestToast('复制失败，请手动复制',true));else{const t=document.createElement('textarea');t.value=v;document.body.appendChild(t);t.select();document.execCommand('copy');t.remove();done()}}));document.querySelectorAll('.guest-hide-btn').forEach(b=>b.addEventListener('click',()=>hideGuestQr(b)));
+const destroyButton=document.querySelector('.guest-head-destroy'),destroyModal=document.getElementById('guestDestroyModal'),destroyKeyInput=document.getElementById('guestDestroyKey'),destroyToken=document.querySelector('.guest-shell').dataset.token;function closeDestroyModal(){window.CFSubsModal.close(destroyModal);destroyKeyInput.value=''}async function destroyCurrentLink(key){window.CFSubsUI.setButtonBusy(destroyButton,true,'销毁中…');try{const response=await fetch('/api/destroy',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},cache:'no-store',body:JSON.stringify({token:destroyToken,key:key})});const result=await response.json();if(!response.ok||!result.ok)throw new Error(result.error||'销毁失败');closeDestroyModal();guestToast('链接已销毁，该链接已失效');setTimeout(()=>{location.href='/'},900)}catch(error){window.CFSubsUI.setButtonBusy(destroyButton,false);guestToast(error.message||'销毁失败',true)}}destroyButton.addEventListener('click',()=>{if(document.querySelector('.guest-shell').dataset.keyRequired==='true'){window.CFSubsModal.open(destroyModal);destroyKeyInput.focus();return}if(confirm('销毁后此聚合订阅链接将立即失效且无法恢复，确定要销毁吗？'))destroyCurrentLink('')});document.getElementById('guestDestroyCancel').addEventListener('click',closeDestroyModal);document.getElementById('guestDestroyConfirm').addEventListener('click',()=>{const key=destroyKeyInput.value.trim();if(!key){guestToast('请输入销毁密钥',true);destroyKeyInput.focus();return}destroyCurrentLink(key)});destroyModal.addEventListener('click',event=>{if(event.target===destroyModal)closeDestroyModal()});document.addEventListener('keydown',event=>{if(event.key==='Escape')closeDestroyModal()});
 </script></body></html>`;
 }
 
@@ -2678,7 +2754,7 @@ ${adminMode ? "" : `
 <script>
 function initGuestEditFeature(){
 var isAdminEditor=${adminMode},shell=document.querySelector('.guest-shell'),destroyButton=document.querySelector('.guest-head-destroy'),editModal=document.getElementById('guestEditModal'),keyModal=document.getElementById('guestEditKeyModal'),destroyModal=document.getElementById('guestDestroyModal'),editButton=document.createElement('button'),apiSelect=document.getElementById('guestEditApi'),configSelect=document.getElementById('guestEditConfig'),apiUrl=document.getElementById('guestEditApiUrl'),configUrl=document.getElementById('guestEditConfigUrl'),keyInput=document.getElementById('guestEditKey'),saveButton=document.getElementById('guestEditSave'),keyConfirmButton=document.getElementById('guestEditKeyConfirm'),adminKeyConfirmButton=document.getElementById('urlAdminEditKeyConfirm'),activeToken=shell?shell.dataset.token:'${token}',verifiedKey='',pendingAdminToken='';
-function editToast(message){if(typeof window.guestToast==='function'){window.guestToast(message);return}var notice=document.getElementById('copyNotice');if(!notice)return;notice.textContent=message;notice.style.display='block';window.setTimeout(function(){notice.style.display='none'},1800)}
+function editToast(message,isError){window.CC(message,isError!==false)}
 function syncGuestViewport(){var viewport=window.visualViewport,height=viewport?viewport.height:window.innerHeight,top=viewport?viewport.offsetTop:0,mobile=window.matchMedia('(max-width: 640px)').matches;document.documentElement.style.setProperty('--guest-visual-height',height+'px');document.documentElement.style.setProperty('--guest-visual-top',top+'px');[editModal,keyModal,destroyModal].forEach(function(modal){if(modal)modal.classList.toggle('uses-visual-viewport',mobile)});var editDialog=editModal.querySelector('.guest-edit-dialog');editDialog.style.maxHeight=Math.max(240,height-(mobile?128:96))+'px'}
 syncGuestViewport();window.addEventListener('resize',syncGuestViewport);if(window.visualViewport){window.visualViewport.addEventListener('resize',syncGuestViewport);window.visualViewport.addEventListener('scroll',syncGuestViewport)}
 editButton.type='button';editButton.className='button secondary guest-head-edit';editButton.textContent='编辑';
@@ -2712,13 +2788,13 @@ if(keyModal)keyModal.addEventListener('click',function(event){if(event.target===
 document.addEventListener('keydown',function(event){if(event.key!=='Escape')return;if(keyModal&&getComputedStyle(keyModal).display!=='none'){event.stopImmediatePropagation();closeKeyModal()}else if(getComputedStyle(editModal).display!=='none'){event.stopImmediatePropagation();closeEdit()}},true);
 if(destroyButton&&!isAdminEditor&&${Boolean(tokenData.destroyKeyHash)})destroyButton.addEventListener('click',function(event){event.preventDefault();event.stopImmediatePropagation();var modal=document.getElementById('guestDestroyModal'),input=document.getElementById('guestDestroyKey');syncGuestViewport();window.CFSubsModal.open(modal);input.value='';input.focus()},true);
 saveButton.addEventListener('click',async function(){
-if(isAdminEditor){var apiCustom=apiSelect.value==='__custom',configCustom=configSelect.value==='__custom',apiOption=apiSelect.options[apiSelect.selectedIndex],configOption=configSelect.options[configSelect.selectedIndex],adminPayload={type:'url_update_providers',token:activeToken,apiCustom:apiCustom,apiId:apiCustom?'':(apiOption.dataset.id||''),apiUrl:apiCustom?apiUrl.value.trim():'',configCustom:configCustom,configId:configCustom?'':(configOption.dataset.id||''),configUrl:configCustom?configUrl.value.trim():''};window.CFSubsUI.setButtonBusy(saveButton,true,'保存中…');try{var adminResponse=await fetch('/api/admin',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','Accept':'application/json'},cache:'no-store',body:JSON.stringify(adminPayload)}),adminResult=await adminResponse.json();if(!adminResponse.ok||!adminResult.ok)throw new Error(adminResult.error||'保存修改失败');verifiedKey='';closeEdit();editToast('SUBAPI 和 SUBCONFIG 已更新');setTimeout(function(){location.reload()},500)}catch(error){editToast(error.message||'保存修改失败')}finally{window.CFSubsUI.setButtonBusy(saveButton,false)}return}
+if(isAdminEditor){var apiCustom=apiSelect.value==='__custom',configCustom=configSelect.value==='__custom',apiOption=apiSelect.options[apiSelect.selectedIndex],configOption=configSelect.options[configSelect.selectedIndex],adminPayload={type:'url_update_providers',token:activeToken,apiCustom:apiCustom,apiId:apiCustom?'':(apiOption.dataset.id||''),apiUrl:apiCustom?apiUrl.value.trim():'',configCustom:configCustom,configId:configCustom?'':(configOption.dataset.id||''),configUrl:configCustom?configUrl.value.trim():''};window.CFSubsUI.setButtonBusy(saveButton,true,'保存中…');try{var adminResponse=await fetch('/api/admin',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','Accept':'application/json'},cache:'no-store',body:JSON.stringify(adminPayload)}),adminResult=await adminResponse.json();if(!adminResponse.ok||!adminResult.ok)throw new Error(adminResult.error||'保存修改失败');verifiedKey='';closeEdit();editToast('SUBAPI 和 SUBCONFIG 已更新',false)}catch(error){editToast(error.message||'保存修改失败')}finally{window.CFSubsUI.setButtonBusy(saveButton,false)}return}
 var sources=document.getElementById('guestEditSources').value.trim(),minutes=Number(document.getElementById('guestEditMinutes').value);
 if(!sources){editToast('请至少输入一个订阅源地址');return}
 if(!Number.isSafeInteger(minutes)||minutes<0||minutes>525600){editToast('推荐更新时间必须是 0 到 525600 之间的整数分钟');return}
 var apiCustom=apiSelect.value==='__custom',configCustom=configSelect.value==='__custom',apiOption=apiSelect.options[apiSelect.selectedIndex],configOption=configSelect.options[configSelect.selectedIndex],payload={token:activeToken,key:verifiedKey,sources:sources,apiCustom:apiCustom,apiId:apiCustom?'':(apiOption.dataset.id||''),apiUrl:apiCustom?apiUrl.value.trim():'',configCustom:configCustom,configId:configCustom?'':(configOption.dataset.id||''),configUrl:configCustom?configUrl.value.trim():'',noAds:document.getElementById('guestEditNoAds').value,update:minutes,updateEnable:document.getElementById('guestEditUpdateEnable').checked};
 window.CFSubsUI.setButtonBusy(saveButton,true,'保存中…');
-try{var response=await fetch('/api/update-generated-link',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},cache:'no-store',body:JSON.stringify(payload)}),result=await response.json();if(!response.ok||!result.ok)throw new Error(result.error||'保存修改失败');closeEdit();editToast('聚合订阅链接已更新');setTimeout(function(){location.reload()},500)}catch(error){editToast(error.message||'保存修改失败')}finally{window.CFSubsUI.setButtonBusy(saveButton,false)}
+try{var response=await fetch('/api/update-generated-link',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},cache:'no-store',body:JSON.stringify(payload)}),result=await response.json();if(!response.ok||!result.ok)throw new Error(result.error||'保存修改失败');closeEdit();editToast('聚合订阅链接已更新',false)}catch(error){editToast(error.message||'保存修改失败')}finally{window.CFSubsUI.setButtonBusy(saveButton,false)}
 });
 if(actionGroup)window.CFSubsUI.normalizeControls(actionGroup);window.CFSubsUI.normalizeControls(editModal);
 }
@@ -2801,7 +2877,7 @@ ${renderProviderModule("config", configs, configId)}
 <button class="primary" id="generate" type="button">\u751F\u6210\u805A\u5408\u8BA2\u9605\u94FE\u63A5</button>
 <section class="panel generated-links-panel" id="generatedLinksPanel" style="display:none"><h2 class="section-title">\u5DF2\u751F\u6210\u7684\u805A\u5408\u8BA2\u9605\u94FE\u63A5</h2><div class="section-note">\u6839\u636E\u672C\u673A\u6D4F\u89C8\u5668\u7F13\u5B58\u663E\u793A\u4F60\u751F\u6210\u8FC7\u7684\u94FE\u63A5\u3002\u94FE\u63A5\u6846\u53EF\u76F4\u63A5\u6253\u5F00\uFF0C\u9500\u6BC1\u540E\u94FE\u63A5\u5C06\u4F1A\u5931\u6548\u3002</div><div id="generatedLinksList" class="generated-links-list"></div></section>
 </main>
-<div id="aggregateResultModal" class="custom-modal-overlay aggregate-result-overlay"><div class="custom-modal aggregate-result-modal"><button type="button" class="aggregate-result-close" id="aggregateResultClose" aria-label="\u5173\u95ED">\xD7</button><h3>\u805A\u5408\u8BA2\u9605\u94FE\u63A5</h3><p>\u4E8C\u7EF4\u7801\u53EF\u76F4\u63A5\u626B\u7801\u4F7F\u7528\uFF0C\u590D\u5236\u4E0B\u65B9\u8BA2\u9605\u94FE\u63A5\u5373\u53EF\u4F7F\u7528\u3002\u9500\u6BC1\u540E\u94FE\u63A5\u5C06\u4F1A\u5931\u6548\u3002</p><a class="aggregate-result-url" id="direct" href="#" target="_blank" rel="noopener noreferrer"></a><div id="aggregateResultQr" class="aggregate-result-qr"></div><div class="aggregate-result-actions"><button type="button" class="button" id="copyDirect">\u590D\u5236</button><button type="button" class="button aggregate-destroy-btn" id="destroyDirect">\u9500\u6BC1</button></div><div id="aggregateCopyStatus" class="aggregate-copy-status" aria-live="polite"></div></div></div><div id="aggregateCopyNotice" class="toast"></div>
+<div id="aggregateResultModal" class="custom-modal-overlay aggregate-result-overlay"><div class="custom-modal aggregate-result-modal"><button type="button" class="aggregate-result-close" id="aggregateResultClose" aria-label="\u5173\u95ED">\xD7</button><h3>\u805A\u5408\u8BA2\u9605\u94FE\u63A5</h3><p>\u4E8C\u7EF4\u7801\u53EF\u76F4\u63A5\u626B\u7801\u4F7F\u7528\uFF0C\u590D\u5236\u4E0B\u65B9\u8BA2\u9605\u94FE\u63A5\u5373\u53EF\u4F7F\u7528\u3002\u9500\u6BC1\u540E\u94FE\u63A5\u5C06\u4F1A\u5931\u6548\u3002</p><a class="aggregate-result-url" id="direct" href="#" target="_blank" rel="noopener noreferrer"></a><div id="aggregateResultQr" class="aggregate-result-qr"></div><div class="aggregate-result-actions"><button type="button" class="button" id="copyDirect">\u590D\u5236</button><button type="button" class="button aggregate-destroy-btn" id="destroyDirect">\u9500\u6BC1</button></div></div></div>
 
 <div id="customApiModal" class="custom-modal-overlay"><div class="custom-modal"><h3>\u81EA\u5B9A\u4E49\u8BA2\u9605\u8F6C\u6362\u540E\u7AEF</h3><p>\u8F93\u5165\u4F60\u81EA\u5DF1\u7684 SUBAPI \u5730\u5740\u3002</p><input id="customApiInput" placeholder="https://subapi.example.com"><div class="custom-modal-actions"><button type="button" class="button secondary" id="cancelApiCustom">\u53D6\u6D88</button><button type="button" class="button" id="saveApiCustom">\u4FDD\u5B58</button></div></div></div>
 <div id="customConfigModal" class="custom-modal-overlay"><div class="custom-modal"><h3>\u81EA\u5B9A\u4E49\u8BA2\u9605\u8F6C\u6362\u89C4\u5219</h3><p>\u8F93\u5165\u4F60\u81EA\u5DF1\u7684 SUBCONFIG \u5730\u5740\u3002</p><input id="customConfigInput" placeholder="https://example.com/config.ini"><div class="custom-modal-actions"><button type="button" class="button secondary" id="cancelConfigCustom">\u53D6\u6D88</button><button type="button" class="button" id="saveConfigCustom">\u4FDD\u5B58</button></div></div></div>
@@ -2827,7 +2903,7 @@ function getSubUIStyles() {
 `;
 }
 __name(getSubUIStyles, "getSubUIStyles");
-async function listJsonManagerItems(env, query = "") {
+async function listJsonManagerItems(env, query = "", origin = "") {
   if (!env.KV) return [];
   const keyword = String(query || "").trim().toLowerCase();
   const result = [];
@@ -2849,6 +2925,8 @@ async function listJsonManagerItems(env, query = "") {
       }
       const normalized = upperCaseObject(item);
       delete normalized.NAME;
+      delete normalized.PATH;
+      delete normalized.SUBSCRIPTIONURL;
       if (Array.isArray(normalized.SOURCES) && normalized.SOURCES.some((source) => !isSourceCiphertext(String(source || "")))) {
         normalized.SOURCES = await encryptSourceList(env, normalized.SOURCES);
       }
@@ -2861,7 +2939,7 @@ async function listJsonManagerItems(env, query = "") {
       if (keyword && !raw.toLowerCase().includes(keyword) && !token.toLowerCase().includes(keyword)) return null;
       return {
         token,
-        subscriptionUrl: item?.subscriptionUrl || "",
+        subscriptionUrl: `${origin}/${encodeURIComponent(token)}`,
         createdAt: item?.createdAt || "",
         updatedAt: item?.updatedAt || "",
         name: item?.name || "\u8BA2\u9605\u94FE\u63A5",
@@ -2930,21 +3008,21 @@ function renderGeneratedLinksManagerPage(items, adminPath, config) {
   }).join("") : '<div class="url-empty">暂无聚合订阅链接</div>';
   return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title>${renderFavicon(title, config.siteLogo)}<style>
 ${getToolStyles()}
-.urls-shell{max-width:1100px;padding-top:0!important;padding-bottom:34px}.urls-header{display:flex;align-items:center;justify-content:space-between;gap:14px;margin:0 -28px 18px;padding:28px;border-bottom:1px solid rgba(120,130,140,.18)}.urls-header .title{font-size:28px}.urls-list{display:grid;gap:10px}.url-bulk-toolbar{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:12px}.url-bulk-selection{display:flex;align-items:center;gap:9px}.url-bulk-selection input,.url-select{width:18px;height:18px;flex:0 0 auto;margin:0}.url-bulk-actions{display:flex;gap:8px;margin-left:auto}.url-bulk-mode-fields[hidden],.url-bulk-mode-replace[hidden],.url-bulk-mode-destroy[hidden]{display:none}.guest-destroy-actions>[hidden]{display:none!important}.url-entry{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px;border:1px solid rgba(120,130,140,.2);border-radius:12px;background:rgba(255,255,255,.58)}.url-entry-main{min-width:0;flex:1}.url-entry h2{margin:0 0 8px;font-size:16px}.url-entry-link{display:block;overflow-wrap:anywhere}.url-entry-actions{display:flex;flex:0 0 auto;gap:8px}.url-entry-actions .button{min-width:74px}.url-empty{padding:28px 12px;text-align:center;color:#777}.urls-toast{position:fixed;top:18px;right:18px;z-index:10000;display:none;padding:10px 14px;border-radius:10px;background:#1f2937;color:#fff}.url-bulk-field[hidden]{display:none}.url-bulk-field{margin-top:12px}.url-bulk-field label{display:block;margin-bottom:6px}
+.urls-shell{max-width:1100px;padding-top:0!important;padding-bottom:34px}.urls-header{display:flex;align-items:center;justify-content:space-between;gap:14px;margin:0 -28px 18px;padding:28px;border-bottom:1px solid rgba(120,130,140,.18)}.urls-header .title{font-size:28px}.urls-list{display:grid;gap:10px}.url-bulk-toolbar{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:12px}.url-bulk-selection{display:flex;align-items:center;gap:9px}.url-bulk-selection input,.url-select{width:18px;height:18px;flex:0 0 auto;margin:0}.url-bulk-actions{display:flex;gap:8px;margin-left:auto}.url-bulk-mode-fields[hidden],.url-bulk-mode-replace[hidden],.url-bulk-mode-destroy[hidden]{display:none}.guest-destroy-actions>[hidden]{display:none!important}.url-entry{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px;border:1px solid rgba(120,130,140,.2);border-radius:12px;background:rgba(255,255,255,.58)}.url-entry-main{min-width:0;flex:1}.url-entry h2{margin:0 0 8px;font-size:16px}.url-entry-link{display:block;overflow-wrap:anywhere}.url-entry-actions{display:flex;flex:0 0 auto;gap:8px}.url-entry-actions .button{min-width:74px}.url-empty{padding:28px 12px;text-align:center;color:#777}.url-bulk-field[hidden]{display:none}.url-bulk-field{margin-top:12px}.url-bulk-field label{display:block;margin-bottom:6px}
 @media(max-width:600px){.page.app-shell.urls-shell{width:calc(100% - 28px);margin:14px 14px 28px;padding:0 14px 24px;border-radius:22px}.urls-header{margin:0 -14px 16px;padding:22px 14px 20px}.urls-header .title{font-size:22px}.url-bulk-toolbar{align-items:flex-start;flex-direction:column}.url-bulk-actions{width:100%}.url-bulk-actions .button{flex:1}.url-entry{align-items:flex-start;padding:12px;gap:10px}.url-entry-actions{flex-direction:column}.url-entry-actions .button{min-width:64px;padding:7px 10px}}
 @media(prefers-color-scheme:dark){.urls-header{border-bottom-color:rgba(255,255,255,.1)}.url-entry{background:rgba(8,12,14,.78);border-color:rgba(255,255,255,.12)}.url-empty{color:#9aa7b5}}
-</style></head><body><main class="page app-shell urls-shell"><header class="header urls-header"><div><h1 class="title">聚合订阅链接管理</h1><div class="subtitle">共 ${items.length} 条聚合订阅链接</div></div><a class="button secondary" href="/${esc(adminPath)}">返回管理面板</a></header><div class="url-bulk-toolbar"><label class="url-bulk-selection"><input id="urlSelectAll" type="checkbox"><span>全选</span></label><span id="urlSelectedCount">已选择 0 条</span><div class="url-bulk-actions"><button class="button secondary" type="button" id="urlBulkReplace">按字段管理</button><button class="button danger" type="button" id="urlBulkDelete">批量销毁</button></div></div><div class="urls-list">${rows}</div></main><div class="urls-toast" id="urlsToast" role="status" aria-live="polite"></div><div id="copyNotice" class="toast"></div><div class="guest-destroy-modal" id="urlBulkModal" aria-hidden="true"><section class="guest-destroy-dialog" role="dialog" aria-modal="true" aria-labelledby="urlBulkTitle"><h2 id="urlBulkTitle">按字段管理</h2><p id="urlBulkDescription"></p><div class="url-bulk-field"><label for="urlBulkMode">操作</label><select class="native-picker" id="urlBulkMode"><option value="replace">查找替换</option><option value="destroy">搜索销毁</option></select></div><div class="url-bulk-mode-fields"><div class="url-bulk-field"><label for="urlBulkField">匹配字段</label><select class="native-picker" id="urlBulkField"><option value="SUBAPI">订阅转换后端（SUBAPI）</option><option value="SUBCONFIG">订阅转换规则（SUBCONFIG）</option></select></div><div class="url-bulk-field url-bulk-mode-replace"><label for="urlBulkOldValue">要查找的旧值</label><input id="urlBulkOldValue" type="text" placeholder="输入要查找的旧值" autocomplete="off"><label for="urlBulkNewValue" style="margin-top:12px">替换为</label><input id="urlBulkNewValue" type="text" placeholder="输入替换后的新值" autocomplete="off"></div><div class="url-bulk-field url-bulk-mode-destroy" hidden><label for="urlBulkSearchValue">搜索值</label><input id="urlBulkSearchValue" type="text" placeholder="输入要匹配的字段值" autocomplete="off"><p id="urlBulkSearchResult" role="status">请先搜索并确认匹配数量。</p><button type="button" class="button secondary" id="urlBulkSearch">搜索</button></div></div><div class="guest-destroy-actions"><button type="button" class="button secondary" id="urlBulkCancel">取消</button><button type="button" class="button" id="urlBulkApply">查找并替换全部</button><button type="button" class="button danger" id="urlBulkSearchDestroy" hidden disabled>销毁匹配项</button></div></section></div>${renderGuestEditFeature(editorData, config, true)}<script src="/__cfsubs.js" defer><\/script><script>
-(function(){var toast=document.getElementById('urlsToast'),timer,checks=Array.from(document.querySelectorAll('.url-select')),selectAll=document.getElementById('urlSelectAll'),count=document.getElementById('urlSelectedCount'),bulkModal=document.getElementById('urlBulkModal'),fieldSelect=document.getElementById('urlBulkField');function message(text,error){toast.textContent=text;toast.style.background=error?'#d93025':'#1f2937';toast.style.display='block';clearTimeout(timer);timer=setTimeout(function(){toast.style.display='none'},2200)}function selected(){return checks.filter(function(input){return input.checked}).map(function(input){return input.value})}function updateSelection(){var tokens=selected();count.textContent='已选择 '+tokens.length+' 条';selectAll.checked=checks.length>0&&tokens.length===checks.length;selectAll.indeterminate=tokens.length>0&&tokens.length<checks.length}checks.forEach(function(input){input.addEventListener('change',updateSelection)});selectAll.addEventListener('change',function(){checks.forEach(function(input){input.checked=selectAll.checked});updateSelection()});
+</style></head><body><main class="page app-shell urls-shell"><header class="header urls-header"><div><h1 class="title">聚合订阅链接管理</h1><div class="subtitle">共 ${items.length} 条聚合订阅链接</div></div><a class="button secondary" href="/${esc(adminPath)}">返回管理面板</a></header><div class="url-bulk-toolbar"><label class="url-bulk-selection"><input id="urlSelectAll" type="checkbox"><span>全选</span></label><span id="urlSelectedCount">已选择 0 条</span><div class="url-bulk-actions"><button class="button secondary" type="button" id="urlBulkReplace">按字段管理</button><button class="button danger" type="button" id="urlBulkDelete">批量销毁</button></div></div><div class="urls-list">${rows}</div></main><div class="guest-destroy-modal" id="urlBulkModal" aria-hidden="true"><section class="guest-destroy-dialog" role="dialog" aria-modal="true" aria-labelledby="urlBulkTitle"><h2 id="urlBulkTitle">按字段管理</h2><p id="urlBulkDescription"></p><div class="url-bulk-field"><label for="urlBulkMode">操作</label><select class="native-picker" id="urlBulkMode"><option value="replace">查找替换</option><option value="destroy">搜索销毁</option></select></div><div class="url-bulk-mode-fields"><div class="url-bulk-field"><label for="urlBulkField">匹配字段</label><select class="native-picker" id="urlBulkField"><option value="SUBAPI">订阅转换后端（SUBAPI）</option><option value="SUBCONFIG">订阅转换规则（SUBCONFIG）</option></select></div><div class="url-bulk-field url-bulk-mode-replace"><label for="urlBulkOldValue">要查找的旧值</label><input id="urlBulkOldValue" type="text" placeholder="输入要查找的旧值" autocomplete="off"><label for="urlBulkNewValue" style="margin-top:12px">替换为</label><input id="urlBulkNewValue" type="text" placeholder="输入替换后的新值" autocomplete="off"></div><div class="url-bulk-field url-bulk-mode-destroy" hidden><label for="urlBulkSearchValue">搜索值</label><input id="urlBulkSearchValue" type="text" placeholder="输入要匹配的字段值" autocomplete="off"><p id="urlBulkSearchResult" role="status">请先搜索并确认匹配数量。</p><button type="button" class="button secondary" id="urlBulkSearch">搜索</button></div></div><div class="guest-destroy-actions"><button type="button" class="button secondary" id="urlBulkCancel">取消</button><button type="button" class="button" id="urlBulkApply">查找并替换全部</button><button type="button" class="button danger" id="urlBulkSearchDestroy" hidden disabled>销毁匹配项</button></div></section></div>${renderGuestEditFeature(editorData, config, true)}<script src="/__cfsubs.js" defer><\/script><script>
+(function(){var checks=Array.from(document.querySelectorAll('.url-select')),selectAll=document.getElementById('urlSelectAll'),count=document.getElementById('urlSelectedCount'),bulkModal=document.getElementById('urlBulkModal'),fieldSelect=document.getElementById('urlBulkField');function message(text,error){window.CC(text,error)}function selected(){return checks.filter(function(input){return input.checked}).map(function(input){return input.value})}function updateSelection(){var tokens=selected();count.textContent='已选择 '+tokens.length+' 条';selectAll.checked=checks.length>0&&tokens.length===checks.length;selectAll.indeterminate=tokens.length>0&&tokens.length<checks.length}checks.forEach(function(input){input.addEventListener('change',updateSelection)});selectAll.addEventListener('change',function(){checks.forEach(function(input){input.checked=selectAll.checked});updateSelection()});
 function removeEmptyState(){if(!document.querySelector('.url-entry')){var empty=document.createElement('div');empty.className='url-empty';empty.textContent='暂无聚合订阅链接';document.querySelector('.urls-list').appendChild(empty)}}function updateCount(){var rows=document.querySelectorAll('.url-entry').length;document.querySelector('.urls-header .subtitle').textContent='共 '+rows+' 条聚合订阅链接';if(!rows)removeEmptyState()}
 async function post(payload){var response=await fetch('/api/admin',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','Accept':'application/json'},body:JSON.stringify(payload)}),result=await response.json();if(!response.ok||!result.ok)throw new Error(result.error||'操作失败');return result}
 document.querySelectorAll('.url-delete').forEach(function(button){button.addEventListener('click',async function(){var token=button.dataset.token;if(!token||!confirm('确定销毁这个聚合订阅链接？此操作不可恢复。'))return;button.disabled=true;try{await post({type:'json_delete',token:token});button.closest('.url-entry').remove();message('聚合订阅链接已销毁');updateCount();updateSelection()}catch(error){button.disabled=false;message(error.message||'销毁失败',true)}})});
 document.getElementById('urlBulkDelete').addEventListener('click',async function(){var tokens=selected();if(!tokens.length){message('请先选择要销毁的链接',true);return}if(!confirm('确定销毁选中的 '+tokens.length+' 条聚合订阅链接？此操作不可恢复。'))return;var button=this;button.disabled=true;try{var result=await post({type:'url_bulk_delete',tokens:tokens});tokens.forEach(function(token){var row=document.querySelector('.url-entry[data-token="'+CSS.escape(token)+'"]');if(row)row.remove()});message('已销毁 '+result.deleted+' 条聚合订阅链接');updateCount();updateSelection()}catch(error){message(error.message||'批量销毁失败',true)}finally{button.disabled=false}});
 document.getElementById('urlBulkReplace').addEventListener('click',function(){window.CFSubsModal.open(bulkModal,{ariaHidden:false})});function closeBulk(){window.CFSubsModal.close(bulkModal,{ariaHidden:true})}document.getElementById('urlBulkCancel').addEventListener('click',closeBulk);bulkModal.addEventListener('click',function(event){if(event.target===bulkModal)closeBulk()});
-document.getElementById('urlBulkApply').addEventListener('click',async function(){var field=fieldSelect.value,oldValue=document.getElementById('urlBulkOldValue').value.trim(),newValue=document.getElementById('urlBulkNewValue').value.trim();if(!oldValue||!newValue){message('请填写要查找的旧值和替换后的新值',true);return}if(oldValue===newValue){message('新旧值相同，无需替换',true);return}if(!confirm('将在所有聚合订阅链接中查找并替换字段值，是否继续？'))return;var button=this;button.disabled=true;try{var result=await post({type:'url_bulk_update',field:field,oldValue:oldValue,newValue:newValue});closeBulk();message('已替换 '+result.updated+' 条链接中的 '+result.matched+' 处字段值');setTimeout(function(){location.reload()},500)}catch(error){message(error.message||'查找替换失败',true)}finally{button.disabled=false}});
+document.getElementById('urlBulkApply').addEventListener('click',async function(){var field=fieldSelect.value,oldValue=document.getElementById('urlBulkOldValue').value.trim(),newValue=document.getElementById('urlBulkNewValue').value.trim();if(!oldValue||!newValue){message('请填写要查找的旧值和替换后的新值',true);return}if(oldValue===newValue){message('新旧值相同，无需替换',true);return}if(!confirm('将在所有聚合订阅链接中查找并替换字段值，是否继续？'))return;var button=this;button.disabled=true;try{var result=await post({type:'url_bulk_update',field:field,oldValue:oldValue,newValue:newValue});closeBulk();message('已替换 '+result.updated+' 条链接中的 '+result.matched+' 处字段值')}catch(error){message(error.message||'查找替换失败',true)}finally{button.disabled=false}});
 updateSelection()})();
 async function post(payload){var response=await fetch('/api/admin',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','Accept':'application/json'},body:JSON.stringify(payload)}),result=await response.json();if(!response.ok||!result.ok)throw new Error(result.error||'操作失败');return result}
-var urlSearchMessageTimer;function message(text,error){var toast=document.getElementById('urlsToast');toast.textContent=text;toast.style.background=error?'#d93025':'#1f2937';toast.style.display='block';clearTimeout(urlSearchMessageTimer);urlSearchMessageTimer=setTimeout(function(){toast.style.display='none'},2200)}
-(function(){var modal=document.getElementById('urlBulkModal'),mode=document.getElementById('urlBulkMode'),field=document.getElementById('urlBulkField'),replacePanel=document.querySelector('.url-bulk-mode-replace'),destroyPanel=document.querySelector('.url-bulk-mode-destroy'),description=document.getElementById('urlBulkDescription'),replaceButton=document.getElementById('urlBulkApply'),destroyButton=document.getElementById('urlBulkSearchDestroy'),searchButton=document.getElementById('urlBulkSearch'),searchValue=document.getElementById('urlBulkSearchValue'),searchResult=document.getElementById('urlBulkSearchResult'),lastQuery=null,matchCount=0;function syncMode(){var destroying=mode.value==='destroy';field.parentNode.hidden=destroying;replacePanel.hidden=destroying;destroyPanel.hidden=!destroying;replaceButton.hidden=destroying;destroyButton.hidden=!destroying;description.textContent=destroying?'输入一个值，同时搜索所有链接的 SUBAPI 和 SUBCONFIG；任一字段匹配就会销毁该链接。仅输入域名时按域名匹配。':'按 SUBAPI 或 SUBCONFIG 的字段值查找替换；仅输入域名时按域名精确匹配。链接路径和密钥不会更改。';if(destroying)invalidate()}function invalidate(){lastQuery=null;destroyButton.disabled=true;searchResult.textContent='条件已更改，请重新搜索。'}mode.addEventListener('change',syncMode);field.addEventListener('change',invalidate);searchValue.addEventListener('input',invalidate);document.getElementById('urlBulkReplace').addEventListener('click',function(){mode.value='replace';syncMode();window.CFSubsModal.open(modal,{ariaHidden:false})});searchButton.addEventListener('click',async function(){var query={field:'ANY',value:searchValue.value.trim()};if(!query.value){searchResult.textContent='请输入要搜索的字段值。';searchValue.focus();return}searchButton.disabled=true;destroyButton.disabled=true;lastQuery=null;try{var result=await post({type:'url_search_provider',field:query.field,value:query.value});lastQuery=query;matchCount=result.count;searchResult.textContent='找到 '+result.count+' 条匹配链接。'+(result.count?'确认后可销毁匹配项。':'没有匹配项。');destroyButton.disabled=result.count===0}catch(error){searchResult.textContent=error.message||'搜索失败';message(error.message||'搜索失败',true)}finally{searchButton.disabled=false}});destroyButton.addEventListener('click',async function(){if(!lastQuery||destroyButton.disabled)return;if(!confirm('确认销毁 '+matchCount+' 条匹配的聚合订阅链接？此操作不可恢复。'))return;destroyButton.disabled=true;try{var result=await post({type:'url_search_provider_delete',field:'ANY',value:lastQuery.value});window.CFSubsModal.close(modal,{ariaHidden:true});message('已销毁 '+result.deleted+' 条匹配链接');setTimeout(function(){location.reload()},500)}catch(error){message(error.message||'搜索销毁失败',true);destroyButton.disabled=false}});syncMode()})();
+function message(text,error){window.CC(text,error)}
+(function(){var modal=document.getElementById('urlBulkModal'),mode=document.getElementById('urlBulkMode'),field=document.getElementById('urlBulkField'),replacePanel=document.querySelector('.url-bulk-mode-replace'),destroyPanel=document.querySelector('.url-bulk-mode-destroy'),description=document.getElementById('urlBulkDescription'),replaceButton=document.getElementById('urlBulkApply'),destroyButton=document.getElementById('urlBulkSearchDestroy'),searchButton=document.getElementById('urlBulkSearch'),searchValue=document.getElementById('urlBulkSearchValue'),searchResult=document.getElementById('urlBulkSearchResult'),lastQuery=null,matchCount=0;function syncMode(){var destroying=mode.value==='destroy';field.parentNode.hidden=destroying;replacePanel.hidden=destroying;destroyPanel.hidden=!destroying;replaceButton.hidden=destroying;destroyButton.hidden=!destroying;description.textContent=destroying?'输入一个值，同时搜索所有链接的 SUBAPI 和 SUBCONFIG；任一字段匹配就会销毁该链接。仅输入域名时按域名匹配。':'按 SUBAPI 或 SUBCONFIG 的字段值查找替换；仅输入域名时按域名精确匹配。链接路径和密钥不会更改。';if(destroying)invalidate()}function invalidate(){lastQuery=null;destroyButton.disabled=true;searchResult.textContent='条件已更改，请重新搜索。'}mode.addEventListener('change',syncMode);field.addEventListener('change',invalidate);searchValue.addEventListener('input',invalidate);document.getElementById('urlBulkReplace').addEventListener('click',function(){mode.value='replace';syncMode();window.CFSubsModal.open(modal,{ariaHidden:false})});searchButton.addEventListener('click',async function(){var query={field:'ANY',value:searchValue.value.trim()};if(!query.value){searchResult.textContent='请输入要搜索的字段值。';searchValue.focus();return}searchButton.disabled=true;destroyButton.disabled=true;lastQuery=null;try{var result=await post({type:'url_search_provider',field:query.field,value:query.value});lastQuery=query;matchCount=result.count;searchResult.textContent='找到 '+result.count+' 条匹配链接。'+(result.count?'确认后可销毁匹配项。':'没有匹配项。');destroyButton.disabled=result.count===0}catch(error){searchResult.textContent=error.message||'搜索失败';message(error.message||'搜索失败',true)}finally{searchButton.disabled=false}});destroyButton.addEventListener('click',async function(){if(!lastQuery||destroyButton.disabled)return;if(!confirm('确认销毁 '+matchCount+' 条匹配的聚合订阅链接？此操作不可恢复。'))return;destroyButton.disabled=true;try{var result=await post({type:'url_search_provider_delete',field:'ANY',value:lastQuery.value});(result.tokens||[]).forEach(function(token){var row=document.querySelector('.url-entry[data-token="'+CSS.escape(token)+'"]');if(row)row.remove()});window.CFSubsModal.close(modal,{ariaHidden:true});message('已销毁 '+result.deleted+' 条匹配链接');updateCount();updateSelection()}catch(error){message(error.message||'搜索销毁失败',true);destroyButton.disabled=false}});syncMode()})();
 <\/script></body></html>`;
 }
 __name(renderGeneratedLinksManagerPage, "renderGeneratedLinksManagerPage");
@@ -2953,7 +3031,7 @@ async function listKVEntries(env) {
   let cursor;
   do {
     const page = await env.KV.list(cursor ? { cursor } : {});
-    const entries = await Promise.all(page.keys.filter(({ name }) => !name.startsWith("__CF_SUBS_INTERNAL__:")).map(async ({ name }) => {
+    const entries = await Promise.all(page.keys.filter(({ name }) => !name.startsWith("__CF_SUBS_INTERNAL__:") && !name.startsWith(CONFIG_SECTION_PREFIX)).map(async ({ name }) => {
       let value = await env.KV.get(name);
       if (value === null) return null;
       let displayValue = value;
@@ -2961,6 +3039,10 @@ async function listKVEntries(env) {
       let isJson = false;
       try {
         const normalized = upperCaseObject(JSON.parse(value));
+        if (name.startsWith(URL_PREFIX)) {
+          delete normalized.PATH;
+          delete normalized.SUBSCRIPTIONURL;
+        }
         if (name.startsWith(URL_PREFIX) && Array.isArray(normalized.SOURCES) && normalized.SOURCES.some((source) => !isSourceCiphertext(String(source || "")))) {
           normalized.SOURCES = await encryptSourceList(env, normalized.SOURCES);
         }
@@ -2969,8 +3051,10 @@ async function listKVEntries(env) {
           await env.KV.put(name, normalizedRaw);
           value = normalizedRaw;
         }
-        displayValue = JSON.stringify(JSON.parse(value), null, 2);
-        exportValue = JSON.parse(value);
+        const parsedValue = JSON.parse(value);
+        if (name === "CONFIG.JSON") delete parsedValue.CONFIGVERSION;
+        displayValue = JSON.stringify(parsedValue, null, 2);
+        exportValue = parsedValue;
         isJson = true;
       } catch {
         exportValue = value;
@@ -2991,20 +3075,20 @@ function renderJsonManagerPage(entries, adminPath, credentialsConfigured = false
   const title = `\u5907\u4EFD\u4E0E\u8FC1\u79FB \xB7 ${FILENAME || "SUB"}`;
   return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHTML(title)}</title>${renderFavicon(title, SITELOGO)}<style>
 ${getToolStyles()}
-body{min-height:100vh}.json-shell{max-width:1100px;padding-top:0!important;padding-bottom:34px}.json-header{margin:0 -28px 18px;padding:28px;border-bottom:1px solid rgba(120,130,140,.18)}.json-header-main{min-width:0}.json-list{display:grid;gap:10px}.json-entry{min-width:0;border:1px solid rgba(120,130,140,.2);border-radius:12px;padding:14px;background:rgba(255,255,255,.58)}.json-entry-head{display:flex;align-items:center;justify-content:space-between;gap:12px}.json-key{min-width:0;font-size:16px;font-weight:700;overflow-wrap:anywhere}.json-entry-meta{display:flex;align-items:center;gap:10px;flex:0 0 auto}.json-empty{color:#777;text-align:center;padding:28px 12px}.json-actions{display:flex;gap:8px;flex-wrap:wrap}.json-toast{position:fixed;top:18px;right:18px;z-index:10000;display:none;max-width:calc(100vw - 36px);padding:10px 14px;border-radius:10px;background:#1f2937;color:#fff;box-shadow:0 8px 30px rgba(0,0,0,.18)}.json-view-overlay{position:fixed;inset:0;z-index:1000;display:none;align-items:center;justify-content:center;padding:20px;background:rgba(0,0,0,.58);backdrop-filter:blur(5px);-webkit-backdrop-filter:blur(5px);overscroll-behavior:contain}.json-view-overlay.open{display:flex}.json-view-modal{width:min(900px,100%);max-height:min(82vh,900px);display:flex;flex-direction:column;padding:20px;border:1px solid rgba(120,130,140,.24);border-radius:16px;background:#fff;color:#1f2937;box-shadow:0 18px 55px rgba(0,0,0,.32);overscroll-behavior:contain}.json-view-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}.json-view-title{min-width:0;margin:0;font-size:18px;font-weight:750;overflow-wrap:anywhere}.json-view-close{flex:0 0 auto;width:38px;min-width:38px;height:38px;padding:0;font-size:22px;line-height:1}.json-view-value{min-height:0;margin:0;padding:14px;border-radius:10px;background:rgba(245,247,248,.9);font:12px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre;overflow:auto;overscroll-behavior:contain;touch-action:pan-x pan-y;max-height:calc(82vh - 90px)}
+body{min-height:100vh}.json-shell{max-width:1100px;padding-top:0!important;padding-bottom:34px}.json-header{margin:0 -28px 18px;padding:28px;border-bottom:1px solid rgba(120,130,140,.18)}.json-header-main{min-width:0}.json-list{display:grid;gap:10px}.json-entry{min-width:0;border:1px solid rgba(120,130,140,.2);border-radius:12px;padding:14px;background:rgba(255,255,255,.58)}.json-entry-head{display:flex;align-items:center;justify-content:space-between;gap:12px}.json-key{min-width:0;font-size:16px;font-weight:700;overflow-wrap:anywhere}.json-entry-meta{display:flex;align-items:center;gap:10px;flex:0 0 auto}.json-empty{color:#777;text-align:center;padding:28px 12px}.json-actions{display:flex;gap:8px;flex-wrap:wrap}.json-view-overlay{position:fixed;inset:0;z-index:1000;display:none;align-items:center;justify-content:center;padding:20px;background:rgba(0,0,0,.58);backdrop-filter:blur(5px);-webkit-backdrop-filter:blur(5px);overscroll-behavior:contain}.json-view-overlay.open{display:flex}.json-view-modal{width:min(900px,100%);max-height:min(82vh,900px);display:flex;flex-direction:column;padding:20px;border:1px solid rgba(120,130,140,.24);border-radius:16px;background:#fff;color:#1f2937;box-shadow:0 18px 55px rgba(0,0,0,.32);overscroll-behavior:contain}.json-view-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}.json-view-title{min-width:0;margin:0;font-size:18px;font-weight:750;overflow-wrap:anywhere}.json-view-close{flex:0 0 auto;width:38px;min-width:38px;height:38px;padding:0;font-size:22px;line-height:1}.json-view-value{min-height:0;margin:0;padding:14px;border-radius:10px;background:rgba(245,247,248,.9);font:12px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre;overflow:auto;overscroll-behavior:contain;touch-action:pan-x pan-y;max-height:calc(82vh - 90px)}
 .factory-reset-modal{width:min(480px,100%);gap:12px}.factory-reset-modal h2{margin:0;font-size:20px}.factory-reset-modal p{margin:0;color:#b42318;line-height:1.6}.factory-reset-modal label{display:block;margin:4px 0}.factory-reset-modal input{width:100%;box-sizing:border-box;padding:10px 12px;border:1px solid rgba(120,130,140,.35);border-radius:9px;font:inherit}.factory-reset-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:4px}
 @media(max-width:600px){.page.app-shell.json-shell{width:calc(100% - 28px);margin:14px 14px 28px;padding:0 14px 24px;border-radius:22px}.json-header{margin:0 -14px 16px;padding:22px 14px 20px}.json-header .title{font-size:22px}.json-actions{width:100%}.json-actions .button{flex:1 1 auto;text-align:center}.json-entry{padding:10px}.json-key{font-size:14px;overflow-wrap:anywhere}.json-entry-head{align-items:center}.json-view-overlay{padding:12px}.json-view-modal{max-height:86vh;padding:16px;border-radius:14px}.json-view-value{max-height:calc(86vh - 82px);padding:10px}}
 @media(prefers-color-scheme:dark){.json-header{border-bottom-color:rgba(255,255,255,.1)}.json-entry{background:rgba(8,12,14,.78);border-color:rgba(255,255,255,.12)}.json-empty{color:#9aa7b5}.json-view-modal{background:#11191d;border-color:rgba(255,255,255,.16);color:#e7ecef}.json-view-value{background:rgba(2,6,8,.72);color:#e7ecef}.factory-reset-modal p{color:#ff8a80}.factory-reset-modal input{background:rgba(0,0,0,.35);border-color:rgba(255,255,255,.16);color:#f3f6f7}}
 </style></head><body><main class="page app-shell json-shell">
-<header class="header json-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:14px"><div class="json-header-main"><h1 class="title">备份与迁移</h1><div class="subtitle">共 ${entries.length} 项 KV 数据；导入时同名键覆盖，其他数据保留</div></div><div class="json-actions"><button type="button" class="button danger" id="factory-reset-open">恢复出厂设置</button><button type="button" class="button" id="json-export-all">导出</button><button type="button" class="button secondary" id="json-import-all">导入</button><a class="button secondary" href="/${escapeHTML(adminPath)}">返回管理面板</a></div></header>
+<header class="header json-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:14px"><div class="json-header-main"><h1 class="title">备份与迁移</h1><div class="subtitle">共 ${entries.length} 项 KV 数据；导入时同名键覆盖，其他数据保留</div></div><div class="json-actions"><button type="button" class="button danger" id="factory-reset-open">恢复出厂设置</button><button type="button" class="button" id="json-export-all">导出</button><button type="button" class="button secondary" id="json-import-all">导入</button><button type="button" class="button secondary" id="json-refresh-all">刷新</button><a class="button secondary" href="/${escapeHTML(adminPath)}">返回管理面板</a></div></header>
 <div class="json-list">${entries.length ? entries.map((entry, index) => `<article class="json-entry"><div class="json-entry-head"><div class="json-key">${escapeHTML(entry.name)}</div><div class="json-entry-meta"><button type="button" class="button secondary json-show" data-entry-index="${index}">展示</button></div></div></article>`).join("") : '<div class="json-entry json-empty">KV 暂无数据</div>'}</div>
-</main><div id="jsonViewOverlay" class="json-view-overlay" aria-hidden="true"><section class="json-view-modal" role="dialog" aria-modal="true" aria-labelledby="jsonViewTitle"><div class="json-view-head"><h2 id="jsonViewTitle" class="json-view-title"></h2><button type="button" class="button secondary json-view-close" id="jsonViewClose" aria-label="关闭">×</button></div><pre id="jsonViewValue" class="json-view-value"></pre></section></div><div id="factoryResetOverlay" class="json-view-overlay" aria-hidden="true"><section class="json-view-modal factory-reset-modal" role="dialog" aria-modal="true" aria-labelledby="factoryResetTitle"><h2 id="factoryResetTitle">恢复出厂设置</h2><p>此操作会永久删除当前 KV 中的全部数据，包括 CONFIG、所有订阅和链接，以及加密密钥。请先导出备份；删除后无法撤销。</p>${credentialsConfigured ? '<label for="factoryResetUsername">管理员用户名</label><input id="factoryResetUsername" type="text" autocomplete="username" required><label for="factoryResetPassword">管理员密码</label><input id="factoryResetPassword" type="password" autocomplete="current-password" required>' : '<p>当前未设置管理员用户名和密码。确认后将直接执行删除。</p>'}<div class="factory-reset-actions"><button type="button" class="button secondary" id="factoryResetCancel">取消</button><button type="button" class="button danger" id="factoryResetConfirm">${credentialsConfigured ? '验证并删除全部数据' : '确认删除全部数据'}</button></div></section></div><div id="jsonToast" class="json-toast" role="status" aria-live="polite"></div><script src="/__cfsubs.js" defer><\/script><script>
+</main><div id="jsonViewOverlay" class="json-view-overlay" aria-hidden="true"><section class="json-view-modal" role="dialog" aria-modal="true" aria-labelledby="jsonViewTitle"><div class="json-view-head"><h2 id="jsonViewTitle" class="json-view-title"></h2><button type="button" class="button secondary json-view-close" id="jsonViewClose" aria-label="关闭">×</button></div><pre id="jsonViewValue" class="json-view-value"></pre></section></div><div id="factoryResetOverlay" class="json-view-overlay" aria-hidden="true"><section class="json-view-modal factory-reset-modal" role="dialog" aria-modal="true" aria-labelledby="factoryResetTitle"><h2 id="factoryResetTitle">恢复出厂设置</h2><p>此操作会永久删除当前 KV 中的全部数据，包括 CONFIG、所有订阅和链接，以及加密密钥。请先导出备份；删除后无法撤销。</p>${credentialsConfigured ? '<label for="factoryResetUsername">管理员用户名</label><input id="factoryResetUsername" type="text" autocomplete="username" required><label for="factoryResetPassword">管理员密码</label><input id="factoryResetPassword" type="password" autocomplete="current-password" required>' : '<p>当前未设置管理员用户名和密码。确认后将直接执行删除。</p>'}<div class="factory-reset-actions"><button type="button" class="button secondary" id="factoryResetCancel">取消</button><button type="button" class="button danger" id="factoryResetConfirm">${credentialsConfigured ? '验证并删除全部数据' : '确认删除全部数据'}</button></div></section></div><script src="/__cfsubs.js" defer><\/script><script>
 (function(){
 'use strict';
 var exportData=${safeExportData};
 var displayEntries=${safeDisplayEntries};
-var toast=document.getElementById('jsonToast'),toastTimer;
-function showMessage(message,isError){toast.textContent=message;toast.style.background=isError?'#d93025':'#1f2937';toast.style.display='block';clearTimeout(toastTimer);toastTimer=setTimeout(function(){toast.style.display='none'},2200)}
+
+function showMessage(message,isError){window.CC(message,isError)}
 var viewOverlay=document.getElementById('jsonViewOverlay'),viewTitle=document.getElementById('jsonViewTitle'),viewValue=document.getElementById('jsonViewValue'),viewClose=document.getElementById('jsonViewClose'),lastViewTrigger=null;
 function closeJsonView(){window.CFSubsModal.close(viewOverlay,{className:'open',ariaHidden:true});viewTitle.textContent='';viewValue.textContent='';if(lastViewTrigger)lastViewTrigger.focus()}
 document.querySelectorAll('.json-show').forEach(function(button){button.addEventListener('click',function(){var entry=displayEntries[Number(button.dataset.entryIndex)];if(!entry)return;lastViewTrigger=button;viewTitle.textContent=entry.name;viewValue.textContent=entry.value;window.CFSubsModal.open(viewOverlay,{className:'open',ariaHidden:false});viewClose.focus()})});
@@ -3019,6 +3103,7 @@ resetOverlay.addEventListener('click',function(event){if(event.target===resetOve
 resetConfirm.addEventListener('click',async function(){var username=resetUsername?resetUsername.value:'',password=resetPassword?resetPassword.value:'';if(resetCredentialsRequired&&(!username||!password)){showMessage('请输入管理员用户名和密码',true);return}if(!confirm('确定永久删除当前 KV 中的全部数据吗？此操作无法撤销。'))return;resetConfirm.disabled=true;try{var response=await fetch(window.location.pathname,{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},body:JSON.stringify({type:'factory_reset',username:username,password:password})}),result=await response.json().catch(function(){return{}});if(!response.ok||!result.ok)throw new Error(result.error||'恢复出厂设置失败');showMessage('已删除 '+result.deleted+' 项 KV 数据');setTimeout(function(){window.location.assign('/')},900)}catch(error){showMessage(error.message||'恢复出厂设置失败',true);if(resetPassword){resetPassword.value='';resetPassword.focus()}}finally{resetConfirm.disabled=false}});
 function downloadExport(){var blob=new Blob([JSON.stringify(exportData,null,2)],{type:'application/json;charset=utf-8'}),url=URL.createObjectURL(blob),anchor=document.createElement('a');anchor.href=url;anchor.download='kv-export-'+new Date().toISOString().slice(0,10)+'.json';document.body.appendChild(anchor);anchor.click();anchor.remove();setTimeout(function(){URL.revokeObjectURL(url)},1000);showMessage('已导出全部 KV 数据')}
 document.getElementById('json-export-all').addEventListener('click',downloadExport);
+document.getElementById('json-refresh-all').addEventListener('click',function(){window.location.reload()});
 var input=document.createElement('input');input.type='file';input.accept='.json,application/json';input.hidden=true;document.body.appendChild(input);
 document.getElementById('json-import-all').addEventListener('click',function(){input.click()});
 input.addEventListener('change',async function(){var file=input.files&&input.files[0];if(!file)return;try{var payload=JSON.parse(await file.text());if(!payload||typeof payload!=='object'||Array.isArray(payload))throw new Error('导入内容必须是一个 JSON 对象');var response=await fetch(window.location.pathname,{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},body:JSON.stringify({type:'import_all_json',payload:payload})});var result=await response.json().catch(function(){return{}});if(!response.ok||!result.ok)throw new Error(result.error||'导入失败');showMessage('已导入 '+(result.count||0)+' 项数据');setTimeout(function(){window.location.reload()},500)}catch(error){showMessage(error.message||'导入失败',true)}finally{input.value=''}});
@@ -3108,7 +3193,7 @@ async function renderAdminPage(url, env, settings) {
   .admin-shell{max-width:1240px}
   .provider-section-main .sub-head-actions{grid-template-columns:minmax(0,380px) 190px}
 }
-</style></head><body><main class="page app-shell admin-shell">
+</style></head><body><main class="page app-shell admin-shell" data-admin-path="${esc(settings.adminPath || "admin")}">
 <header class="header topbar"><div class="topbar-main"><div class="site-title-display">${esc(settings.subName || "SUB")}</div><div class="subtitle">\u7BA1\u7406\u8BA2\u9605\u8F6C\u6362\u540E\u7AEF\u3001\u8BA2\u9605\u8F6C\u6362\u89C4\u5219\u548C\u7AD9\u70B9\u5B89\u5168\u8BBE\u7F6E\u3002</div></div><div class="top-actions"><button type="button" class="button secondary" data-open-modal="securityModal">\u5B89\u5168</button><button type="button" class="button" data-open-modal="siteModal">\u7AD9\u70B9</button><a class="button danger" href="/${esc(settings.adminPath || "admin")}/logout">\u9000\u51FA</a></div></header>
 <section class="panel provider-section"><div class="provider-section-main"><span class="provider-section-heading">\u8BA2\u9605\u8F6C\u6362\u540E\u7AEF(SUBAPI)</span><div class="sub-head"><div class="sub-head-actions">${defaultSelect(apis, "subapi", defaultApiId)}<button type="button" aria-label="\u6DFB\u52A0\u8BA2\u9605\u8F6C\u6362\u540E\u7AEF" data-provider-action="add" data-provider-type="subapi">\uFF0B \u6DFB\u52A0\u8BA2\u9605\u8F6C\u6362\u540E\u7AEF</button></div></div></div><button type="button" class="provider-section-toggle" data-provider-toggle aria-expanded="false" aria-controls="subapiContent"><span class="provider-section-meta"><span class="provider-count">\u914D\u7F6E\u6570 ${apis.length}</span><span class="provider-toggle-hint">\u70B9\u51FB\u5C55\u5F00</span><span class="provider-section-chevron" aria-hidden="true">\u25BC</span></span></button><div class="provider-section-content" id="subapiContent" hidden><div class="sub-grid provider-list" data-provider-type="subapi" style="margin-top:12px">${rows(apis, "subapi", "\u6682\u65E0\u8BA2\u9605\u8F6C\u6362\u540E\u7AEF\uFF0C\u8BF7\u624B\u52A8\u6DFB\u52A0\u3002")}</div></div></section>
 <section class="panel provider-section"><div class="provider-section-main"><span class="provider-section-heading">\u8BA2\u9605\u8F6C\u6362\u89C4\u5219(SUBCONFIG)</span><div class="sub-head"><div class="sub-head-actions">${defaultSelect(configs, "subconfig", defaultConfigId)}<button type="button" aria-label="\u6DFB\u52A0\u8BA2\u9605\u8F6C\u6362\u89C4\u5219" data-provider-action="add" data-provider-type="subconfig">\uFF0B \u6DFB\u52A0\u8BA2\u9605\u8F6C\u6362\u89C4\u5219</button></div></div></div><button type="button" class="provider-section-toggle" data-provider-toggle aria-expanded="false" aria-controls="subconfigContent"><span class="provider-section-meta"><span class="provider-count">\u914D\u7F6E\u6570 ${configs.length}</span><span class="provider-toggle-hint">\u70B9\u51FB\u5C55\u5F00</span><span class="provider-section-chevron" aria-hidden="true">\u25BC</span></span></button><div class="provider-section-content" id="subconfigContent" hidden><div class="sub-grid provider-list" data-provider-type="subconfig" style="margin-top:12px">${rows(configs, "subconfig", "\u6682\u65E0\u8BA2\u9605\u8F6C\u6362\u89C4\u5219\uFF0C\u8BF7\u624B\u52A8\u6DFB\u52A0\u3002")}</div></div></section>
