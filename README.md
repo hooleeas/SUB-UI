@@ -6,21 +6,21 @@
 
 | 模块 | 功能 |
 |---|---|
-| 🔗 聚合 | 多个聚合节点组合、多订阅混合、节点去重 |
-| ⚙️ 转换 | SUBAPI、SUBCONFIG，可使用预设或自定义地址 |
-| 🚫 过滤 | NOADS 节点屏蔽规则 |
-| 📱 客户端 | Clash / Mihomo、Sing-box、Surge、Quantumult X、Loon、NekoBox、V2RayN、V2RayNG、Shadowrocket 等 |
-| 📲 公开页 | 生成订阅链接、复制链接、二维码 |
-| 🔀 路径 | 自动生成或手动指定公开订阅路径 |
-| 🗑️ 链接 | 浏览器保存生成历史、检查链接状态、销毁聚合订阅 |
-| 🔑 销毁 | 可为公开订阅设置可选销毁密钥 |
-| 🔄 更新 | 可设置推荐更新时间，并可单独启用 / 禁用 |
-| 🛠️ 后台 | SUB、URL、SUBAPI、SUBCONFIG、站点设置 |
-| 📦 JSON | 搜索、查看、删除聚合订阅数据 |
-| ↕️ 排序 | SUB、SUBAPI、SUBCONFIG 支持排序 |
-| 🎨 站点 | 站点名称、Logo、管理员路径、管理员账号密码 |
-| 🪄 伪装 | 支持首页伪装模式及相关配置 |
-| 📡 检测 | SUBAPI / SUBCONFIG 状态检测 |
+| 订阅聚合 | 多个聚合节点组合、多订阅混合、节点去重 |
+| 订阅转换 | SUBAPI、SUBCONFIG，可使用预设或自定义地址 |
+| 节点过滤 | NOADS 节点屏蔽规则 |
+| 支持格式 | Clash / Mihomo、Sing-box、Surge、Quantumult X、Loon、NekoBox、V2RayN、V2RayNG、Shadowrocket 等 |
+| 公开页面 | 生成订阅链接、复制链接、二维码 |
+| 自定义路径 | 自动生成或手动指定公开订阅路径 |
+| 链接管理 | 浏览器保存生成历史、检查链接状态、销毁聚合订阅 |
+| 销毁保护 | 可为公开订阅设置可选销毁密钥 |
+| 更新设置 | 可设置推荐更新时间，并可单独启用 / 禁用 |
+| 管理后台 | SUB、URL、SUBAPI、SUBCONFIG、站点设置 |
+| JSON 管理 | 搜索、查看、删除聚合订阅数据 |
+| 排序管理 | SUB、SUBAPI、SUBCONFIG 支持排序 |
+| 站点设置 | 站点名称、Logo、管理员路径、管理员账号密码 |
+| 页面伪装 | 支持首页伪装模式及相关配置 |
+| 状态检测 | SUBAPI / SUBCONFIG 状态检测 |
 
 ---
 
