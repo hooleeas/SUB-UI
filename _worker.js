@@ -355,7 +355,7 @@ function initPublic(){
  updateCurrent('api');updateCurrent('config');checkStatus('api',true);checkStatus('config',true);renderGeneratedLinks();
  window.addEventListener('focus',syncGeneratedLinks);
  document.addEventListener('visibilitychange',function(){if(!document.hidden)syncGeneratedLinks()});
- function renderAggregateQr(value,profileName){var q=$('aggregateResultQr');if(!q||!value)return;var importLink=new URL('sing-box://import-remote-profile');importLink.searchParams.set('url',value);if(profileName)importLink.hash=profileName;var qrContent=importLink.toString();var draw=function(){if(!window.QRCode)return false;q.innerHTML='';q.style.display='block';try{new QRCode(q,{text:qrContent,width:220,height:220,colorDark:'#000000',colorLight:'#ffffff',correctLevel:QRCode.CorrectLevel.Q});return true}catch(err){q.innerHTML='';return false}};if(draw())return;var src='https://cdn.jsdelivr.net/npm/@keeex/qrcodejs-kx@1.0.2/qrcode.min.js';var script=document.querySelector('script[src="'+src+'"]');if(!script){script=document.createElement('script');script.src=src;script.onload=function(){draw()};document.head.appendChild(script)}else{var timer=window.setInterval(function(){if(draw())window.clearInterval(timer)},100);window.setTimeout(function(){window.clearInterval(timer)},5000)}}
+ function renderAggregateQr(value){var q=$('aggregateResultQr');if(!q||!value)return;var draw=function(){if(!window.QRCode)return false;q.innerHTML='';q.style.display='block';try{new QRCode(q,{text:value,width:220,height:220,colorDark:'#000000',colorLight:'#ffffff',correctLevel:QRCode.CorrectLevel.Q});return true}catch(err){q.innerHTML='';return false}};if(draw())return;var src='https://cdn.jsdelivr.net/npm/@keeex/qrcodejs-kx@1.0.2/qrcode.min.js';var script=document.querySelector('script[src="'+src+'"]');if(!script){script=document.createElement('script');script.src=src;script.onload=function(){draw()};document.head.appendChild(script)}else{var timer=window.setInterval(function(){if(draw())window.clearInterval(timer)},100);window.setTimeout(function(){window.clearInterval(timer)},5000)}}
  e=$('copyDirect');if(e)e.addEventListener('click',function(){var a=$('direct'),v=a?a.textContent.trim():'';var done=function(){e.textContent='已复制';aggregateNotice('已复制');window.setTimeout(function(){if(e)e.textContent='复制'},1600)};var fail=function(){aggregateNotice('复制失败，请手动复制',true)};if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(v).then(done).catch(fail);else{var ta=document.createElement('textarea');ta.value=v;document.body.appendChild(ta);ta.select();try{document.execCommand('copy');done()}catch(err){fail()}ta.remove()}});e=$('destroyDirect');if(e)e.addEventListener('click',function(){var token=tokenFromSubscriptionUrl(($('direct')||{}).href||'');var key=String(CURRENT_DESTROY_KEY||'');destroyGeneratedLink(token,e,true,key,false)});e=$('aggregateResultClose');if(e)e.addEventListener('click',closeAggregateResult);var rm=$('aggregateResultModal');if(rm){rm.addEventListener('click',function(ev){if(ev.target===rm)closeAggregateResult()});document.addEventListener('keydown',function(ev){if(ev.key==='Escape')closeAggregateResult()})}
  e=$('generate');if(e)e.addEventListener('click',function(){
   var sources=$('sources')?$('sources').value.trim():'',a=$('apiPicker'),c=$('configPicker');if(!a||!c)return;
@@ -363,7 +363,7 @@ function initPublic(){
   if(!sources)return alertCC('请输入订阅链接');if(!apiValue)return alertCC('请选择订阅转换后端');if(!configValue)return alertCC('请选择订阅转换规则');
   var pathInput=$('linkPath'),path=pathInput?pathInput.value.trim():'';if(!path){path=randomLinkPath();if(pathInput)pathInput.value=path}if(path.length<3)return alertCC('自定义链接路径至少需要 3 个字符');var updateInput=$('recommendedUpdateMinutes'),updateMinutes=Number(updateInput?updateInput.value:DEFAULT_UPDATE_MINUTES);if(!Number.isSafeInteger(updateMinutes)||updateMinutes<0||updateMinutes>525600)return alertCC('推荐更新时间必须是 0 到 525600 之间的整数分钟');var destroyKey=($('destroyKey')?$('destroyKey').value:'').trim();CURRENT_DESTROY_KEY=destroyKey;var body={path:path,sources:sources,apiIds:apiCustom?[]:[currentId('api')],apiCustom:apiCustom,apiUrl:apiCustom?apiValue:'',configIds:configCustom?[]:[currentId('config')],configCustom:configCustom,configUrl:configCustom?configValue:'',name:($('linkName')?$('linkName').value:'').trim(),noAds:($('noAds')?$('noAds').value:'').trim(),update:updateMinutes,updateEnable:$('recommendedUpdateEnable')?$('recommendedUpdateEnable').checked:true,destroyKey:destroyKey};
   var button=$('generate');CFSubsUI.setButtonBusy(button,true,'生成聚合订阅链接');
-  fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},cache:'no-store',body:JSON.stringify(body)}).then(function(r){return r.json().then(function(d){return {r:r,d:d}})}).then(function(x){if(!x.r.ok||!x.d.ok)throw new Error(x.d.error||'生成失败');rememberGeneratedLink(x.d.subscription_url);$('direct').textContent=x.d.subscription_url;$('direct').href=x.d.subscription_url;var resultModal=$('aggregateResultModal');if(resultModal){openModal(resultModal);var copyButton=$('copyDirect');if(copyButton)copyButton.textContent='复制';var destroyButton=$('destroyDirect');if(destroyButton){destroyButton.textContent='销毁';destroyButton.disabled=false}renderAggregateQr(x.d.subscription_url,body.name)}}).catch(function(err){alertCC(err.message||'生成失败')}).finally(function(){CFSubsUI.setButtonBusy(button,false)})
+  fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},cache:'no-store',body:JSON.stringify(body)}).then(function(r){return r.json().then(function(d){return {r:r,d:d}})}).then(function(x){if(!x.r.ok||!x.d.ok)throw new Error(x.d.error||'生成失败');rememberGeneratedLink(x.d.subscription_url);$('direct').textContent=x.d.subscription_url;$('direct').href=x.d.subscription_url;var resultModal=$('aggregateResultModal');if(resultModal){openModal(resultModal);var copyButton=$('copyDirect');if(copyButton)copyButton.textContent='复制';var destroyButton=$('destroyDirect');if(destroyButton){destroyButton.textContent='销毁';destroyButton.disabled=false}renderAggregateQr(x.d.subscription_url)}}).catch(function(err){alertCC(err.message||'生成失败')}).finally(function(){CFSubsUI.setButtonBusy(button,false)})
  })
 }
 
@@ -619,10 +619,34 @@ async function handleRequest(request, env) {
       "v2rayn",
       request.headers.get("User-Agent") || ""
     );
-    return new Response(
-      encodeBase64(filterSubscriptionNodes(sourceResult.nodes, sourceData.noAds).join("\n")),
-      { headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" } }
-    );
+    let nodes = sourceResult.nodes;
+    if (sourceResult.structuredUrls.length) {
+      try {
+        const runtime = await getSubscriptionRuntime(env, sourceData, fakeToken);
+        const converted = await fetchConvertedSubscription(
+          runtime,
+          "mixed",
+          sourceResult.structuredUrls.join("|"),
+          request.headers.get("User-Agent") || ""
+        );
+        nodes = [...nodes, ...splitSubscriptionLines(converted).filter((line) => line.includes("://"))];
+      } catch (error) {
+        console.error("Structured subscription filtering failed:", error);
+        return new Response(
+          `结构化订阅过滤失败：${getSubscriptionErrorMessage(error)}`,
+          {
+            status: 502,
+            headers: {
+              "Content-Type": "text/plain; charset=utf-8",
+              "Cache-Control": "no-store"
+            }
+          }
+        );
+      }
+    }
+    return new Response(encodeBase64(filterSubscriptionNodes(nodes, sourceData.noAds).join("\n")), {
+      headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" }
+    });
   }
   if (publicToken && !isFakeTokenRequest) {
     const tokenData = await getToken(env, publicToken);
@@ -752,7 +776,7 @@ async function generateSubscription(request, env, requestUrl, tokenData, token, 
     const internalFeed = new URL(`/${encodeURIComponent(runtime.fakeToken)}`, requestUrl.origin);
     internalFeed.searchParams.set("token", runtime.fakeToken);
     if (sourceToken) internalFeed.searchParams.set("sourceToken", sourceToken);
-    const converterInput = [internalFeed.href, ...sourceData.structuredUrls].join("|");
+    const converterInput = internalFeed.href;
     let content = await fetchConvertedSubscription(runtime, target, converterInput, subscriptionUserAgent(target));
     if (target === "clash") content = clashFix(content);
     if (!userAgent.includes("mozilla")) {
@@ -877,8 +901,13 @@ __name(isStructuredSubscription, "isStructuredSubscription");
 function filterSubscriptionNodes(nodes, noAds) {
   const keywords = String(noAds || "").split(/[, \r\n]+/).map((keyword) => keyword.trim().toLowerCase()).filter(Boolean);
   return [...new Set(nodes.filter((line) => {
-    const lowerLine = line.toLowerCase();
-    return !keywords.some((keyword) => lowerLine.includes(keyword));
+    let searchableLine = line.toLowerCase();
+    try {
+      searchableLine += ` ${decodeURIComponent(line).toLowerCase()}`;
+    } catch {
+      // Keep matching the original line when it contains invalid percent escapes.
+    }
+    return !keywords.some((keyword) => searchableLine.includes(keyword));
   }))];
 }
 __name(filterSubscriptionNodes, "filterSubscriptionNodes");
@@ -2718,7 +2747,7 @@ function showGuestQr(button){
  qr.innerHTML='';qr.style.display='block';copy.style.display='none';hide.style.display='inline-flex';
  let qrContent=button.dataset.url||'';
  const label=item.querySelector('.guest-link-label')?.textContent.trim();
- if(label==='自适应订阅地址'||label==='Sing-box订阅地址'){
+ if(label==='Sing-box订阅地址'){
   const importLink=new URL('sing-box://import-remote-profile');
   importLink.searchParams.set('url',qrContent);
   const heading=document.querySelector('.guest-header .title');
@@ -2732,7 +2761,7 @@ function hideGuestQr(button){const item=button.closest('.guest-link-item');item.
 document.querySelectorAll('.guest-copy-btn').forEach(button=>button.addEventListener('click',()=>{const value=button.dataset.url||'';const done=()=>{guestToast('已复制到剪贴板');showGuestQr(button)};if(navigator.clipboard)navigator.clipboard.writeText(value).then(done).catch(()=>guestToast('复制失败，请手动复制',true));else{const textarea=document.createElement('textarea');textarea.value=value;document.body.appendChild(textarea);textarea.select();document.execCommand('copy');textarea.remove();done()}}));
 document.querySelectorAll('.guest-hide-btn').forEach(button=>button.addEventListener('click',()=>hideGuestQr(button)));
 const destroyButton=document.querySelector('.guest-head-destroy'),destroyModal=document.getElementById('guestDestroyModal'),destroyKeyInput=document.getElementById('guestDestroyKey'),destroyToken=document.querySelector('.guest-shell').dataset.token;function closeDestroyModal(){window.CFSubsModal.close(destroyModal);destroyKeyInput.value=''}async function destroyCurrentLink(key){window.CFSubsUI.setButtonBusy(destroyButton,true,'销毁中…');try{const response=await fetch('/api/destroy',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},cache:'no-store',body:JSON.stringify({token:destroyToken,key:key})});const result=await response.json();if(!response.ok||!result.ok)throw new Error(result.error||'销毁失败');closeDestroyModal();guestToast('链接已销毁，该链接已失效');setTimeout(()=>{location.href='/'},900)}catch(error){window.CFSubsUI.setButtonBusy(destroyButton,false);guestToast(error.message||'销毁失败',true)}}destroyButton.addEventListener('click',()=>{if(document.querySelector('.guest-shell').dataset.keyRequired==='true'){window.CFSubsModal.open(destroyModal);destroyKeyInput.focus();return}if(confirm('销毁后此聚合订阅链接将立即失效且无法恢复，确定要销毁吗？'))destroyCurrentLink('')});document.getElementById('guestDestroyCancel').addEventListener('click',closeDestroyModal);document.getElementById('guestDestroyConfirm').addEventListener('click',()=>{const key=destroyKeyInput.value.trim();if(!key){guestToast('请输入销毁密钥',true);destroyKeyInput.focus();return}destroyCurrentLink(key)});destroyModal.addEventListener('click',event=>{if(event.target===destroyModal)closeDestroyModal()});document.addEventListener('keydown',event=>{if(event.key==='Escape')closeDestroyModal()});
-</script></body></html>`;
+</script></body></html>`.replace('复制订阅链接可同时生成二维码','点击复制按钮将同时生成对应二维码。Sing-box 可扫描专属二维码导入；iOS/iPadOS 可在 Safari 本页长按 Sing-box 专属二维码并选择导入 Sing-box。');
 }
 
 function renderGuestPage(url, guest, destroyKeyRequired = false, siteLogo = "") {
