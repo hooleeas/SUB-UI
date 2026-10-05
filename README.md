@@ -63,104 +63,19 @@ SUB-UI 将「聚合节点配置」和「公开订阅 URL」分开管理：
 
 # 🚀 部署
 
-SUB-UI 支持：
-
-- **Cloudflare Workers**
-- **Cloudflare Pages**
-
-运行所需配置：
-
-| 配置 | 要求 |
-|---|---|
-| Cloudflare KV | 必须 |
-| KV Binding 名称 | `KV` |
-| 环境变量 | 不需要 |
+支持 **Cloudflare Workers** 和 **Pages**。需要一个 KV Namespace，并绑定为 `KV`；无需设置环境变量。
 
 ## ☁️ Cloudflare Workers
 
-### 1. 创建 KV
-
-进入：
-
-`Cloudflare → Workers & Pages → KV → Create a namespace`
-
-创建一个 KV Namespace，名称可以自行设置。
-
-### 2. 创建 Worker
-
-创建 Worker，并使用项目中的：
-
-```text
-_worker.js
-```
-
-完整代码。
-
-### 3. 绑定 KV
-
-进入：
-
-`Worker → Settings → Bindings → KV Namespace`
-
-添加刚刚创建的 KV Namespace。
-
-**变量名称必须填写：**
-
-```text
-KV
-```
-
-对应关系：
-
-```text
-KV → 你的 KV Namespace
-```
-
-### 4. 部署
-
-保存并部署即可。
+1. 创建 KV Namespace。
+2. 创建 Worker，部署项目的 `_worker.js`。
+3. 在 **Settings → Bindings** 添加 KV Namespace，变量名填写 `KV`，然后部署。
 
 ## 📄 Cloudflare Pages
 
-### 1. 创建 KV
-
-创建一个 Cloudflare KV Namespace。
-
-### 2. 创建 Pages 项目
-
-创建 Cloudflare Pages 项目，并使用：
-
-```text
-_worker.js
-```
-
-作为 Pages Functions Worker。
-
-### 3. 绑定 KV
-
-进入：
-
-`Pages → Settings → Functions → KV Namespace Bindings`
-
-添加 KV Namespace。
-
-**变量名称必须填写：**
-
-```text
-KV
-```
-
-对应关系：
-
-```text
-KV → 你的 KV Namespace
-```
-
-### 4. 部署
-
-完成 KV Binding 后直接部署即可。
-
-> 不需要额外设置环境变量。
+1. Fork 本项目的 Git 仓库。
+2. 在 Cloudflare Pages 创建项目并连接 Fork 的仓库；构建输出目录设为仓库根目录（`.`），无需构建命令。
+3. 在 **Settings → Functions → KV Namespace Bindings** 绑定 KV Namespace，变量名填写 `KV`，然后部署。
 
 ---
 
@@ -341,6 +256,10 @@ https://example.com/my-sub
 - 复制按钮
 - 二维码
 - 销毁按钮
+
+📋 **复制链接**：显示二维码  
+📱 **Sing-box**：扫码导入  
+🍎 **iPhone/iPad**：在 Safari 长按二维码导入
 
 例如：
 
@@ -765,84 +684,6 @@ URL:
 - 所在地区的法律法规
 
 使用者应自行承担因使用本项目产生的相关责任。
-
----
-
-## ☁️ Cloudflare Workers
-
-### 1. 创建 KV
-
-进入：
-
-`Cloudflare → Workers & Pages → KV → Create a namespace`
-
-创建一个 KV Namespace，名称可以自行设置。
-
-### 2. 创建 Worker
-
-创建 Worker，并使用项目中的：
-
-_worker.js
-
-完整代码。
-
-### 3. 绑定 KV
-
-进入：
-
-`Worker → Settings → Bindings → KV Namespace`
-
-添加刚刚创建的 KV Namespace。
-
-**变量名称必须填写：**
-
-KV
-
-对应关系：
-
-KV  →  你的 KV Namespace
-
-### 4. 部署
-
-保存并部署即可。
-
----
-
-## 📄 Cloudflare Pages
-
-### 1. 创建 KV
-
-创建一个 Cloudflare KV Namespace。
-
-### 2. 创建 Pages 项目
-
-创建 Cloudflare Pages 项目，并使用本项目的：
-
-_worker.js
-
-作为 Worker 代码。
-
-### 3. 绑定 KV
-
-进入：
-
-`Pages → Settings → Functions → KV Namespace Bindings`
-
-添加 KV Namespace。
-
-**变量名称必须填写：**
-
-KV
-
-对应关系：
-
-KV  →  你的 KV Namespace
-
-### 4. 部署
-
-完成 KV Binding 后直接部署即可。
-
-> **不需要额外设置环境变量。**
 
 ---
 
