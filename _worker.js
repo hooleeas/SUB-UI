@@ -229,15 +229,19 @@ function syncGeneratedLinks(){
  var list=generatedLinks();if(!list.length)return Promise.resolve();
  var tokens=list.map(function(item){return String(item&&item.token||'').trim()}).filter(Boolean);
  if(!tokens.length)return Promise.resolve();
- return fetch('/api/generated-links/check',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},cache:'no-store',body:JSON.stringify({tokens:tokens})})
- .then(function(r){return r.json().then(function(d){return {r:r,d:d}})})
- .then(function(x){
-   if(!x.r.ok||!x.d.ok)return;
-   var valid={};(Array.isArray(x.d.tokens)?x.d.tokens:[]).forEach(function(token){valid[String(token||'').trim()]=true});
-   var next=list.filter(function(item){return valid[String(item&&item.token||'').trim()]});
-   if(next.length!==list.length){saveGeneratedLinks(next);renderGeneratedLinks()}
+ var checked={};tokens.forEach(function(token){checked[token]=true});
+ var batches=[];for(var i=0;i<tokens.length;i+=100)batches.push(tokens.slice(i,i+100));
+ return Promise.all(batches.map(function(batch){
+  return fetch('/api/generated-links/check',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},cache:'no-store',body:JSON.stringify({tokens:batch})})
+  .then(function(r){return r.json().then(function(d){if(!r.ok||!d.ok)throw new Error(d.error||'链接状态检查失败');return Array.isArray(d.tokens)?d.tokens:[]})});
+ }))
+ .then(function(results){
+   var valid={};results.forEach(function(result){result.forEach(function(token){valid[String(token||'').trim()]=true})});
+   var latest=generatedLinks();
+   var next=latest.filter(function(item){var token=String(item&&item.token||'').trim();return !checked[token]||valid[token]});
+   if(next.length!==latest.length){saveGeneratedLinks(next);renderGeneratedLinks()}
  })
- .catch(function(){});
+ .catch(function(error){console.warn('Generated subscription link check failed; keeping the local list:',error)});
 }
 function resetAggregateResult(){var q=$('aggregateResultQr');if(q){q.innerHTML='';q.style.display='block'}var b=$('copyDirect');if(b){b.textContent='复制';b.disabled=false}var d=$('destroyDirect');if(d){CFSubsUI.setButtonBusy(d,false);d.textContent='销毁'}}
 function closeAggregateResult(){closeModal('aggregateResultModal');resetAggregateResult()}
@@ -353,6 +357,7 @@ function initPublic(){
  e=$('cancelApiCustom');if(e)e.addEventListener('click',function(){cancelCustom('api')});e=$('cancelConfigCustom');if(e)e.addEventListener('click',function(){cancelCustom('config')});
  e=$('saveApiCustom');if(e)e.addEventListener('click',function(){saveCustom('api')});e=$('saveConfigCustom');if(e)e.addEventListener('click',function(){saveCustom('config')});
  updateCurrent('api');updateCurrent('config');checkStatus('api',true);checkStatus('config',true);renderGeneratedLinks();
+ window.addEventListener('storage',function(event){if(event.key===GENERATED_LINKS_KEY||event.key===null)renderGeneratedLinks()});
  window.addEventListener('focus',syncGeneratedLinks);
  document.addEventListener('visibilitychange',function(){if(!document.hidden)syncGeneratedLinks()});
  function renderAggregateQr(value){var q=$('aggregateResultQr');if(!q||!value)return;var draw=function(){if(!window.QRCode)return false;q.innerHTML='';q.style.display='block';try{new QRCode(q,{text:value,width:220,height:220,colorDark:'#000000',colorLight:'#ffffff',correctLevel:QRCode.CorrectLevel.Q});return true}catch(err){q.innerHTML='';return false}};if(draw())return;var src='https://cdn.jsdelivr.net/npm/@keeex/qrcodejs-kx@1.0.2/qrcode.min.js';var script=document.querySelector('script[src="'+src+'"]');if(!script){script=document.createElement('script');script.src=src;script.onload=function(){draw()};document.head.appendChild(script)}else{var timer=window.setInterval(function(){if(draw())window.clearInterval(timer)},100);window.setTimeout(function(){window.clearInterval(timer)},5000)}}
@@ -509,7 +514,7 @@ async function handleRequest(request, env) {
     try {
       const data = await request.json();
       const input = Array.isArray(data?.tokens) ? data.tokens : [];
-      const tokens = [...new Set(input.map((x) => String(x || "").trim()).filter((x) => /^[A-Za-z0-9]+$/.test(x) && x.length <= 128))].slice(0, 100);
+      const tokens = [...new Set(input.map((x) => String(x || "").trim()).filter((x) => /^[-A-Za-z0-9_]+$/.test(x) && x.length <= 128))].slice(0, 100);
       const existing = [];
       for (const token of tokens) {
         if (await getToken(env, token)) existing.push(token);
@@ -2761,7 +2766,7 @@ function hideGuestQr(button){const item=button.closest('.guest-link-item');item.
 document.querySelectorAll('.guest-copy-btn').forEach(button=>button.addEventListener('click',()=>{const value=button.dataset.url||'';const done=()=>{guestToast('已复制到剪贴板');showGuestQr(button)};if(navigator.clipboard)navigator.clipboard.writeText(value).then(done).catch(()=>guestToast('复制失败，请手动复制',true));else{const textarea=document.createElement('textarea');textarea.value=value;document.body.appendChild(textarea);textarea.select();document.execCommand('copy');textarea.remove();done()}}));
 document.querySelectorAll('.guest-hide-btn').forEach(button=>button.addEventListener('click',()=>hideGuestQr(button)));
 const destroyButton=document.querySelector('.guest-head-destroy'),destroyModal=document.getElementById('guestDestroyModal'),destroyKeyInput=document.getElementById('guestDestroyKey'),destroyToken=document.querySelector('.guest-shell').dataset.token;function closeDestroyModal(){window.CFSubsModal.close(destroyModal);destroyKeyInput.value=''}async function destroyCurrentLink(key){window.CFSubsUI.setButtonBusy(destroyButton,true,'销毁中…');try{const response=await fetch('/api/destroy',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},cache:'no-store',body:JSON.stringify({token:destroyToken,key:key})});const result=await response.json();if(!response.ok||!result.ok)throw new Error(result.error||'销毁失败');closeDestroyModal();guestToast('链接已销毁，该链接已失效');setTimeout(()=>{location.href='/'},900)}catch(error){window.CFSubsUI.setButtonBusy(destroyButton,false);guestToast(error.message||'销毁失败',true)}}destroyButton.addEventListener('click',()=>{if(document.querySelector('.guest-shell').dataset.keyRequired==='true'){window.CFSubsModal.open(destroyModal);destroyKeyInput.focus();return}if(confirm('销毁后此聚合订阅链接将立即失效且无法恢复，确定要销毁吗？'))destroyCurrentLink('')});document.getElementById('guestDestroyCancel').addEventListener('click',closeDestroyModal);document.getElementById('guestDestroyConfirm').addEventListener('click',()=>{const key=destroyKeyInput.value.trim();if(!key){guestToast('请输入销毁密钥',true);destroyKeyInput.focus();return}destroyCurrentLink(key)});destroyModal.addEventListener('click',event=>{if(event.target===destroyModal)closeDestroyModal()});document.addEventListener('keydown',event=>{if(event.key==='Escape')closeDestroyModal()});
-</script></body></html>`.replace('复制订阅链接可同时生成二维码','点击复制按钮将同时生成对应二维码。Sing-box 可扫描专属二维码导入；iOS/iPadOS 可在 Safari 本页长按 Sing-box 专属二维码并选择导入 Sing-box。');
+</script></body></html>`.replace('.guest-header{display:flex;','.guest-header{display:block;').replace('.guest-header-main{min-width:0}', '.guest-header-content{display:flex;align-items:flex-start;gap:16px;min-width:0}.guest-header-main{flex:1 1 auto;min-width:0}.guest-header-actions{display:flex;align-items:center;gap:8px;flex:0 0 auto;margin-left:auto}').replace('<header class="header guest-header"><div class="guest-header-main">','<header class="header guest-header"><div class="guest-header-content"><div class="guest-header-main">').replace('</button></header><div class="guest-link-list">','</button></div></header><div class="guest-link-list">').replace('复制订阅链接可同时生成二维码','点击复制按钮将同时生成对应二维码。Sing-box 可扫描专属二维码导入；iOS/iPadOS 可在 Safari 本页长按 Sing-box 专属二维码并选择导入 Sing-box。');
 }
 
 function renderGuestPage(url, guest, destroyKeyRequired = false, siteLogo = "") {
